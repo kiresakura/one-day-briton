@@ -283,6 +283,7 @@ button.quiet {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 12px;
+    margin-bottom: 12px;
   }
 
   .tables .card {
