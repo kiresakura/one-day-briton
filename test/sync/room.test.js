@@ -27,6 +27,8 @@ import {
   joinRoom,
   leaveRoom,
   rejectHost,
+  trackPresence,
+  watchConnection,
   watchRoom,
 } from '../../play/js/store.js';
 
@@ -108,6 +110,8 @@ async function approveBackup(t, code, hostWatcher) {
 
 const asksToHost = (uid) => (room) => Boolean(room?.hostRequests?.[uid]);
 const listsAsHost = (uid) => (room) => room?.hosts?.[uid] === true;
+const isOnline = (uid) => (room) => room?.presence?.[uid] === true;
+const isOffline = (uid) => (room) => room?.presence?.[uid] === undefined;
 const isDeniedByStore = (error) => error instanceof StoreError && error.code === 'permission-denied';
 const stepOf = (table) => ({ round: table.round, phase: table.phase });
 
@@ -463,4 +467,105 @@ test('an approved host can approve another device', TIMEOUT, async (t) => {
   const result = await advanceTable(bob, code, 1, { round: 1, phase: 'sunrise' });
   assert.equal(result.advanced, true);
   await watchers.host.until((room) => room.tables[1].phase === 'day', 'host sees day');
+});
+
+test('a device is told when its own connection drops and comes back', TIMEOUT, async (t) => {
+  const seen = [];
+  let wake = () => {};
+  const stop = watchConnection(bob, (connected) => {
+    seen.push(connected);
+    wake();
+  });
+  t.after(() => {
+    stop();
+    goOnline(bob.db);
+  });
+  const until = (connected) =>
+    new Promise((resolve) => {
+      wake = () => seen.at(-1) === connected && resolve();
+      wake();
+    });
+
+  await until(true);
+  goOffline(bob.db);
+  await until(false);
+  goOnline(bob.db);
+  await until(true);
+  assert.deepEqual(seen.slice(-3), [true, false, true]);
+});
+
+test('presence follows each device as it connects, drops, returns and leaves', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  assert.equal(watchers.bob.room.presence, undefined, 'nobody is marked online before tracking starts');
+
+  const stopAlice = trackPresence(alice, code);
+  const stopHost = trackPresence(host, code);
+  t.after(async () => {
+    goOnline(alice.db);
+    await Promise.allSettled([stopAlice(), stopHost()]);
+  });
+  const both = await watchers.bob.until(
+    (room) => isOnline(alice.uid)(room) && isOnline(host.uid)(room),
+    'bob sees alice and the host online',
+  );
+  assert.deepEqual(both.presence, { [alice.uid]: true, [host.uid]: true });
+
+  goOffline(alice.db);
+  const dropped = await watchers.bob.until(isOffline(alice.uid), 'bob sees alice drop');
+  assert.deepEqual(dropped.presence, { [host.uid]: true });
+  assert.equal(dropped.players[alice.uid].name, 'Alice', 'the player record stays while offline');
+
+  // 連回來後要重新登記：再斷一次，伺服器仍然會代為移除。
+  goOnline(alice.db);
+  await watchers.bob.until(isOnline(alice.uid), 'bob sees alice return');
+  goOffline(alice.db);
+  await watchers.bob.until(isOffline(alice.uid), 'bob sees alice drop a second time');
+  goOnline(alice.db);
+  await watchers.bob.until(isOnline(alice.uid), 'bob sees alice return a second time');
+
+  await stopAlice();
+  const left = await watchers.bob.until(isOffline(alice.uid), 'bob sees alice leave');
+  assert.deepEqual(left.presence, { [host.uid]: true });
+});
+
+test('presence is restored when something else removes it while the device is still connected', TIMEOUT, async (t) => {
+  // 同一個身分較早的連線晚一步斷開時，伺服器會移掉這一筆；這裡直接移除來模擬。
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const stopAlice = trackPresence(alice, code);
+  t.after(() => stopAlice().catch(() => {}));
+  await watchers.bob.until(isOnline(alice.uid), 'bob sees alice online');
+
+  const sawDrop = watchers.bob.until(isOffline(alice.uid), 'bob sees the record removed');
+  await remove(ref(alice.db, `rooms/${code}/presence/${alice.uid}`));
+  await sawDrop;
+  await watchers.bob.until(isOnline(alice.uid), 'bob sees alice online again');
+
+  // 離開之後就不再補回去。
+  await stopAlice();
+  await watchers.bob.until(isOffline(alice.uid), 'bob sees alice leave');
+  await advanceTable(host, code, 1, { round: 1, phase: 'sunrise' });
+  const room = await watchers.bob.until((value) => value.tables[1].phase === 'day', 'bob sees table 1 move');
+  assert.equal(room.presence, undefined);
+});
+
+test("a device cannot write someone else's presence", TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const mine = `rooms/${code}/presence/${alice.uid}`;
+  const bobs = `rooms/${code}/presence/${bob.uid}`;
+  await set(ref(bob.db, bobs), true);
+  await watchers.alice.until(isOnline(bob.uid), 'alice sees bob online');
+
+  await assert.rejects(set(ref(alice.db, bobs), true), denied);
+  await assert.rejects(remove(ref(alice.db, bobs)), denied);
+  await assert.rejects(remove(ref(host.db, bobs)), denied);
+  await assert.rejects(set(ref(host.db, `rooms/${code}/presence/someone-else`), true), denied);
+  await assert.rejects(set(ref(alice.db, mine), 'yes'), denied);
+  await assert.rejects(set(ref(alice.db, mine), false), denied);
+  await assert.rejects(set(ref(alice.db, mine), { since: Date.now() - 60_000 }), denied);
+  await assert.rejects(set(ref(alice.db, `rooms/ZZZZ96/presence/${alice.uid}`), true), denied);
+
+  // 自己那一筆寫得進去，而且前面被拒絕的都沒有留下東西。
+  await set(ref(alice.db, mine), true);
+  const room = await watchers.host.until(isOnline(alice.uid), 'host sees alice online');
+  assert.deepEqual(room.presence, { [alice.uid]: true, [bob.uid]: true });
 });

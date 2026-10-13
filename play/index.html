@@ -19,6 +19,7 @@
   <script type="module" src="./js/app.js"></script>
 </head>
 <body>
+  <p id="connection" class="connection" role="status" hidden>連線中斷，正在重新連線…</p>
   <header class="masthead">
     <h1>一日英國人</h1>
     <p>女皇陛下萬歲！</p>
@@ -80,6 +81,7 @@
     </section>
 
     <section id="screen-player" hidden>
+      <p id="player-host-offline" class="notice" hidden>主持端目前離線</p>
       <div id="player-stage" class="card stage">
         <p class="stage-where"><span id="player-table"></span>・<span id="player-round"></span></p>
         <p id="player-phase" class="phase"></p>

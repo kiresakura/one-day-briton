@@ -11,6 +11,8 @@ import {
   joinRoom,
   leaveRoom,
   rejectHost,
+  trackPresence,
+  watchConnection,
   watchRoom,
 } from './store.js';
 
@@ -25,6 +27,8 @@ const savedRoomKey = `one-day-briton:room:${slot || 'default'}`;
 let session = null;
 let code = null;
 let stopWatching = null;
+let stopPresence = null;
+let offlineTimer = null;
 let requested = false; // 這台裝置送過主持端申請、還在等核准
 
 function show(screen) {
@@ -61,9 +65,27 @@ async function run(button, action) {
   }
 }
 
+// 自己的連線：斷了超過一秒才提示，剛開頁面還沒連上或瞬間抖動時不閃。
+function showConnection(connected) {
+  clearTimeout(offlineTimer);
+  if (connected) $('connection').hidden = true;
+  else offlineTimer = setTimeout(() => ($('connection').hidden = false), 1000);
+}
+
+// 進到主持或玩家畫面後才標示自己在線上；回首頁時移除。
+function markPresent() {
+  stopPresence ??= trackPresence(session, code);
+}
+
+function isOnline(room, uid) {
+  return uid === session.uid || room.presence?.[uid] === true;
+}
+
 function goHome(message = '') {
   stopWatching?.();
   stopWatching = null;
+  stopPresence?.().catch(() => {});
+  stopPresence = null;
   code = null;
   requested = false;
   localStorage.removeItem(savedRoomKey);
@@ -96,6 +118,12 @@ function playersAt(room, table) {
     .sort(([, a], [, b]) => a.joinedAt - b.joinedAt);
 }
 
+// 玩家的名字；不在線上的變淡並標「離線」。
+function nameTag(room, uid, player, tag) {
+  if (uid === session.uid) return element(tag, 'me', `${player.name}（你）`);
+  return isOnline(room, uid) ? element(tag, '', player.name) : element(tag, 'offline', `${player.name}（離線）`);
+}
+
 function renderPending() {
   requested = true;
   $('pending-confirm').textContent = confirmCode(session.uid);
@@ -122,12 +150,16 @@ function requestItems(room, roomCode) {
 
 function renderHost(room) {
   requested = false;
+  markPresent();
   const roomCode = code;
   const cards = [];
   for (let table = 1; table <= room.meta.tableCount; table += 1) {
     const state = room.tables?.[table];
     if (!state) continue;
-    const names = playersAt(room, table).map(([, player]) => player.name);
+    const names = element('p', 'table-players');
+    const players = playersAt(room, table);
+    if (!players.length) names.textContent = '還沒有玩家';
+    players.forEach(([uid, player], index) => names.append(index ? '、' : '', nameTag(room, uid, player, 'span')));
 
     const card = element('article', 'card table');
     card.dataset.table = table;
@@ -146,7 +178,7 @@ function renderHost(room) {
     card.append(
       element('h2', '', `第 ${table} 桌`),
       status,
-      element('p', 'table-players', names.length ? names.join('、') : '還沒有玩家'),
+      names,
       next,
     );
     cards.push(card);
@@ -154,12 +186,16 @@ function renderHost(room) {
   $('host-code').textContent = roomCode;
   $('host-tables').replaceChildren(...cards);
   const requests = requestItems(room, roomCode);
-  $('host-count').textContent = `目前主持端 ${hostUids(room).length} 台${requests.length ? '，待核准的申請：' : ''}`;
+  const hosts = hostUids(room);
+  const online = hosts.filter((uid) => isOnline(room, uid)).length;
+  $('host-count').textContent =
+    `目前主持端 ${hosts.length} 台，${online} 台在線` + (requests.length ? '；待核准的申請：' : '');
   $('host-requests').replaceChildren(...requests);
   show('host');
 }
 
 function renderPlayer(room, me) {
+  markPresent();
   const state = room.tables[me.table];
   $('player-stage').dataset.phase = state.phase;
   $('player-table').textContent = `第 ${me.table} 桌`;
@@ -168,10 +204,9 @@ function renderPlayer(room, me) {
   $('player-fog').textContent = state.fog;
   $('player-fog-meter').value = state.fog;
   $('player-mates').replaceChildren(
-    ...playersAt(room, me.table).map(([uid, player]) =>
-      uid === session.uid ? element('li', 'me', `${player.name}（你）`) : element('li', '', player.name),
-    ),
+    ...playersAt(room, me.table).map(([uid, player]) => nameTag(room, uid, player, 'li')),
   );
+  $('player-host-offline').hidden = hostUids(room).some((uid) => isOnline(room, uid));
   $('player-code').textContent = code;
   show('player');
 }
@@ -220,6 +255,7 @@ for (let table = 1; table <= MAX_TABLES; table += 1) {
 
 try {
   session = await connect(slot);
+  watchConnection(session, showConnection);
   const saved = localStorage.getItem(savedRoomKey);
   if (isRoomCode(saved)) enterRoom(saved);
   else show('home');

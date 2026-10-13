@@ -1,4 +1,4 @@
-// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單。
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -12,6 +12,7 @@ import {
   connectDatabaseEmulator,
   get,
   getDatabase,
+  onDisconnect,
   onValue,
   ref,
   remove,
@@ -152,6 +153,61 @@ export async function rejectHost(session, code, uid) {
 // 房間有任何變動就呼叫 onRoom(整個房間的資料)；房間不存在時是 null。回傳取消訂閱的函式。
 export function watchRoom(session, code, onRoom, onError) {
   return onValue(ref(session.db, `rooms/${code}`), (snapshot) => onRoom(snapshot.val()), onError);
+}
+
+// 這台裝置與資料庫的連線一有變化就呼叫 onChange(連上了沒)。回傳取消訂閱的函式。
+export function watchConnection(session, onChange) {
+  return onValue(ref(session.db, '.info/connected'), (snapshot) => onChange(snapshot.val() === true));
+}
+
+// 在房間裡標示「這台裝置在線上」。每次連上（包含斷線後重連）都先請伺服器在斷線時代為移除，再寫入；
+// 不做心跳、不寫時間戳。回傳的函式在離開房間時呼叫：取消代為移除的登記，並立刻移除。
+export function trackPresence(session, code) {
+  const mine = ref(session.db, `rooms/${code}/presence/${session.uid}`);
+  let tracking = true;
+  let armed = false; // 這一條連線已經向伺服器登記「斷線時代為移除」
+  let present = false; // 這台裝置看到的自己那一筆在不在
+  let writing = false;
+  let refused = false; // 寫入被拒絕（房間不見了）就不再試，等下次連上
+  // 該在而不在就寫入。同一個身分較早的連線（換網路後殘留的，或另一個分頁）晚一步斷開時，
+  // 伺服器會把這一筆移掉，這裡會補回去。
+  const sync = async () => {
+    if (!tracking || !armed || present || writing || refused) return;
+    writing = true;
+    try {
+      await set(mine, true);
+    } catch {
+      refused = true;
+    }
+    writing = false;
+    sync();
+  };
+  const stopConnection = watchConnection(session, (connected) => {
+    armed = false;
+    if (!connected) return;
+    refused = false;
+    onDisconnect(mine)
+      .remove()
+      .then(() => {
+        armed = true;
+        sync();
+      })
+      .catch(() => {}); // 房間不見了才會被拒絕，這時畫面會由房間的訂閱帶回首頁
+  });
+  const stopMine = onValue(
+    mine,
+    (snapshot) => {
+      present = snapshot.exists();
+      sync();
+    },
+    () => {},
+  );
+  return async () => {
+    tracking = false;
+    stopConnection();
+    stopMine();
+    await Promise.all([onDisconnect(mine).cancel(), remove(mine)]);
+  };
 }
 
 // 把某一桌往前推一步。expected 是呼叫端以為的現況 { round, phase }：

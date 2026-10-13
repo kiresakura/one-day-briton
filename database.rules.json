@@ -55,6 +55,12 @@
             "$other": { ".validate": false }
           }
         },
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($code).child('meta').exists()",
+            ".validate": "newData.val() === true"
+          }
+        },
         "$other": { ".validate": false }
       }
     }
