@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>一日英國人：女皇陛下萬歲！</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./css/app.css">
+  <!-- 讓 js/store.js 的 firebase/* 匯入對到自行託管的 SDK，不向外部主機要任何檔案。 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "./vendor/firebase/firebase-app.js",
+        "firebase/auth": "./vendor/firebase/firebase-auth.js",
+        "firebase/database": "./vendor/firebase/firebase-database.js"
+      }
+    }
+  </script>
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1>一日英國人</h1>
+    <p>女皇陛下萬歲！</p>
+  </header>
+
+  <main>
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="screen-loading">
+      <p class="loading">連線中…</p>
+      <noscript><p class="notice">這個遊戲需要開啟 JavaScript。</p></noscript>
+      <p id="unsupported" class="notice" hidden>這支手機的瀏覽器版本太舊，請更新系統或改用新版 Chrome／Safari。</p>
+    </section>
+
+    <section id="screen-home" hidden>
+      <div class="card">
+        <h2>主持端</h2>
+        <button id="create-room" type="button">開新房（主持端）</button>
+      </div>
+      <form id="join-form" class="card" autocomplete="off">
+        <h2>加入</h2>
+        <label for="join-code">房號</label>
+        <input id="join-code" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
+        <label for="join-name">暱稱</label>
+        <input id="join-name" maxlength="12" placeholder="最多 12 個字" required>
+        <label for="join-table">桌號</label>
+        <select id="join-table"></select>
+        <button type="submit">加入</button>
+      </form>
+    </section>
+
+    <section id="screen-host" hidden>
+      <div class="card room-code">
+        <span>房號</span>
+        <strong id="host-code"></strong>
+      </div>
+      <div id="host-tables" class="tables"></div>
+      <button id="host-leave" type="button" class="quiet">離開</button>
+    </section>
+
+    <section id="screen-player" hidden>
+      <div id="player-stage" class="card stage">
+        <p class="stage-where"><span id="player-table"></span>・<span id="player-round"></span></p>
+        <p id="player-phase" class="phase"></p>
+        <p class="fog">
+          <label for="player-fog-meter">迷霧值</label>
+          <meter id="player-fog-meter" min="0" max="100" value="0"></meter>
+          <span id="player-fog"></span>
+        </p>
+      </div>
+      <div class="card">
+        <h2>同桌玩家</h2>
+        <ul id="player-mates" class="mates"></ul>
+      </div>
+      <p class="room-line">房號 <span id="player-code"></span></p>
+      <button id="player-leave" type="button" class="quiet">離開房間</button>
+    </section>
+  </main>
+
+  <script>
+    // 不支援 import map 的舊瀏覽器載不了上面的模組，這裡給一句說明，免得畫面停在「連線中」。
+    if (!(HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) {
+      document.getElementById('unsupported').hidden = false;
+    }
+  </script>
+</body>
+</html>

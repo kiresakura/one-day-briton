@@ -1,0 +1,241 @@
+/* 手機優先；只用系統字型，不引用任何外部資源。 */
+:root {
+  --ink: #1f2430;
+  --paper: #f4efe6;
+  --card: #fffdf8;
+  --line: #d8cfbf;
+  --accent: #7a1f2b;
+  --muted: #6b6558;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom));
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+}
+
+.masthead,
+main {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.masthead {
+  padding: 20px 0 12px;
+  text-align: center;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: 0.1em;
+}
+
+.masthead p {
+  margin: 0;
+  color: var(--accent);
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.card {
+  margin: 0 0 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fbe6e4;
+  color: var(--accent);
+}
+
+.loading {
+  padding: 40px 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+#join-code {
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+button {
+  margin-top: 12px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+button.quiet {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.room-code {
+  text-align: center;
+}
+
+.room-code span {
+  display: block;
+  color: var(--muted);
+}
+
+.room-code strong {
+  font-size: 2.6rem;
+  letter-spacing: 0.25em;
+}
+
+.table-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.table-phase {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.table-players {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.stage {
+  text-align: center;
+}
+
+.stage-where {
+  margin: 0;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.phase {
+  margin: 8px 0;
+  font-size: 4.5rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.1em;
+}
+
+.fog {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.fog label {
+  margin: 0;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.fog meter {
+  flex: 1;
+  height: 12px;
+}
+
+.stage[data-phase='sunrise'] {
+  background: #ffe9c7;
+}
+
+.stage[data-phase='day'] {
+  background: #fff9d9;
+}
+
+.stage[data-phase='dusk'] {
+  background: #f3c9a8;
+}
+
+.stage[data-phase='night'] {
+  border-color: #1f2430;
+  background: #1f2430;
+  color: #f4efe6;
+}
+
+.mates {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.mates .me {
+  font-weight: 700;
+}
+
+.room-line {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (min-width: 720px) {
+  main {
+    max-width: 960px;
+  }
+
+  #screen-home,
+  #screen-player {
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  .tables {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .tables .card {
+    margin: 0;
+  }
+}
