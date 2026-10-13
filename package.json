@@ -3,6 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test \"test/unit/*.test.js\""
+    "test": "node --test \"test/unit/*.test.js\"",
+    "dev": "scripts/with-java.sh firebase emulators:start --only auth,database,hosting --project demo-one-day-briton",
+    "vendor": "node scripts/vendor-firebase.mjs"
+  },
+  "devDependencies": {
+    "firebase": "13.0.0",
+    "firebase-tools": "15.33.0"
   }
 }

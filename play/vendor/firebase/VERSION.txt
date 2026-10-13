@@ -1,0 +1,17 @@
+package: firebase (npm)
+version: 13.0.0
+license: Apache-2.0（全文見同目錄 LICENSE）
+origin:  node_modules/firebase/firebase-{app,auth,database}.js
+changes: 對 https://www.gstatic.com/firebasejs/13.0.0/ 的模組匯入改寫為相對路徑；
+         移除檔尾的 sourceMappingURL 註解（未附 .map 檔）。其餘內容未更動。
+regenerate: npm run vendor（scripts/vendor-firebase.mjs）
+
+firebase-app.js  106513 bytes  改寫匯入 0 處
+  sha256 原檔  7cb48cbc5728f220562d05bd0aab8c17d8bda03c599ad8cb4ad0f042e4f65765
+  sha256 本檔  7294ae874fdf615e73d90a9bbda229fe130ac37729c3dde6c71f0788a5ac2547
+firebase-auth.js  157109 bytes  改寫匯入 1 處
+  sha256 原檔  286224de4d870ef55e4301f718488fa77f146d60d6953b3a76f9a3883669b34a
+  sha256 本檔  68791d2374bc0173c8fce0095efd1ed78b957f62ff3b51de0dd0ebcd5f0c46c6
+firebase-database.js  187039 bytes  改寫匯入 1 處
+  sha256 原檔  db92c217ddf208ed474a556d6ade0a304d5e5bb96c3964142e16088a9dc4591b
+  sha256 本檔  18421d18c97d6a246bce03eedb842dc8bae05b4fc81d65ce26a23c53ad6c0b6f
