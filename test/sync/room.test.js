@@ -234,7 +234,7 @@ test('rooms cannot be listed, even when signed in', TIMEOUT, async () => {
 });
 
 test('rules reject taking over a room and malformed data', TIMEOUT, async (t) => {
-  const { code } = await openRoomWithTwoPlayers(t);
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
   const now = Date.now() - 60_000;
   const mine = `rooms/${code}/players/${alice.uid}`;
 
@@ -262,8 +262,10 @@ test('rules reject taking over a room and malformed data', TIMEOUT, async (t) =>
   await assert.rejects(update(ref(host.db, table), { fog: 101 }), denied);
   await assert.rejects(update(ref(host.db, table), { fog: -1 }), denied);
   await assert.rejects(set(ref(host.db, `rooms/${code}/tables/7`), { round: 1, phase: 'sunrise', fog: 0, updatedAt: now }), denied);
+  // 合格的寫入要成功，並且傳到另一台裝置（對方有訂閱時 get 會先回本機快取，所以用訂閱等）。
   await update(ref(host.db, table), { fog: 100 });
-  assert.equal((await readTable(alice, code, 2)).fog, 100);
+  const room = await watchers.alice.until((value) => value.tables[2].fog === 100, 'alice sees fog 100');
+  assert.equal(room.tables[2].fog, 100);
 });
 
 test('a player who leaves disappears from the room', TIMEOUT, async (t) => {
