@@ -1,0 +1,48 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$code": {
+        ".read": "auth != null",
+        ".validate": "$code.matches(/^[A-HJKMNP-Z2-9]{6}$/)",
+        "meta": {
+          ".write": "auth != null && !data.exists() && newData.child('hostUid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['hostUid', 'createdAt', 'tableCount'])",
+          "hostUid": { ".validate": "newData.val() === auth.uid" },
+          "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "tableCount": {
+            ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 6"
+          },
+          "$other": { ".validate": false }
+        },
+        "tables": {
+          ".write": "auth != null && newData.parent().child('meta/hostUid').val() === auth.uid",
+          "$table": {
+            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['round', 'phase', 'fog', 'updatedAt'])",
+            "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "phase": { ".validate": "newData.isString() && newData.val().matches(/^(sunrise|day|dusk|night)$/)" },
+            "fog": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+            "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($code).child('meta').exists()",
+            ".validate": "newData.hasChildren(['name', 'table', 'joinedAt'])",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 12"
+            },
+            "table": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= root.child('rooms').child($code).child('meta/tableCount').val()"
+            },
+            "joinedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

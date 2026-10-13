@@ -1,0 +1,131 @@
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進。
+// 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
+import { deleteApp, initializeApp } from 'firebase/app';
+import {
+  browserLocalPersistence,
+  connectAuthEmulator,
+  indexedDBLocalPersistence,
+  initializeAuth,
+  signInAnonymously,
+} from 'firebase/auth';
+import {
+  connectDatabaseEmulator,
+  get,
+  getDatabase,
+  onValue,
+  ref,
+  remove,
+  runTransaction,
+  serverTimestamp,
+  set,
+  update,
+} from 'firebase/database';
+import { config } from './config.js';
+import {
+  MAX_TABLES,
+  NAME_MAX_LENGTH,
+  ROOM_CODE_LENGTH,
+  generateRoomCode,
+  initialTable,
+  isRoomCode,
+  isValidName,
+  isValidTable,
+  nextStep,
+  normalizeName,
+  normalizeRoomCode,
+} from './rules.js';
+
+// code：invalid-code、invalid-name、invalid-table、room-not-found、permission-denied
+export class StoreError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'StoreError';
+    this.code = code;
+  }
+}
+
+function isPermissionDenied(error) {
+  return /permission[_ ]denied/i.test(`${error?.code} ${error?.message}`);
+}
+
+// 匿名登入。slot 會變成 Firebase app 名稱，登入狀態依名稱分開保存，
+// 所以同一個瀏覽器的不同分頁帶不同 slot 就是不同玩家；不帶就是預設身分。
+export async function connect(slot = '') {
+  const app = slot ? initializeApp(config.firebase, `slot-${slot}`) : initializeApp(config.firebase);
+  // 只給儲存方式、不給彈出視窗登入用的元件，匿名登入用不到，也避免它在手機上預先載入外部指令碼。
+  const auth = initializeAuth(app, { persistence: [indexedDBLocalPersistence, browserLocalPersistence] });
+  const db = getDatabase(app);
+  if (config.emulator) {
+    const { host, authPort, databasePort } = config.emulator;
+    connectAuthEmulator(auth, `http://${host}:${authPort}`, { disableWarnings: true });
+    connectDatabaseEmulator(db, host, databasePort);
+  }
+  await auth.authStateReady();
+  if (!auth.currentUser) await signInAnonymously(auth);
+  return { app, db, uid: auth.currentUser.uid };
+}
+
+export function disconnect(session) {
+  return deleteApp(session.app);
+}
+
+// 房間資料與各桌初始狀態一次寫入。房號撞到既有房間時規則會拒絕（meta 只能建立、不能覆寫）。
+export async function createRoom(session, tableCount = MAX_TABLES) {
+  if (!isValidTable(tableCount)) throw new StoreError('invalid-table', `桌數請設 1–${MAX_TABLES}`);
+  const code = generateRoomCode();
+  const tables = {};
+  for (let table = 1; table <= tableCount; table += 1) {
+    tables[table] = { ...initialTable(), updatedAt: serverTimestamp() };
+  }
+  await update(ref(session.db, `rooms/${code}`), {
+    meta: { hostUid: session.uid, createdAt: serverTimestamp(), tableCount },
+    tables,
+  });
+  return code;
+}
+
+// 回傳整理過的房號。同一個人再加入一次會覆寫自己那一筆（可用來換桌或改暱稱）。
+export async function joinRoom(session, codeInput, nameInput, table) {
+  const code = normalizeRoomCode(codeInput);
+  const name = normalizeName(nameInput);
+  if (!isRoomCode(code)) throw new StoreError('invalid-code', `房號是 ${ROOM_CODE_LENGTH} 碼英數字`);
+  if (!isValidName(name)) throw new StoreError('invalid-name', `暱稱請輸入 1–${NAME_MAX_LENGTH} 個字`);
+  const meta = (await get(ref(session.db, `rooms/${code}/meta`))).val();
+  if (!meta) throw new StoreError('room-not-found', `找不到房間 ${code}，請確認房號`);
+  if (!isValidTable(table, meta.tableCount)) {
+    throw new StoreError('invalid-table', `桌號請選 1–${meta.tableCount}`);
+  }
+  await set(ref(session.db, `rooms/${code}/players/${session.uid}`), { name, table, joinedAt: serverTimestamp() });
+  return code;
+}
+
+export function leaveRoom(session, code) {
+  return remove(ref(session.db, `rooms/${code}/players/${session.uid}`));
+}
+
+// 房間有任何變動就呼叫 onRoom(整個房間的資料)；房間不存在時是 null。回傳取消訂閱的函式。
+export function watchRoom(session, code, onRoom, onError) {
+  return onValue(ref(session.db, `rooms/${code}`), (snapshot) => onRoom(snapshot.val()), onError);
+}
+
+// 把某一桌往前推一步。expected 是呼叫端以為的現況 { round, phase }：
+// 資料庫現況不一樣就不動，所以連點兩下或兩台裝置同時按，都只會前進一步。
+// 回傳 { advanced, table }：advanced 表示這次有沒有推進，table 是該桌的最新狀態。
+export async function advanceTable(session, code, table, expected) {
+  let result;
+  try {
+    result = await runTransaction(
+      ref(session.db, `rooms/${code}/tables/${table}`),
+      (current) => {
+        if (current === null) return null; // 本機還沒有這一桌的資料：照原樣送出，伺服器比對後會帶最新資料重跑
+        if (current.round !== expected.round || current.phase !== expected.phase) return undefined; // 放棄
+        return { ...current, ...nextStep(current), updatedAt: serverTimestamp() };
+      },
+      { applyLocally: false },
+    );
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '只有主持端可以推進階段');
+    throw error;
+  }
+  return { advanced: result.committed && result.snapshot.exists(), table: result.snapshot.val() };
+}
