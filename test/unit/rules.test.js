@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CONFIRM_CODE_LENGTH,
   PHASES,
   PHASE_LABELS,
   ROOM_CODE_ALPHABET,
   applyFog,
   clampFog,
+  confirmCode,
   generateRoomCode,
+  hostUids,
   initialTable,
+  isHostOf,
   isRoomCode,
   isValidName,
   isValidTable,
@@ -127,4 +131,39 @@ test('table numbers are integers within the table count', () => {
   assert.ok(!isValidTable('3'));
   assert.ok(isValidTable(3, 3));
   assert.ok(!isValidTable(4, 3));
+});
+
+test('the room creator and approved devices are hosts', () => {
+  const room = { meta: { hostUid: 'creator' }, hosts: { backup: true, creator: true, odd: false } };
+  assert.deepEqual(hostUids(room), ['creator', 'backup']);
+  assert.ok(isHostOf(room, 'creator'));
+  assert.ok(isHostOf(room, 'backup'));
+  assert.ok(!isHostOf(room, 'odd'));
+  assert.ok(!isHostOf(room, 'player'));
+  assert.deepEqual(hostUids({ meta: { hostUid: 'creator' } }), ['creator']);
+  assert.deepEqual(hostUids(null), []);
+  assert.ok(!isHostOf(null, 'creator'));
+});
+
+test('confirmation codes are 4 characters from the room code alphabet', () => {
+  assert.equal(CONFIRM_CODE_LENGTH, 4);
+  for (const uid of ['a', 'uid-1', 'Zk3vQ9xT1mYb7LpR2sWd8uNc4eHf', '', '測試']) {
+    const code = confirmCode(uid);
+    assert.equal(code.length, 4);
+    assert.ok([...code].every((char) => ROOM_CODE_ALPHABET.includes(char)), code);
+  }
+});
+
+test('the same uid always gives the same confirmation code', () => {
+  const uid = 'Zk3vQ9xT1mYb7LpR2sWd8uNc4eHf';
+  assert.equal(confirmCode(uid), confirmCode(uid));
+  assert.equal(confirmCode(uid), confirmCode(`${uid}`));
+  assert.equal(confirmCode('uid-1'), 'M6BJ');
+});
+
+test('different uids mostly give different confirmation codes', () => {
+  const codes = new Set();
+  for (let i = 0; i < 1000; i += 1) codes.add(confirmCode(`uid-${i}`));
+  assert.ok(codes.size >= 990, `only ${codes.size} distinct codes for 1000 uids`);
+  assert.notEqual(confirmCode('Zk3vQ9xT1mYb7LpR2sWd8uNc4eHf'), confirmCode('Zk3vQ9xT1mYb7LpR2sWd8uNc4eHg'));
 });

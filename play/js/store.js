@@ -1,4 +1,4 @@
-// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進。
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -84,14 +84,24 @@ export async function createRoom(session, tableCount = MAX_TABLES) {
   return code;
 }
 
-// 回傳整理過的房號。同一個人再加入一次會覆寫自己那一筆（可用來換桌或改暱稱）。
-export async function joinRoom(session, codeInput, nameInput, table) {
+function parseRoomCode(codeInput) {
   const code = normalizeRoomCode(codeInput);
-  const name = normalizeName(nameInput);
   if (!isRoomCode(code)) throw new StoreError('invalid-code', `房號是 ${ROOM_CODE_LENGTH} 碼英數字`);
-  if (!isValidName(name)) throw new StoreError('invalid-name', `暱稱請輸入 1–${NAME_MAX_LENGTH} 個字`);
+  return code;
+}
+
+async function readMeta(session, code) {
   const meta = (await get(ref(session.db, `rooms/${code}/meta`))).val();
   if (!meta) throw new StoreError('room-not-found', `找不到房間 ${code}，請確認房號`);
+  return meta;
+}
+
+// 回傳整理過的房號。同一個人再加入一次會覆寫自己那一筆（可用來換桌或改暱稱）。
+export async function joinRoom(session, codeInput, nameInput, table) {
+  const code = parseRoomCode(codeInput);
+  const name = normalizeName(nameInput);
+  if (!isValidName(name)) throw new StoreError('invalid-name', `暱稱請輸入 1–${NAME_MAX_LENGTH} 個字`);
+  const meta = await readMeta(session, code);
   if (!isValidTable(table, meta.tableCount)) {
     throw new StoreError('invalid-table', `桌號請選 1–${meta.tableCount}`);
   }
@@ -101,6 +111,42 @@ export async function joinRoom(session, codeInput, nameInput, table) {
 
 export function leaveRoom(session, code) {
   return remove(ref(session.db, `rooms/${code}/players/${session.uid}`));
+}
+
+// 以主持端身分進房，回傳 { code, host }。已經是主持端（開房的人，或主持名單上的人）就是 host: true；
+// 還不是就留下一筆申請，等現任主持端核對確認碼後核准，這時 host 是 false。
+export async function enterAsHost(session, codeInput) {
+  const code = parseRoomCode(codeInput);
+  const [meta, listed] = await Promise.all([
+    readMeta(session, code),
+    get(ref(session.db, `rooms/${code}/hosts/${session.uid}`)),
+  ]);
+  if (meta.hostUid === session.uid || listed.val() === true) return { code, host: true };
+  await set(ref(session.db, `rooms/${code}/hostRequests/${session.uid}`), { requestedAt: serverTimestamp() });
+  return { code, host: false };
+}
+
+export function cancelHostRequest(session, code) {
+  return remove(ref(session.db, `rooms/${code}/hostRequests/${session.uid}`));
+}
+
+// 核准：加進主持名單、清掉申請，一次寫入。名單上的人之後也能核准別人。
+export async function approveHost(session, code, uid) {
+  try {
+    await update(ref(session.db, `rooms/${code}`), { [`hosts/${uid}`]: true, [`hostRequests/${uid}`]: null });
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '只有主持端可以核准申請');
+    throw error;
+  }
+}
+
+export async function rejectHost(session, code, uid) {
+  try {
+    await remove(ref(session.db, `rooms/${code}/hostRequests/${uid}`));
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '只有主持端可以拒絕申請');
+    throw error;
+  }
 }
 
 // 房間有任何變動就呼叫 onRoom(整個房間的資料)；房間不存在時是 null。回傳取消訂閱的函式。

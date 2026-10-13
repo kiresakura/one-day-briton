@@ -1,6 +1,18 @@
-// 畫面與事件：首頁、主持端、玩家端三個畫面切換。資料一律從 store.js 的訂閱來。
-import { MAX_TABLES, PHASE_LABELS, isRoomCode } from './rules.js';
-import { StoreError, advanceTable, connect, createRoom, joinRoom, leaveRoom, watchRoom } from './store.js';
+// 畫面與事件：首頁、等待核准、主持端、玩家端幾個畫面切換。資料一律從 store.js 的訂閱來。
+import { MAX_TABLES, PHASE_LABELS, confirmCode, hostUids, isHostOf, isRoomCode } from './rules.js';
+import {
+  StoreError,
+  advanceTable,
+  approveHost,
+  cancelHostRequest,
+  connect,
+  createRoom,
+  enterAsHost,
+  joinRoom,
+  leaveRoom,
+  rejectHost,
+  watchRoom,
+} from './store.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,9 +25,10 @@ const savedRoomKey = `one-day-briton:room:${slot || 'default'}`;
 let session = null;
 let code = null;
 let stopWatching = null;
+let requested = false; // 這台裝置送過主持端申請、還在等核准
 
 function show(screen) {
-  for (const name of ['loading', 'home', 'host', 'player']) $(`screen-${name}`).hidden = name !== screen;
+  for (const name of ['loading', 'home', 'pending', 'host', 'player']) $(`screen-${name}`).hidden = name !== screen;
 }
 
 function notify(message = '') {
@@ -35,10 +48,24 @@ function element(tag, className, text) {
   return node;
 }
 
+// 按下去先停用按鈕，做完再恢復；失敗就把原因顯示出來。
+async function run(button, action) {
+  button.disabled = true;
+  notify();
+  try {
+    await action();
+  } catch (error) {
+    notify(explain(error));
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function goHome(message = '') {
   stopWatching?.();
   stopWatching = null;
   code = null;
+  requested = false;
   localStorage.removeItem(savedRoomKey);
   notify(message);
   show('home');
@@ -55,7 +82,9 @@ function enterRoom(roomCode) {
 
 function render(room) {
   if (!room?.meta) return goHome('房間不存在或已關閉');
-  if (room.meta.hostUid === session.uid) return renderHost(room);
+  if (isHostOf(room, session.uid)) return renderHost(room);
+  if (room.hostRequests?.[session.uid]) return renderPending();
+  if (requested) return goHome('主持端沒有核准這次申請');
   const me = room.players?.[session.uid];
   if (me && room.tables?.[me.table]) return renderPlayer(room, me);
   return goHome('你還沒加入這個房間');
@@ -67,7 +96,32 @@ function playersAt(room, table) {
     .sort(([, a], [, b]) => a.joinedAt - b.joinedAt);
 }
 
+function renderPending() {
+  requested = true;
+  $('pending-confirm').textContent = confirmCode(session.uid);
+  $('pending-code').textContent = code;
+  show('pending');
+}
+
+// 待核准的申請：主持端核對確認碼與對方畫面上的相同，再按核准。
+function requestItems(room, roomCode) {
+  return Object.entries(room.hostRequests ?? {})
+    .sort(([, a], [, b]) => a.requestedAt - b.requestedAt)
+    .map(([uid]) => {
+      const approve = element('button', 'request-approve', '核准');
+      approve.type = 'button';
+      approve.addEventListener('click', () => run(approve, () => approveHost(session, roomCode, uid)));
+      const reject = element('button', 'request-reject quiet', '拒絕');
+      reject.type = 'button';
+      reject.addEventListener('click', () => run(reject, () => rejectHost(session, roomCode, uid)));
+      const item = element('li', 'request');
+      item.append(element('span', '', '確認碼'), element('strong', 'request-code', confirmCode(uid)), approve, reject);
+      return item;
+    });
+}
+
 function renderHost(room) {
+  requested = false;
   const roomCode = code;
   const cards = [];
   for (let table = 1; table <= room.meta.tableCount; table += 1) {
@@ -85,18 +139,10 @@ function renderHost(room) {
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
-    next.addEventListener('click', async () => {
-      next.disabled = true;
-      notify();
-      try {
-        // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
-        await advanceTable(session, roomCode, table, { round: state.round, phase: state.phase });
-      } catch (error) {
-        notify(explain(error));
-      } finally {
-        next.disabled = false;
-      }
-    });
+    // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
+    next.addEventListener('click', () =>
+      run(next, () => advanceTable(session, roomCode, table, { round: state.round, phase: state.phase })),
+    );
     card.append(
       element('h2', '', `第 ${table} 桌`),
       status,
@@ -107,6 +153,9 @@ function renderHost(room) {
   }
   $('host-code').textContent = roomCode;
   $('host-tables').replaceChildren(...cards);
+  const requests = requestItems(room, roomCode);
+  $('host-count').textContent = `目前主持端 ${hostUids(room).length} 台${requests.length ? '，待核准的申請：' : ''}`;
+  $('host-requests').replaceChildren(...requests);
   show('host');
 }
 
@@ -127,31 +176,30 @@ function renderPlayer(room, me) {
   show('player');
 }
 
-$('create-room').addEventListener('click', async () => {
-  const button = $('create-room');
-  button.disabled = true;
-  notify();
-  try {
-    enterRoom(await createRoom(session));
-  } catch (error) {
-    notify(explain(error));
-  } finally {
-    button.disabled = false;
-  }
+$('create-room').addEventListener('click', () =>
+  run($('create-room'), async () => enterRoom(await createRoom(session))),
+);
+
+// 已經是主持端就直接回到主持畫面；還不是就送出申請，在等待畫面等核准。
+$('host-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  run(event.target.querySelector('button'), async () => {
+    enterRoom((await enterAsHost(session, $('host-join-code').value)).code);
+    event.target.reset();
+  });
 });
 
-$('join-form').addEventListener('submit', async (event) => {
+$('join-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  const button = event.target.querySelector('button');
-  button.disabled = true;
-  notify();
-  try {
-    enterRoom(await joinRoom(session, $('join-code').value, $('join-name').value, Number($('join-table').value)));
-  } catch (error) {
-    notify(explain(error));
-  } finally {
-    button.disabled = false;
-  }
+  run(event.target.querySelector('button'), async () =>
+    enterRoom(await joinRoom(session, $('join-code').value, $('join-name').value, Number($('join-table').value))),
+  );
+});
+
+$('pending-cancel').addEventListener('click', () => {
+  const leaving = code;
+  goHome();
+  cancelHostRequest(session, leaving).catch((error) => notify(explain(error)));
 });
 
 $('player-leave').addEventListener('click', () => {
@@ -161,8 +209,7 @@ $('player-leave').addEventListener('click', () => {
 });
 
 $('host-leave').addEventListener('click', () => {
-  // 目前離開後沒有回到主持畫面的入口（見 docs/MILESTONES.md），所以先問一聲。
-  if (confirm('離開後房間會保留，但這台裝置回不到主持畫面。確定離開？')) goHome();
+  if (confirm('離開後房間會保留，這台裝置之後可以在首頁用房號「以主持端進入」回來。確定離開？')) goHome();
 });
 
 for (let table = 1; table <= MAX_TABLES; table += 1) {

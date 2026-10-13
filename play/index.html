@@ -37,11 +37,16 @@
       <div class="card">
         <h2>主持端</h2>
         <button id="create-room" type="button">開新房（主持端）</button>
+        <form id="host-form" autocomplete="off">
+          <label for="host-join-code">已經有房間：輸入房號</label>
+          <input id="host-join-code" class="code-input" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
+          <button type="submit" class="quiet">以主持端進入</button>
+        </form>
       </div>
       <form id="join-form" class="card" autocomplete="off">
         <h2>加入</h2>
         <label for="join-code">房號</label>
-        <input id="join-code" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
+        <input id="join-code" class="code-input" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
         <label for="join-name">暱稱</label>
         <input id="join-name" maxlength="12" placeholder="最多 12 個字" required>
         <label for="join-table">桌號</label>
@@ -50,12 +55,27 @@
       </form>
     </section>
 
+    <section id="screen-pending" hidden>
+      <div class="card room-code">
+        <span>確認碼</span>
+        <strong id="pending-confirm"></strong>
+      </div>
+      <p class="pending-note">等待主持端核准。請主持端核對畫面上的確認碼與這裡相同再核准；核准後會自動進入主持畫面。</p>
+      <p class="room-line">房號 <span id="pending-code"></span></p>
+      <button id="pending-cancel" type="button" class="quiet">取消申請</button>
+    </section>
+
     <section id="screen-host" hidden>
       <div class="card room-code">
         <span>房號</span>
         <strong id="host-code"></strong>
       </div>
       <div id="host-tables" class="tables"></div>
+      <div class="card">
+        <h2>主持端</h2>
+        <p id="host-count" class="host-count"></p>
+        <ul id="host-requests" class="requests"></ul>
+      </div>
       <button id="host-leave" type="button" class="quiet">離開</button>
     </section>
 

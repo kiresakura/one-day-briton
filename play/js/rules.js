@@ -13,6 +13,7 @@ export const NAME_MAX_LENGTH = 12;
 // 大寫英數去掉容易看錯的 0 O 1 I L，剩 31 個字元。
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 6;
+export const CONFIRM_CODE_LENGTH = 4;
 
 export function isPhase(phase) {
   return PHASES.includes(phase);
@@ -83,4 +84,35 @@ export function isValidName(name) {
 
 export function isValidTable(table, tableCount = MAX_TABLES) {
   return Number.isInteger(table) && table >= 1 && table <= tableCount;
+}
+
+// 房間的主持端：開房的人，加上被核准進主持名單的人。
+export function hostUids(room) {
+  const uids = new Set();
+  if (room?.meta?.hostUid) uids.add(room.meta.hostUid);
+  for (const [uid, approved] of Object.entries(room?.hosts ?? {})) {
+    if (approved === true) uids.add(uid);
+  }
+  return [...uids];
+}
+
+export function isHostOf(room, uid) {
+  return hostUids(room).includes(uid);
+}
+
+// 由申請者的 uid 算出的確認碼：申請端與主持端各自算、顯示同一組，主持端核對後才核准。
+// 只用來防認錯人，不是密碼（FNV-1a 雜湊後取 4 個字元，字元集與房號相同）。
+export function confirmCode(uid) {
+  const text = String(uid ?? '');
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  const size = ROOM_CODE_ALPHABET.length;
+  let code = '';
+  for (let index = 0; index < CONFIRM_CODE_LENGTH; index += 1) {
+    code += ROOM_CODE_ALPHABET[hash % size];
+    hash = Math.floor(hash / size);
+  }
+  return code;
 }

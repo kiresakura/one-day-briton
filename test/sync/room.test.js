@@ -2,16 +2,31 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { deleteApp, initializeApp } from 'firebase/app';
-import { connectDatabaseEmulator, get, getDatabase, ref, set, update } from 'firebase/database';
+import {
+  connectDatabaseEmulator,
+  get,
+  getDatabase,
+  goOffline,
+  goOnline,
+  ref,
+  remove,
+  set,
+  update,
+} from 'firebase/database';
 import { config } from '../../play/js/config.js';
+import { hostUids, isHostOf } from '../../play/js/rules.js';
 import {
   StoreError,
   advanceTable,
+  approveHost,
+  cancelHostRequest,
   connect,
   createRoom,
   disconnect,
+  enterAsHost,
   joinRoom,
   leaveRoom,
+  rejectHost,
   watchRoom,
 } from '../../play/js/store.js';
 
@@ -21,13 +36,19 @@ const denied = /permission[_ ]denied/i;
 let host;
 let alice;
 let bob;
+let backup;
 
 before(async () => {
-  [host, alice, bob] = await Promise.all([connect('host'), connect('alice'), connect('bob')]);
+  [host, alice, bob, backup] = await Promise.all([
+    connect('host'),
+    connect('alice'),
+    connect('bob'),
+    connect('backup'),
+  ]);
 });
 
 after(async () => {
-  await Promise.all([host, alice, bob].filter(Boolean).map(disconnect));
+  await Promise.all([host, alice, bob, backup].filter(Boolean).map(disconnect));
 });
 
 // 訂閱房間並記住最新狀態；until() 等到條件成立，逾時就失敗。
@@ -73,6 +94,22 @@ async function openRoomWithTwoPlayers(t) {
   await Promise.all(Object.values(watchers).map((watcher) => watcher.until(bothListed, 'both players listed')));
   return { code, watchers };
 }
+
+// 備援裝置用房號申請、原主持端核准，等到備援裝置自己看到名單上有它。回傳備援裝置的訂閱。
+async function approveBackup(t, code, hostWatcher) {
+  const watcher = watch(backup, code);
+  t.after(() => watcher.stop());
+  assert.deepEqual(await enterAsHost(backup, code), { code, host: false });
+  await hostWatcher.until(asksToHost(backup.uid), 'host sees the request');
+  await approveHost(host, code, backup.uid);
+  await watcher.until(listsAsHost(backup.uid), 'backup sees itself on the host list');
+  return watcher;
+}
+
+const asksToHost = (uid) => (room) => Boolean(room?.hostRequests?.[uid]);
+const listsAsHost = (uid) => (room) => room?.hosts?.[uid] === true;
+const isDeniedByStore = (error) => error instanceof StoreError && error.code === 'permission-denied';
+const stepOf = (table) => ({ round: table.round, phase: table.phase });
 
 const readTable = async (session, code, table) => (await get(ref(session.db, `rooms/${code}/tables/${table}`))).val();
 
@@ -273,4 +310,157 @@ test('a player who leaves disappears from the room', TIMEOUT, async (t) => {
   await leaveRoom(alice, code);
   const room = await watchers.host.until((value) => Object.keys(value.players ?? {}).length === 1, 'one player left');
   assert.deepEqual(Object.keys(room.players), [bob.uid]);
+});
+
+test('a backup device asks to host, is approved, and can then advance', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const seenByBackup = watch(backup, code);
+  t.after(() => seenByBackup.stop());
+
+  assert.deepEqual(await enterAsHost(backup, ` ${code.toLowerCase()} `), { code, host: false });
+  const asked = await watchers.host.until(asksToHost(backup.uid), 'host sees the request');
+  assert.deepEqual(Object.keys(asked.hostRequests), [backup.uid]);
+  assert.equal(typeof asked.hostRequests[backup.uid].requestedAt, 'number');
+  assert.ok(!isHostOf(asked, backup.uid));
+
+  await approveHost(host, code, backup.uid);
+  const approved = await seenByBackup.until(listsAsHost(backup.uid), 'backup sees itself on the host list');
+  assert.equal(approved.hostRequests, undefined, 'the request is cleared by the same write');
+  assert.deepEqual(hostUids(approved), [host.uid, backup.uid]);
+  assert.equal(approved.meta.hostUid, host.uid, 'the room creator stays the same');
+
+  const result = await advanceTable(backup, code, 2, { round: 1, phase: 'sunrise' });
+  assert.equal(result.advanced, true);
+  const isDay = (room) => room.tables[2].phase === 'day';
+  await Promise.all([watchers.alice.until(isDay, 'alice sees day'), watchers.host.until(isDay, 'host sees day')]);
+
+  // 已經是主持端的人再用房號進來，直接算主持端，不會再留下申請。
+  assert.deepEqual(await enterAsHost(backup, code), { code, host: true });
+  assert.deepEqual(await enterAsHost(host, code), { code, host: true });
+  await advanceTable(host, code, 1, { round: 1, phase: 'sunrise' });
+  const later = await watchers.alice.until((room) => room.tables[1].phase === 'day', 'alice sees table 1 move');
+  assert.equal(later.hostRequests, undefined);
+});
+
+test('a device that was not approved cannot advance or change the host list', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const now = Date.now() - 60_000;
+  await enterAsHost(backup, code);
+  await watchers.host.until(asksToHost(backup.uid), 'host sees the request');
+
+  await assert.rejects(advanceTable(backup, code, 2, { round: 1, phase: 'sunrise' }), isDeniedByStore);
+
+  // 任何人都不能把自己或別人加進主持名單，申請中的人也不能核准自己。
+  await assert.rejects(set(ref(backup.db, `rooms/${code}/hosts/${backup.uid}`), true), denied);
+  await assert.rejects(set(ref(alice.db, `rooms/${code}/hosts/${alice.uid}`), true), denied);
+  await assert.rejects(set(ref(alice.db, `rooms/${code}/hosts/${bob.uid}`), true), denied);
+  await assert.rejects(approveHost(backup, code, backup.uid), isDeniedByStore);
+  await assert.rejects(approveHost(alice, code, backup.uid), isDeniedByStore);
+  await assert.rejects(
+    update(ref(backup.db, `rooms/${code}`), { [`hosts/${backup.uid}`]: true, 'tables/2/phase': 'night' }),
+    denied,
+  );
+
+  // 玩家不能刪別人的申請，也不能替別人申請。
+  await assert.rejects(remove(ref(alice.db, `rooms/${code}/hostRequests/${backup.uid}`)), denied);
+  await assert.rejects(rejectHost(alice, code, backup.uid), isDeniedByStore);
+  await assert.rejects(set(ref(alice.db, `rooms/${code}/hostRequests/${bob.uid}`), { requestedAt: now }), denied);
+
+  // 申請與名單的格式。
+  const mine = `rooms/${code}/hostRequests/${alice.uid}`;
+  await assert.rejects(set(ref(alice.db, mine), true), denied);
+  await assert.rejects(set(ref(alice.db, mine), { requestedAt: 'now' }), denied);
+  await assert.rejects(set(ref(alice.db, mine), { requestedAt: Date.now() + 3_600_000 }), denied);
+  await assert.rejects(set(ref(alice.db, mine), { requestedAt: now, note: 'let me in' }), denied);
+  await assert.rejects(set(ref(host.db, `rooms/${code}/hosts/${backup.uid}`), 'yes'), denied);
+  await assert.rejects(set(ref(host.db, `rooms/${code}/hosts/${backup.uid}`), { role: 'host' }), denied);
+
+  // 房間不存在就不能申請。
+  await assert.rejects(enterAsHost(backup, 'ZZZZ97'), (error) => error instanceof StoreError && error.code === 'room-not-found');
+  await assert.rejects(enterAsHost(backup, 'abc'), (error) => error instanceof StoreError && error.code === 'invalid-code');
+  await assert.rejects(set(ref(backup.db, `rooms/ZZZZ97/hostRequests/${backup.uid}`), { requestedAt: now }), denied);
+
+  // 以上都沒留下任何東西：等主持端下一筆寫入傳到玩家，再看那時的房間。
+  await advanceTable(host, code, 1, { round: 1, phase: 'sunrise' });
+  const room = await watchers.alice.until((value) => value.tables[1].phase === 'day', 'alice sees table 1 move');
+  assert.equal(room.hosts, undefined);
+  assert.deepEqual(Object.keys(room.hostRequests), [backup.uid]);
+  assert.deepEqual(stepOf(room.tables[2]), { round: 1, phase: 'sunrise' });
+});
+
+test('an approved backup host keeps the room going after the first host drops offline', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const seenByBackup = await approveBackup(t, code, watchers.host);
+
+  t.after(() => goOnline(host.db));
+  goOffline(host.db);
+  const result = await advanceTable(backup, code, 2, { round: 1, phase: 'sunrise' });
+  assert.equal(result.advanced, true);
+  const isDay = (room) => room.tables[2].phase === 'day';
+  await Promise.all([watchers.alice.until(isDay, 'alice sees day'), watchers.bob.until(isDay, 'bob sees day')]);
+  assert.equal(watchers.host.room.tables[2].phase, 'sunrise', 'the offline host has not heard about it');
+
+  // 原主持端連回來後跟上進度，而且仍然是主持端。
+  goOnline(host.db);
+  await watchers.host.until(isDay, 'the first host catches up after reconnecting');
+  const next = await advanceTable(host, code, 2, { round: 1, phase: 'day' });
+  assert.equal(next.advanced, true);
+  await seenByBackup.until((room) => room.tables[2].phase === 'dusk', 'backup sees dusk');
+});
+
+test('two hosts advancing from the same state move the table one step only', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  await approveBackup(t, code, watchers.host);
+
+  const expected = { round: 1, phase: 'sunrise' };
+  const results = await Promise.all([
+    advanceTable(host, code, 2, expected),
+    advanceTable(backup, code, 2, expected),
+  ]);
+  assert.deepEqual(results.map((result) => result.advanced).sort(), [false, true]);
+  for (const result of results) assert.deepEqual(stepOf(result.table), { round: 1, phase: 'day' });
+
+  // 兩筆都結束後再送一筆別桌的推進，玩家收到時第 2 桌仍然只前進了一步。
+  await advanceTable(backup, code, 1, expected);
+  const room = await watchers.alice.until((value) => value.tables[1].phase === 'day', 'alice sees table 1 move');
+  assert.deepEqual(stepOf(room.tables[2]), { round: 1, phase: 'day' });
+});
+
+test('a host can turn a request down and an applicant can withdraw it', TIMEOUT, async (t) => {
+  const { code, watchers } = await openRoomWithTwoPlayers(t);
+  const seenByBackup = watch(backup, code);
+  t.after(() => seenByBackup.stop());
+  const noRequests = (room) => room.hostRequests === undefined;
+
+  await enterAsHost(backup, code);
+  await watchers.host.until(asksToHost(backup.uid), 'host sees the request');
+  await rejectHost(host, code, backup.uid);
+  const rejected = await seenByBackup.until(noRequests, 'backup sees the request removed');
+  assert.equal(rejected.hosts, undefined);
+
+  await enterAsHost(backup, code);
+  await watchers.host.until(asksToHost(backup.uid), 'host sees the second request');
+  await cancelHostRequest(backup, code);
+  const withdrawn = await watchers.host.until(noRequests, 'host sees the request withdrawn');
+  assert.equal(withdrawn.hosts, undefined);
+
+  await assert.rejects(advanceTable(backup, code, 2, { round: 1, phase: 'sunrise' }), isDeniedByStore);
+});
+
+test('an approved host can approve another device', TIMEOUT, async (t) => {
+  const code = await createRoom(host);
+  const watchers = { host: watch(host, code), bob: watch(bob, code) };
+  t.after(() => Object.values(watchers).forEach((watcher) => watcher.stop()));
+  const seenByBackup = await approveBackup(t, code, watchers.host);
+
+  assert.deepEqual(await enterAsHost(bob, code), { code, host: false });
+  await seenByBackup.until(asksToHost(bob.uid), 'backup sees the request');
+  await approveHost(backup, code, bob.uid);
+  const approved = await watchers.bob.until(listsAsHost(bob.uid), 'bob sees itself on the host list');
+  assert.deepEqual(hostUids(approved).sort(), [host.uid, backup.uid, bob.uid].sort());
+  assert.equal(approved.hostRequests, undefined);
+
+  const result = await advanceTable(bob, code, 1, { round: 1, phase: 'sunrise' });
+  assert.equal(result.advanced, true);
+  await watchers.host.until((room) => room.tables[1].phase === 'day', 'host sees day');
 });

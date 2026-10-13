@@ -17,7 +17,7 @@
           "$other": { ".validate": false }
         },
         "tables": {
-          ".write": "auth != null && newData.parent().child('meta/hostUid').val() === auth.uid",
+          ".write": "auth != null && (newData.parent().child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
           "$table": {
             ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['round', 'phase', 'fog', 'updatedAt'])",
             "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
@@ -38,6 +38,20 @@
               ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= root.child('rooms').child($code).child('meta/tableCount').val()"
             },
             "joinedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "hosts": {
+          "$uid": {
+            ".write": "auth != null && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
+            ".validate": "newData.val() === true"
+          }
+        },
+        "hostRequests": {
+          "$uid": {
+            ".write": "auth != null && root.child('rooms').child($code).child('meta').exists() && (auth.uid === $uid || (!newData.exists() && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)))",
+            ".validate": "newData.hasChildren(['requestedAt'])",
+            "requestedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
             "$other": { ".validate": false }
           }
         },
