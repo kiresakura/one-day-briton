@@ -161,7 +161,7 @@ export function watchConnection(session, onChange) {
 }
 
 // 在房間裡標示「這台裝置在線上」。每次連上（包含斷線後重連）都先請伺服器在斷線時代為移除，再寫入；
-// 不做心跳、不寫時間戳。回傳的函式在離開房間時呼叫：取消代為移除的登記，並立刻移除。
+// 不定時回報、不寫時間戳。回傳的函式在離開房間時呼叫：取消代為移除的登記，並立刻移除。
 export function trackPresence(session, code) {
   const mine = ref(session.db, `rooms/${code}/presence/${session.uid}`);
   let tracking = true;
