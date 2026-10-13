@@ -155,6 +155,27 @@ test('four advances lead to sunrise of round 2', TIMEOUT, async (t) => {
   assert.equal(room.tables[2].phase, 'sunrise');
 });
 
+test('advancing works without the room loaded on that device', TIMEOUT, async () => {
+  // 沒有訂閱時本機沒有這一桌的資料，交易第一次會拿到 null，要靠伺服器帶最新資料重跑。
+  const code = await createRoom(host);
+  const first = await advanceTable(host, code, 1, { round: 1, phase: 'sunrise' });
+  assert.equal(first.advanced, true);
+  assert.deepEqual({ round: first.table.round, phase: first.table.phase }, { round: 1, phase: 'day' });
+
+  const stale = await advanceTable(host, code, 1, { round: 1, phase: 'sunrise' });
+  assert.equal(stale.advanced, false);
+  assert.equal((await readTable(host, code, 1)).phase, 'day');
+
+  await assert.rejects(
+    advanceTable(bob, code, 1, { round: 1, phase: 'day' }),
+    (error) => error instanceof StoreError && error.code === 'permission-denied',
+  );
+  assert.equal((await readTable(host, code, 1)).phase, 'day');
+
+  const missing = await advanceTable(host, code, 9, { round: 1, phase: 'sunrise' });
+  assert.deepEqual(missing, { advanced: false, table: null });
+});
+
 test('a player cannot advance the phase', TIMEOUT, async (t) => {
   const { code } = await openRoomWithTwoPlayers(t);
   const before = await readTable(host, code, 2);
