@@ -21,24 +21,28 @@ import {
   playProblem,
   responseDeadline,
   responseProblem,
+  scoreSettings,
   seatsInOrder,
   seededRandom,
+  shouldEnd,
   skippedEffects,
   skippedEventEffects,
   sunriseEventsOf,
+  sunsetClock,
   voteProblem,
 } from './game.js';
 import { indexGameData, loadGameData } from './gamedata.js';
 import { MAX_TABLES, PHASE_LABELS, confirmCode, hostUids, isHostOf, isRoomCode } from './rules.js';
 import {
   StoreError,
-  advanceTable,
+  advanceOrEnd,
   approveHost,
   cancelHostRequest,
   connect,
   createRoom,
   enterAsHost,
   joinRoom,
+  judgeDestiny,
   leaveRoom,
   processSunrise,
   rejectHost,
@@ -51,6 +55,7 @@ import {
   revealDusk,
   revealNight,
   serverTime,
+  setEndAfterRound,
   setStartOrder,
   startSettling,
   startTable,
@@ -708,6 +713,159 @@ function nightBlock(game, state) {
   return null;
 }
 
+// ---- 終局與計分（M9） ----
+
+const PHASE_NAMES = { ...PHASE_LABELS, end: '終局' };
+const END_REASON_TEXT = { sunset: '日落鐘到了', maxRounds: '到了回合上限', host: '主持端提早收場' };
+const ACHIEVEMENT_LABELS = { parliament: '議會之聲', gear: '齒輪大師' };
+const MINUTE_MS = 60_000;
+
+function scoreRules() {
+  return scoreSettings(cardData?.data.settings);
+}
+
+// 這一回合是不是最後一回合（這一回合黑夜揭曉後按「下一階段」就算分）：原因或 null。玩家畫面的「這是最後一回合」、主持端的
+// 「下一階段（算分）」都看它；日落鐘照伺服器時間算。
+function endReasonNow(game, state) {
+  if (!game?.seats || !cardData || state.phase === 'end') return null;
+  return shouldEnd({ round: state.round, startedAt: game.startedAt, endAfterRound: game.endAfterRound }, cardData.data.settings, serverTime(session));
+}
+
+// 日落鐘到點時重畫一次（「這是最後一回合」、按鈕跟著換）。
+function wakeAtSunset(game) {
+  if (cardData && typeof game?.startedAt === 'number') rerenderAt(game.startedAt + scoreRules().sunsetMinutes * MINUTE_MS);
+}
+
+const clockText = (ms) => `${Math.floor(ms / MINUTE_MS)} 分 ${String(Math.floor((ms % MINUTE_MS) / 1000)).padStart(2, '0')} 秒`;
+
+// 主持端的日落鐘：已過多久、還剩多久；過了就寫「這回合結束後算分」。照伺服器時間每秒更新。
+function sunsetLine(game) {
+  const node = element('p', 'sunset-clock table-note');
+  node.dataset.started = game.startedAt;
+  showSunset(node);
+  wakeAtSunset(game);
+  return node;
+}
+
+function showSunset(node) {
+  const clock = sunsetClock(Number(node.dataset.started), cardData?.data.settings, serverTime(session));
+  node.textContent = clock.passed
+    ? `日落鐘：開局後 ${clockText(clock.elapsed)}，時間到了——這回合結束後算分`
+    : `日落鐘：開局後 ${clockText(clock.elapsed)}，還剩 ${clockText(clock.remaining)}`;
+}
+
+setInterval(() => {
+  for (const node of document.querySelectorAll('.sunset-clock[data-started]')) showSunset(node);
+}, 1000);
+
+// 主持端（開局後、終局前）：日落鐘、這一回合會不會算分、「這回合結束後算分」與取消。
+function endControls(table, game, state, roomCode) {
+  const nodes = [sunsetLine(game)];
+  const reason = endReasonNow(game, state);
+  const marked = game.endAfterRound === state.round;
+  if (reason === 'maxRounds') nodes.push(element('p', 'table-note last-round', `第 ${state.round} 回合是回合上限：這一回合黑夜揭曉後，按「下一階段」就算分`));
+  if (reason === 'host') nodes.push(element('p', 'table-note last-round', '已按「這回合結束後算分」：這一回合黑夜揭曉後，按「下一階段」就算分'));
+  if (marked || reason === null) {
+    const toggle = element('button', marked ? 'end-after-round quiet' : 'end-after-round', marked ? '取消「這回合結束後算分」' : '這回合結束後算分');
+    toggle.type = 'button';
+    toggle.addEventListener('click', () => run(toggle, () => setEndAfterRound(session, roomCode, table, !marked)));
+    nodes.push(toggle);
+    if (!marked) nodes.push(element('p', 'caption', '試玩時間不夠時用：這一回合黑夜揭曉後就算分，按了還可以取消'));
+  }
+  return nodes;
+}
+
+// 「判定」空白的天命（終局時由主持端勾）。
+function judgedByHost(id) {
+  const card = id ? cardData?.index.destinies.get(id) : null;
+  return Boolean(card) && (card.check ?? null) === null;
+}
+
+// 天命那一項：內容與是否達成（終局時公開）。
+function destinyText(destiny) {
+  if (!destiny?.id) return '天命：這一局沒有天命（0 分）';
+  const condition = cardData?.index.destinies.get(destiny.id)?.score.text;
+  const state = destiny.done === true ? `達成 +${destiny.points}` : destiny.done === false ? '沒達成 0 分' : `待主持人判定（目前 0 分，達成 +${destiny.points}）`;
+  return `天命「${destiny.text}」${condition ? `（${condition}）` : ''}：${state}`;
+}
+
+const achievementText = (score) => {
+  const list = score.achievements ?? [];
+  return list.length ? list.map((key) => `${ACHIEVEMENT_LABELS[key] ?? key} +${scoreRules().achievementPoints}`).join('、') : '沒有';
+};
+
+// 一個人的分數明細（每一項怎麼算的）。
+function scoreLines(score) {
+  const rules = scoreRules();
+  const { assets } = score;
+  const earned = score.destiny?.done === true ? score.destiny.points : 0;
+  const parts = [earned, assets.points, (score.achievements ?? []).length * rules.achievementPoints];
+  return [
+    destinyText(score.destiny),
+    `資產：英鎊 ${assets.pounds} ÷ ${rules.poundsRate} → ${Math.floor(assets.pounds / rules.poundsRate)} 分、影響力 ${assets.influence} ÷ ${rules.influenceRate} → ${Math.floor(assets.influence / rules.influenceRate)} 分（各自捨去），共 ${assets.points} 分`,
+    `公共成就：${achievementText(score)}`,
+    `罪孽：${score.sin} 點 ÷ ${rules.sinPerPenalty} → 扣 ${score.sinPenalty} 分（捨去）`,
+    `總分：${parts.join('＋')}－${score.sinPenalty}＝${score.total}`,
+  ];
+}
+
+// 照名次排好的 [uid, 分數]（同名次照座位）。
+function rankedScores(game) {
+  return Object.entries(game.final?.scores ?? {}).sort(([a, x], [b, y]) => x.rank - y.rank || (game.seats[a]?.order ?? 0) - (game.seats[b]?.order ?? 0));
+}
+
+// 結算表（主持端）：名次、每人的天命（內容與是否達成）、資產換算、公共成就、罪孽扣分、總分；「判定」空白的天命可以勾「達成／沒達成」。
+function finalLines(room, table, game, roomCode) {
+  const { final } = game;
+  const nodes = [element('h3', '', '終局結算'), element('p', 'table-note final-reason', `第 ${final.round} 回合結束後算分（${END_REASON_TEXT[final.reason] ?? final.reason}）`)];
+  const list = element('ol', 'final-scores');
+  for (const [uid, score] of rankedScores(game)) {
+    const item = element('li', 'final-row');
+    item.dataset.uid = uid;
+    item.append(element('p', 'final-head', `第 ${score.rank} 名・${nameOf(room, uid)}・總分 ${score.total}`));
+    for (const line of scoreLines(score)) item.append(element('p', 'final-line caption', line));
+    if (judgedByHost(score.destiny?.id)) {
+      const box = element('p', 'final-judge');
+      box.append(element('span', '', '主持人判定天命：'));
+      for (const [done, label] of [[true, '達成'], [false, '沒達成']]) {
+        const button = element('button', score.destiny.done === done ? 'judge-pick' : 'judge-pick quiet', label);
+        button.type = 'button';
+        button.dataset.done = String(done);
+        button.disabled = score.destiny.done === done;
+        button.addEventListener('click', () => run(button, () => judgeDestiny(session, roomCode, table, uid, done)));
+        box.append(button);
+      }
+      item.append(box);
+    }
+    list.append(item);
+  }
+  nodes.push(list);
+  return nodes;
+}
+
+// 結算（玩家）：自己的分數明細、全桌名次、每個人的天命與是否達成。
+function finalCard(room, game) {
+  const { final } = game;
+  const mine = final.scores?.[session.uid];
+  const nodes = [element('h2', '', '終局結算'), element('p', 'caption final-reason', `第 ${final.round} 回合結束後算分（${END_REASON_TEXT[final.reason] ?? final.reason}）`)];
+  if (mine) {
+    nodes.push(element('p', 'final-mine', `你是第 ${mine.rank} 名，總分 ${mine.total}`));
+    const detail = element('ul', 'final-detail');
+    detail.append(...scoreLines(mine).map((line) => element('li', '', line)));
+    nodes.push(detail);
+  }
+  nodes.push(element('h3', '', '全桌名次'));
+  const list = element('ol', 'final-scores');
+  for (const [uid, score] of rankedScores(game)) {
+    const item = element('li', uid === session.uid ? 'final-row me' : 'final-row');
+    item.dataset.uid = uid;
+    item.append(element('p', 'final-head', `第 ${score.rank} 名・${nameOf(room, uid)}・總分 ${score.total}`), element('p', 'final-line caption', destinyText(score.destiny)));
+    list.append(item);
+  }
+  nodes.push(list);
+  return nodes;
+}
+
 // 等著響應的那張牌：「○○ 打出「X」（分類）」。
 function pendingText(room, pending) {
   const action = cardData?.index.actions.get(pending.card);
@@ -806,6 +964,8 @@ function gameControls(room, table, game, state, pending, roomCode) {
   const unseated = playersAt(room, table).filter(([uid]) => !game.seats[uid]);
   if (unseated.length) nodes.push(nameLine(room, unseated, '未入座：'));
   nodes.push(element('p', 'table-pile', `牌庫 ${game.deckCount} 張・棄牌堆 ${game.discardCount} 張`));
+  if (state.phase === 'end' && game.final) nodes.push(...finalLines(room, table, game, roomCode));
+  else if (cardData) nodes.push(...endControls(table, game, state, roomCode));
   nodes.push(...eventsBlock(game, state));
   if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
@@ -852,30 +1012,33 @@ function renderHost(room) {
     const status = element('p', 'table-state');
     status.append(
       element('span', 'table-round', `第 ${state.round} 回合`),
-      element('span', 'table-phase', PHASE_LABELS[state.phase]),
+      element('span', 'table-phase', PHASE_NAMES[state.phase] ?? state.phase),
       element('span', 'table-fog', `迷霧值 ${state.fog}${firedText(game) ? `（${firedText(game)}）` : ''}`),
     );
-    const next = element('button', 'table-next', '下一階段');
+    // 黑夜時這一回合該算分了（日落鐘、回合上限、主持端按了「這回合結束後算分」），「下一階段」就是算分。
+    const ending = state.phase === 'night' && endReasonNow(game, state) !== null;
+    const next = element('button', 'table-next', ending ? '下一階段（算分）' : '下一階段');
     next.type = 'button';
     if (game) watchHostDiscards(roomCode, game);
-    // 開局前、日出還沒發牌、有牌在等響應、黃昏的法案或黑夜還沒揭曉時不能推進（畫面擋，規則不擋）。
+    // 開局前、日出還沒發牌、有牌在等響應、黃昏的法案或黑夜還沒揭曉時不能推進（畫面擋，規則不擋）；黑夜要有卡牌資料才知道要不要算分。
     const why = game?.pending ? '有牌在等響應，結算完才能進下一階段' : (duskBlock(game, state) ?? nightBlock(game, state));
-    next.disabled = !game || pending || Boolean(why);
+    next.disabled = !game || pending || Boolean(why) || (state.phase === 'night' && !cardData);
     const blocked = why ? [element('p', 'table-note problem next-blocked', why)] : [];
-    // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
+    // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。黑夜時該算分就算分（同一筆寫入），不然推進到下一回合日出。
     // 是自己這一筆把桌子推進到新回合的日出，就接著發牌。
     next.addEventListener('click', () =>
       run(next, async () => {
-        const result = await advanceTable(session, roomCode, table, { round: state.round, phase: state.phase });
-        if (result.advanced && result.table.phase === 'sunrise' && cardData) await deal(roomCode, table);
+        const result = await advanceOrEnd(session, roomCode, table, { round: state.round, phase: state.phase }, cardData?.data);
+        if (result.advanced && !result.ended && result.table.phase === 'sunrise' && cardData) await deal(roomCode, table);
       }),
     );
+    // 終局後這一桌不再推進。
+    const closing = state.phase === 'end' ? [element('p', 'table-note table-ended', '這一桌已經算分，遊戲結束')] : [...blocked, next];
     card.append(
       element('h2', '', `第 ${table} 桌`),
       status,
       ...(game ? gameControls(room, table, game, state, pending, roomCode) : startControls(room, table, roomCode)),
-      ...blocked,
-      next,
+      ...closing,
     );
     cards.push(card);
   }
@@ -1519,7 +1682,14 @@ function renderPlayer(room, me) {
   $('player-stage').dataset.phase = state.phase;
   $('player-table').textContent = `第 ${me.table} 桌`;
   $('player-round').textContent = `第 ${state.round} 回合`;
-  $('player-phase').textContent = PHASE_LABELS[state.phase];
+  $('player-phase').textContent = PHASE_NAMES[state.phase] ?? state.phase;
+  // 最後一回合的提示（日落鐘照伺服器時間算，到點時重畫）。
+  $('player-last-round').hidden = endReasonNow(game, state) === null;
+  if (state.phase !== 'end') wakeAtSunset(game);
+  const ended = state.phase === 'end' && Boolean(game?.final) && Boolean(cardData);
+  $('player-final').hidden = !ended;
+  $('player-final').replaceChildren(...(ended ? finalCard(room, game) : []));
+  $('player-destiny-private').hidden = state.phase === 'end'; // 終局後天命已經公開
   $('player-fog').textContent = state.fog;
   $('player-fog-meter').value = state.fog;
   $('player-fog-fired').textContent = firedText(game);

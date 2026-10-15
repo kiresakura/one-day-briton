@@ -659,3 +659,41 @@ h3 {
 .discard-list button {
   margin: 0;
 }
+
+/* 終局與計分（M9） */
+.last-round {
+  margin: 0.5rem 0 0;
+  font-weight: bold;
+  color: #8a3b12;
+}
+
+.final-scores {
+  padding-left: 0;
+  list-style: none;
+}
+
+.final-row {
+  padding: 0.5rem 0;
+  border-top: 1px solid #ddd;
+}
+
+.final-row.me .final-head {
+  text-decoration: underline;
+}
+
+.final-head,
+.final-mine {
+  margin: 0;
+  font-weight: bold;
+}
+
+.final-line {
+  margin: 0.2rem 0 0;
+}
+
+.final-judge {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
