@@ -1275,7 +1275,7 @@ export function settleSunrise(state, picks, data, random = cryptoRandom) {
 //        total, rank }：destiny.points 是這張天命值幾分（done 是 true 才算進 total），done 是 true／false／null（待主持人判定）；
 //        沒有天命的人 id、text 是 null、done 是 false；發出去的天命在卡牌資料裡找不到時（例如中途重新匯入），text 寫「找不到」、
 //        done 是 false、points 是 0（終局照樣寫得進去，不會卡住那一桌）。assets.points、sinPenalty 是換算出來的分數。英鎊、影響力、罪孽讀座位的現值
-//        （黑夜的變化與分贓的罪孽已經加進座位）。
+//        （黑夜的變化與分贓的罪孽已經加進座位）。天命判定裡的手牌先套手牌上限再比（企劃 10/16 定案，見 seatValue），不真的棄牌。
 
 export const END_PHASE = 'end';
 export const END_REASONS = ['sunset', 'maxRounds', 'host'];
@@ -1333,14 +1333,18 @@ function compareBy(left, op, right) {
   }
 }
 
-function seatValue(seat, what) {
-  return (what === 'hand' ? seat?.handCount : seat?.[what]) ?? 0;
+// 座位上的英鎊、影響力、手牌張數。手牌先套手牌上限（企劃 10/16 定案）：張數和 settings.handLimit 取較小的——黑夜結束時超過就棄到
+// 上限，最後一夜也算黑夜結束，最後一回合多抽的牌不算數。只用在判定，不真的棄牌，座位的 handCount 不變。
+function seatValue(seat, what, settings) {
+  if (what === 'hand') return Math.min(seat?.handCount ?? 0, settings.handLimit);
+  return seat?.[what] ?? 0;
 }
 
 // 天命的判定（check 的寫法見 data.js）對 uid 在終局時成不成立：true／false；check 是 null（「判定」空白）時是 null，待主持人判定。
-// state 要有 seats、fog（該桌終局時的迷霧值）、fogMax（本場最高）、bills（每張法案最後一次的結果；沒被表決的沒有，算沒通過）。
+// state 要有 seats、fog（該桌終局時的迷霧值）、fogMax（本場最高）、bills（每張法案最後一次的結果；沒被表決的沒有，算沒通過）；
+// settings 是卡牌資料的設定（手牌的判定先套 handLimit，見 seatValue）。
 // 「多於 rN」比的是坐 rN 的其他人（自己就坐 rN 時不跟自己比）；沒有別人坐 rN 算達成。
-export function destinyDone(check, uid, state) {
+export function destinyDone(check, uid, state, settings) {
   if (!check) return null;
   const seats = state.seats ?? {};
   switch (check.kind) {
@@ -1348,18 +1352,18 @@ export function destinyDone(check, uid, state) {
       return check.bills.filter((id) => (state.bills?.[id] === 'passed') === check.passed).length >= check.atLeast;
     case 'compare': {
       const fog = state.fog ?? 0;
-      const value = check.what === 'fog' ? fog : check.what === 'fogMax' ? Math.max(state.fogMax ?? 0, fog) : seatValue(seats[uid], check.what);
+      const value = check.what === 'fog' ? fog : check.what === 'fogMax' ? Math.max(state.fogMax ?? 0, fog) : seatValue(seats[uid], check.what, settings);
       return compareBy(value, check.op, check.value);
     }
     case 'most': {
-      const mine = seatValue(seats[uid], check.what);
-      return Object.values(seats).every((seat) => seatValue(seat, check.what) <= mine);
+      const mine = seatValue(seats[uid], check.what, settings);
+      return Object.values(seats).every((seat) => seatValue(seat, check.what, settings) <= mine);
     }
     case 'moreThan': {
-      const mine = seatValue(seats[uid], check.what);
+      const mine = seatValue(seats[uid], check.what, settings);
       return Object.entries(seats)
         .filter(([other, seat]) => other !== uid && seat.role === check.role)
-        .every(([, seat]) => mine > seatValue(seat, check.what));
+        .every(([, seat]) => mine > seatValue(seat, check.what, settings));
     }
     default:
       throw new RangeError(`這一版不認得這種判定：${check.kind}`);
@@ -1411,7 +1415,7 @@ export function scoreGame(state, data) {
     const id = state.destinies?.[uid] ?? null;
     const card = id === null ? null : ((data.destinies ?? []).find((destiny) => destiny.id === id) ?? null);
     const destiny = card
-      ? { id, text: card.text, done: destinyDone(card.check ?? null, uid, state), points: card.score?.points ?? 0 }
+      ? { id, text: card.text, done: destinyDone(card.check ?? null, uid, state, data.settings), points: card.score?.points ?? 0 }
       : { id, text: id === null ? null : missingDestinyText(id), done: false, points: 0 };
     const pounds = seat.pounds ?? 0;
     const influence = seat.influence ?? 0;

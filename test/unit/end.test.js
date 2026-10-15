@@ -1,4 +1,4 @@
-// 終局與計分的純函式（M9）：日落鐘、回合上限、提早收場（shouldEnd），天命的每一種判定，資產、公共成就、罪孽、總分、名次，
+// 終局與計分的純函式（M9）：日落鐘、回合上限、提早收場（shouldEnd），天命的每一種判定（手牌先套手牌上限），資產、公共成就、罪孽、總分、名次，
 // 主持端勾天命，以及開局發天命避開這一桌沒人坐的階層。資料用範例資料加上測試裡寫的天命，不依賴正式資料。
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -111,7 +111,7 @@ const SEATS = {
   c: { order: 2, role: 'r5', pounds: 12, influence: 5, handCount: 3 },
 };
 const END = { seats: SEATS, fog: 45, fogMax: 92, bills: { b01: 'passed', b05: 'failed', b06: 'failed' } };
-const done = (check, uid = 'a', state = END) => destinyDone(check, uid, state);
+const done = (check, uid = 'a', state = END) => destinyDone(check, uid, state, settings);
 const bills = (passed, list, atLeast) => ({ kind: 'bills', passed, bills: list, atLeast });
 
 test('bill checks: passed, not passed (bills never voted on count as not passed), all not passed, at least N passed', () => {
@@ -162,7 +162,8 @@ test('number checks on pounds, influence and hand size with each comparison', ()
   assert.equal(done(check('influence', '<', 3), 'b'), true);
   assert.equal(done(check('influence', '<', 2), 'b'), false);
   assert.equal(done(check('influence', '<=', 2), 'b'), true);
-  assert.equal(done(check('hand', '>=', 9), 'b'), true);
+  assert.equal(done(check('hand', '>=', 6)), true, 'a holds 6');
+  assert.equal(done(check('hand', '>=', 9), 'b'), false, 'b holds 9 but counts as the hand limit 7');
   assert.equal(done(check('hand', '>=', 9), 'c'), false);
 });
 
@@ -177,6 +178,103 @@ test('more than the player of a role; nobody in that role counts as done', () =>
   // 自己就坐那個階層：不跟自己比，沒有別人坐就算達成。
   assert.equal(done(beatR5, 'c'), true, 'c sits r5 alone');
   assert.equal(done({ kind: 'moreThan', what: 'pounds', role: 'r1' }, 'a'), true, 'a sits r1 alone');
+});
+
+// ---- 手牌上限（企劃 10/16 定案）：天命判定裡的手牌先套 settings.handLimit（範例資料是 7）再比，不真的棄牌 ----
+
+const holding = (...counts) => ({
+  seats: Object.fromEntries(counts.map((handCount, index) => ['abcd'[index], { order: index, role: `r${index + 1}`, handCount }])),
+});
+
+// 套上限之前的判定：直接比座位的張數。沒有人超過上限時，結果要跟這個一樣。
+function handBefore(check, uid, seats) {
+  const count = (seat) => seat?.handCount ?? 0;
+  const mine = count(seats[uid]);
+  if (check.kind === 'most') return Object.values(seats).every((seat) => count(seat) <= mine);
+  if (check.kind === 'moreThan') {
+    return Object.entries(seats)
+      .filter(([other, seat]) => other !== uid && seat.role === check.role)
+      .every(([, seat]) => mine > count(seat));
+  }
+  return { '>': mine > check.value, '>=': mine >= check.value, '<': mine < check.value, '<=': mine <= check.value }[check.op];
+}
+
+test('the most hand counts every hand at the hand limit at most, so everyone at the limit is tied', () => {
+  assert.equal(settings.handLimit, 7);
+  const most = { kind: 'most', what: 'hand' };
+  const results = (state, rules = settings) => ['a', 'b', 'c'].map((uid) => destinyDone(most, uid, state, rules));
+  assert.deepEqual(results(holding(10, 8, 6)), [true, true, false], '10 and 8 both count as 7');
+  assert.deepEqual(results(holding(6, 10, 7)), [false, true, true], 'exactly at the limit ties with one over it');
+  assert.deepEqual(results(holding(6, 5, 3)), [true, false, false], 'nobody over the limit');
+  assert.deepEqual(results(holding(10, 8, 6), { ...settings, handLimit: 5 }), [true, true, true], 'a limit of 5: all three count as 5');
+});
+
+test('with nobody over the hand limit every hand check gives what it gave before the limit applied', () => {
+  const checks = [
+    { kind: 'most', what: 'hand' },
+    { kind: 'moreThan', what: 'hand', role: 'r3' },
+    ...['>', '>=', '<', '<='].flatMap((op) => [0, 3, 6, 7, 8].map((value) => ({ kind: 'compare', what: 'hand', op, value }))),
+  ];
+  const differ = [];
+  for (let a = 0; a <= 7; a += 1) {
+    for (let b = 0; b <= 7; b += 1) {
+      for (let c = 0; c <= 7; c += 1) {
+        const state = holding(a, b, c);
+        for (const check of checks) {
+          for (const uid of ['a', 'b', 'c']) {
+            if (destinyDone(check, uid, state, settings) !== handBefore(check, uid, state.seats)) differ.push(`${JSON.stringify(check)} for ${uid} with ${a}／${b}／${c} cards`);
+          }
+        }
+      }
+    }
+  }
+  assert.deepEqual(differ, []);
+});
+
+test('a hand number check counts at most the hand limit: 手牌 >= 8 never holds with a limit of 7', () => {
+  const hand = (op, value) => ({ kind: 'compare', what: 'hand', op, value });
+  for (const count of [7, 8, 9, 10]) assert.equal(destinyDone(hand('>=', 8), 'a', holding(count), settings), false, `${count} cards`);
+  assert.equal(destinyDone(hand('>=', 7), 'a', holding(10), settings), true, '10 cards count as 7');
+  assert.equal(destinyDone(hand('>=', 7), 'a', holding(6), settings), false);
+  assert.equal(destinyDone(hand('<', 8), 'a', holding(12), settings), true, '12 cards count as 7 for < too');
+  assert.equal(destinyDone(hand('>=', 6), 'a', holding(10), { ...settings, handLimit: 5 }), false, 'a limit of 5');
+});
+
+test('more hand than the player of a role: both hands count at most the hand limit', () => {
+  const beatR5 = { kind: 'moreThan', what: 'hand', role: 'r5' };
+  const against = (mine, theirs) => ({ seats: { a: { order: 0, role: 'r4', handCount: mine }, b: { order: 1, role: 'r5', handCount: theirs } } });
+  assert.equal(destinyDone(beatR5, 'a', against(9, 8), settings), false, '9 against 8 is 7 against 7: the same is not more');
+  assert.equal(destinyDone(beatR5, 'a', against(7, 5), settings), true, '7 against 5');
+  assert.equal(destinyDone(beatR5, 'a', against(10, 6), settings), true, '10 against 6 is 7 against 6');
+  assert.equal(destinyDone(beatR5, 'a', against(7, 9), settings), false, '7 against 9 is 7 against 7');
+});
+
+test('scoring judges the hand checks at the hand limit from the settings, and discards nothing', () => {
+  const cards = [
+    ['h1', 'r1', { kind: 'compare', what: 'hand', op: '>=', value: 7 }],
+    ['h2', 'r4', { kind: 'most', what: 'hand' }],
+    ['h3', 'r5', { kind: 'compare', what: 'hand', op: '>=', value: 6 }],
+    ['h4', 'r2', { kind: 'moreThan', what: 'hand', role: 'r4' }],
+  ].map(([id, role, check]) => ({ id, role, text: `天命 ${id}`, score: { text: `條件 ${id}`, points: 10 }, check }));
+  const game = {
+    seats: {
+      a: { order: 0, role: 'r1', pounds: 0, influence: 0, handCount: 10 },
+      b: { order: 1, role: 'r4', pounds: 0, influence: 0, handCount: 8 },
+      c: { order: 2, role: 'r5', pounds: 0, influence: 0, handCount: 6 },
+      d: { order: 3, role: 'r2', pounds: 0, influence: 0, handCount: 9 },
+    },
+    destinies: { a: 'h1', b: 'h2', c: 'h3', d: 'h4' },
+  };
+  const before = structuredClone(game);
+  const scored = (rules) => {
+    const scores = scoreGame(game, { ...data, destinies: cards, settings: rules });
+    return ['a', 'b', 'c', 'd'].map((uid) => [scores[uid].destiny.done, scores[uid].total]);
+  };
+  // 上限 7：a 10 張算 7（>= 7）；b 8 張與 a、d 都算 7（同數都算最多）；c 6 張（>= 6）；d 9 張對 b 8 張是 7 對 7（一樣多不算）。
+  assert.deepEqual(scored(settings), [[true, 10], [true, 10], [true, 10], [false, 0]]);
+  // 上限 5：每個人都算 5 張。
+  assert.deepEqual(scored({ ...settings, handLimit: 5 }), [[false, 0], [true, 10], [false, 0], [false, 0]]);
+  assert.deepEqual(game, before, 'the seats keep their hand counts');
 });
 
 test('a destiny with a blank check waits for the host', () => {

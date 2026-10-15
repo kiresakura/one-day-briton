@@ -667,8 +667,8 @@ function handLimitLines(room, table, game, state) {
   if (!limit) return [];
   const over = seatsInOrder(game.seats).filter(([, seat]) => seat.handCount > limit);
   if (over.length === 0) return [];
-  // 這一回合黑夜結束就算分：終局不棄牌，照現在的手牌算。
-  if (endReasonNow(game, state) !== null) return [element('p', 'table-note hand-limit-ending', '這一回合結束就算分：手牌超過上限的人不用棄牌，照現在的手牌算')];
+  // 這一回合黑夜結束就算分：終局不棄牌，天命判定的手牌照上限算（game.js 的 destinyDone）。
+  if (endReasonNow(game, state) !== null) return [element('p', 'table-note hand-limit-ending', `這一回合結束就算分：手牌超過上限的人不用棄牌，算分時超過上限的照上限 ${limit} 張算`)];
   const picked = (uid, seat) => {
     const value = hostDiscards.get(uid)?.value;
     const count = Object.keys(value?.cards ?? {}).length;
@@ -1430,8 +1430,8 @@ function discardBox(me, state, ending) {
   const { settings } = cardData.data;
   const over = overLimit(hand, settings);
   if (over === 0) return [];
-  // 這一回合黑夜結束就算分：終局不棄牌（棄牌在下一回合日出才做），照現在的手牌算。
-  if (ending) return [element('p', 'caption discard-skip', `手牌 ${hand.length} 張超過上限，但這一回合結束就算分：不用棄牌，照現在的手牌算`)];
+  // 這一回合黑夜結束就算分：終局不棄牌（棄牌在下一回合日出才做），天命判定的手牌照上限算（game.js 的 destinyDone）。
+  if (ending) return [element('p', 'caption discard-skip', `手牌 ${hand.length} 張超過上限，但這一回合結束就算分：不用棄牌，算分時超過上限的照上限 ${settings.handLimit} 張算`)];
   const where = { table: me.table, round: state.round };
   const saved = myDiscard && String(myDiscard.table) === String(me.table) && myDiscard.round === state.round ? myDiscard : null;
   const problem = saved ? discardProblem(hand, saved, where, settings) : 'no-pick';
