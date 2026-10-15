@@ -30,7 +30,7 @@ npm run dev
 
 看到 `All emulators ready` 後開 <http://127.0.0.1:5050/>。按 Ctrl+C 結束；模擬器的資料只在記憶體裡，關掉就清空。
 
-整套只連本機的模擬器，專案代號是 `demo-one-day-briton`（`demo-` 開頭代表不對應任何雲端專案），不需要帳號、不需要登入。
+在本機開啟時只連本機的模擬器，專案代號是 `demo-one-day-briton`（`demo-` 開頭代表不對應任何雲端專案），不需要帳號、不需要登入。連正式專案見下方「正式環境」。
 
 ## 用幾個分頁扮不同的人
 
@@ -55,10 +55,27 @@ npm run dev
 
 關掉玩家分頁，主持畫面會把那位玩家標成「離線」；兩個主持分頁都關掉時，玩家畫面會顯示「主持端目前離線」。
 
+## 正式環境
+
+`js/config.js` 有本機模擬器與正式專案兩組設定，依開啟頁面的網址選一組：
+
+| 網址 | 連到 |
+|---|---|
+| 帶 `?env=emu` | 本機模擬器 |
+| 帶 `?env=prod` | 正式專案 |
+| 都沒帶，主機是 `localhost`、`127.0.0.1` 或 `::1` | 本機模擬器 |
+| 都沒帶，其他主機 | 正式專案 |
+
+推上 GitHub Pages 後的網址是 <https://kiresakura.github.io/one-day-briton/play/>，不用加參數就連正式專案。
+
+本機加 `?env=prod`（例如 `http://localhost:5050/?env=prod`，可以再加 `&slot=p1`）也會連正式專案，開的房、加入的玩家都**寫進正式資料庫**，而且房間不會自動刪除，只在驗收時用。請用 `localhost` 開：正式專案的已授權網域有 `localhost`，沒有 `127.0.0.1`。
+
+設定裡的 `apiKey` 等值是公開的識別碼，不是密碼；誰能讀寫由根目錄的 `database.rules.json` 決定，發布方式見 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) 的「環境」。
+
 ## 測試
 
 ```sh
-npm test            # 卡牌資料檢查＋純函式（階段、迷霧值、房號、暱稱、確認碼、資料格式、CSV 匯入），不需要 Java
+npm test            # 卡牌資料檢查＋純函式（階段、迷霧值、房號、暱稱、確認碼、環境選擇、資料格式、CSV 匯入），不需要 Java
 npm run test:sync   # 啟動模擬器，用 js/store.js 測同步與安全規則
 npm run test:all    # 兩者都跑
 npm run data:check  # 只檢查 play/data/ 的卡牌資料檔
@@ -89,7 +106,7 @@ npm run data:import -- <CSV 資料夾>   # 試算表匯出的 CSV 轉成 play/da
 | `js/rules.js` | 純函式：階段順序、迷霧值、房號、暱稱、主持端判斷、確認碼 |
 | `js/store.js` | 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態 |
 | `js/app.js` | 畫面與事件 |
-| `js/config.js` | 連線設定（目前只有模擬器） |
+| `js/config.js` | 連線設定：模擬器與正式專案兩組，依網址選一組 |
 | `js/data.js` | 純函式：卡牌資料檔的格式定義與檢查 |
 | `data/` | 卡牌資料檔（目前是範例資料，遊戲還沒讀；格式見 [`docs/DATA-FORMAT.md`](../docs/DATA-FORMAT.md)） |
 | `vendor/firebase/` | 自行託管的官方 Firebase JS SDK |
