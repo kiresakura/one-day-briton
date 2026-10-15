@@ -394,7 +394,7 @@ test('rules keep the game, private records and deck in shape', TIMEOUT, async (t
 });
 
 test('a table cannot start empty, with too many players, or after it has moved on', TIMEOUT, async (t) => {
-  const { code } = await openRoom(t);
+  const { code, watchers } = await openRoom(t);
   await assert.rejects(startTable(host, code, 1, data), cannotStart(/還沒有玩家/));
   await assert.rejects(startTable(host, code, 9, data), (error) => error instanceof StoreError && error.code === 'invalid-table');
   await assert.rejects(startTable(host, 'ZZZZ95', 1, data), (error) => error instanceof StoreError && error.code === 'room-not-found');
@@ -403,9 +403,13 @@ test('a table cannot start empty, with too many players, or after it has moved o
   const extra = await Promise.all(['seven-1', 'seven-2', 'seven-3', 'seven-4', 'seven-5'].map((slot) => connect(slot)));
   t.after(() => Promise.all(extra.map(disconnect)));
   await Promise.all(extra.map((session, index) => joinRoom(session, code, `P${index + 1}`, 2)));
+  // 開局照主持端看到的名單算，先等主持端看到每一個人。
+  const atTable2 = (count) => (room) => Object.values(room.players ?? {}).filter((player) => player.table === 2).length === count;
+  await watchers.host.until(atTable2(7), 'host sees seven players at table 2');
   await assert.rejects(startTable(host, code, 2, data), cannotStart(/最多 6 人，現在有 7 人/));
   // 走掉一個就能開。
   await remove(ref(extra[0].db, `rooms/${code}/players/${extra[0].uid}`));
+  await watchers.host.until(atTable2(6), 'host sees six players at table 2');
   assert.deepEqual(await startTable(host, code, 2, data), { started: true });
   const state = await readGame(code, 2);
   assert.equal(Object.keys(state.game.seats).length, 6);
