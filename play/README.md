@@ -58,9 +58,11 @@ npm run dev
 ## 測試
 
 ```sh
-npm test            # 純函式（階段、迷霧值、房號、暱稱、確認碼），不需要 Java
+npm test            # 卡牌資料檢查＋純函式（階段、迷霧值、房號、暱稱、確認碼、資料格式、CSV 匯入），不需要 Java
 npm run test:sync   # 啟動模擬器，用 js/store.js 測同步與安全規則
 npm run test:all    # 兩者都跑
+npm run data:check  # 只檢查 play/data/ 的卡牌資料檔
+npm run data:import -- <CSV 資料夾>   # 試算表匯出的 CSV 轉成 play/data/，寫完自動檢查
 ```
 
 `test:sync` 會印出許多 `permission_denied` 警告，那是「被拒絕才算通過」的測試留下的，以最後的統計為準。
@@ -88,6 +90,8 @@ npm run test:all    # 兩者都跑
 | `js/store.js` | 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態 |
 | `js/app.js` | 畫面與事件 |
 | `js/config.js` | 連線設定（目前只有模擬器） |
+| `js/data.js` | 純函式：卡牌資料檔的格式定義與檢查 |
+| `data/` | 卡牌資料檔（目前是範例資料，遊戲還沒讀；格式見 [`docs/DATA-FORMAT.md`](../docs/DATA-FORMAT.md)） |
 | `vendor/firebase/` | 自行託管的官方 Firebase JS SDK |
 
 ## 自行託管的 SDK
