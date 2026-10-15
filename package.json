@@ -7,6 +7,7 @@
     "test:sync": "scripts/with-java.sh firebase emulators:exec --only auth,database --project demo-one-day-briton \"node --test --test-force-exit test/sync/*.test.js\"",
     "test:all": "npm test && npm run test:sync",
     "data:check": "node scripts/data-check.mjs",
+    "data:import": "node scripts/data-import.mjs",
     "dev": "scripts/with-java.sh firebase emulators:start --only auth,database,hosting --project demo-one-day-briton",
     "vendor": "node scripts/vendor-firebase.mjs"
   },
