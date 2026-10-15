@@ -400,8 +400,11 @@ test('everyone votes, the deadline is 1 second away, and the dusk reveals by its
   assert.ok(writes >= 4 && writes <= 5, `${writes} writes`);
   await watchers.p1.until((room) => room.games[2].seats[first.uid].influence === 0, 'first sees the paid bid without reloading');
   await advanceTable(host, code, 2, { round: 1, phase: 'dusk' });
+  await watchers.p1.until((room) => room.games[2].night?.round === 1, 'the night opens (M8)');
   await sleep(300);
-  assert.equal((await readTable(code)).game.version, final.game.version, 'nothing more happens at night');
+  const night = await readTable(code);
+  assert.equal(night.game.version, final.game.version + 1, 'at night only the night opens');
+  assert.deepEqual(night.game.dusk, final.game.dusk, 'nothing more happens to the dusk at night');
   assert.deepEqual(errorsSeen, []);
 });
 

@@ -1,5 +1,5 @@
 // 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），白晝的輪流出牌、響應卡與結算，黃昏的法案投票，
-// 以及事件（日出一般事件、迷霧事件）。
+// 事件（日出一般事件、迷霧事件），以及黑夜（豪賭、分贓、睡覺）與手牌上限。
 // 不碰網路、不碰畫面，瀏覽器與 Node 測試共用同一份。輸入資料檔的內容與目前的局面，輸出要寫入的新局面。
 // 亂數一律從注入的來源拿（預設是 crypto.getRandomValues），測試用固定種子。
 //
@@ -110,7 +110,7 @@ export function seatsInOrder(seats) {
   return Object.entries(seats ?? {}).sort(([, a], [, b]) => a.order - b.order);
 }
 
-// 日出：照座位順序，每人領自己階層的薪水、抽 drawPerSunrise 張。手牌上限這裡不管（黑夜結束時才棄）。
+// 日出：照座位順序，每人領自己階層的薪水、抽 drawPerSunrise 張。手牌上限這裡不管（黑夜結束時才棄，在這之前由 applyHandLimits 做）。
 export function sunrise(state, data, random = cryptoRandom) {
   const salaries = new Map(data.roles.map((role) => [role.id, role.salary]));
   let { deck, discard } = state;
@@ -963,4 +963,284 @@ export function nextEventIndex(eventLog) {
 // 這一回合日出翻到的一般事件（畫面從日出到白晝結束一直顯示）。
 export function sunriseEventsOf(eventLog, round) {
   return eventLogList(eventLog).filter((entry) => entry.round === round && entry.phase === 'sunrise' && entry.kind === 'deck');
+}
+
+// ---- 黑夜：豪賭、分贓、睡覺（M8） ----
+// 口徑（企劃 10/15 第 8 題雛形，數值都是選填設定；10/15 確認四點）：進黑夜時，主持端替已開局的桌開黑夜（openNight）；每位入座的人
+// 暗中送出一個選擇：豪賭（同時選最多賭到第幾層，1–3）、分贓或睡覺。揭曉前可以改，以最後一次為準；沒送出＝睡覺。全員送出後倒數
+// settings.nightRevealSeconds 秒揭曉，主持端也可以提前揭曉（時間的做法同黃昏）。揭曉（resolveNight）：
+//   豪賭：從第 1 層開始，每層主持端擲一顆六面骰，擲到 gambleBust[層] 以下（含）就爆；過關時累積變成 gamblePounds[層] 英鎊＋
+//         gambleInfluence[層] 影響力，到選的層數就收手拿走累積。爆了累積歸零，另付 gambleMedicalFee 英鎊醫藥費（夾 0）。
+//   分贓：選分贓的人平分 splitPounds 英鎊（捨去），每人記 splitSin 點罪孽（沿用白晝的 sin）；只有 1 人就拿全部，分到 0 也照記罪孽。
+//   睡覺：什麼都不發生。黑夜不動迷霧（照雛形），也不處理迷霧事件。
+// state 除了白晝用的欄位，還有：
+//   table      桌號（選擇的 table 是字串，比對時一律轉成字串）
+//   night      這一回合的黑夜 { round, openedAt, submitted, revealAt, result }：openedAt、revealAt 是伺服器時間（revealAt＝選擇的截止時間，
+//              全員送出後是「當時＋秒數」，提前揭曉是「當時」）；submitted 是已送出的人數；result 揭曉後才有，見 resolveNight。
+//              night.round 不是目前的回合＝這一回合還沒開黑夜
+// 選擇（玩家自己寫的 nights/{code}/{uid}）：{ table, round, choice: 'gamble' | 'split' | 'sleep', tiers（只有豪賭）, seq, at }，
+// at 是伺服器收到的時間。
+
+export const NIGHT_CHOICES = ['gamble', 'split', 'sleep'];
+// 豪賭最多幾層、骰子幾面。
+export const GAMBLE_TIERS = 3;
+export const DIE_SIDES = 6;
+// revealAt 之後主持端再等多久才揭曉（毫秒），全員送出後的倒數最多幾秒：同黃昏（規則只收伺服器時間到之後 60 秒之間的截止時間）。
+export const NIGHT_GRACE_MS = DUSK_GRACE_MS;
+export const NIGHT_MAX_REVEAL_SECONDS = DUSK_MAX_REVEAL_SECONDS;
+
+// 選擇為什麼不算（畫面送出前也用這張表顯示原因）。
+export const NIGHT_REASONS = {
+  'not-night': '現在不是黑夜',
+  'not-open': '這一回合的黑夜還沒開始',
+  revealed: '黑夜已經揭曉了',
+  'not-seated': '你不在這一桌的座位上',
+  'wrong-table': '這個選擇不是這一桌的',
+  'wrong-round': '這個選擇不是這一回合的',
+  'too-late': '黑夜的選擇已經截止了',
+  'too-early': '這個選擇比這一回合的黑夜還早',
+  'bad-choice': '要選豪賭、分贓或睡覺',
+  'bad-tiers': '豪賭要選賭到第 1、2 或 3 層',
+  'tiers-not-gamble': '只有豪賭要選層數',
+};
+
+// 黑夜的數值（資料檔沒寫時用 data.js 的預設值）：{ revealSeconds, bust, pounds, influence, medicalFee, splitPounds, splitSin }；
+// bust、pounds、influence 是第 1–3 層各一個數的陣列。畫面用它顯示每層爆的機率與獎勵。
+export function nightSettings(settings) {
+  const value = (key) => settings?.[key] ?? SETTINGS.find((setting) => setting.key === key).default;
+  return {
+    revealSeconds: value('nightRevealSeconds'),
+    bust: value('gambleBust'),
+    pounds: value('gamblePounds'),
+    influence: value('gambleInfluence'),
+    medicalFee: value('gambleMedicalFee'),
+    splitPounds: value('splitPounds'),
+    splitSin: value('splitSin'),
+  };
+}
+
+// 這一回合的黑夜進行到哪：none（這一回合還沒開黑夜）、choosing（選擇中，還沒有截止時間）、closing（有截止時間、還沒揭曉）、
+// revealed（已揭曉）。
+export function nightStage(night, round) {
+  if (!night || night.round !== round) return 'none';
+  if (night.result) return 'revealed';
+  return night.revealAt === null || night.revealAt === undefined ? 'choosing' : 'closing';
+}
+
+// 主持端從這個時間（伺服器時間）起揭曉。
+export function nightSettleAt(night) {
+  return night.revealAt + NIGHT_GRACE_MS;
+}
+
+// 開黑夜：night＝{ round, submitted: 0 }（openedAt 由寫入的那一端補上伺服器時間）。
+export function openNight(state) {
+  if (Object.keys(state.seats ?? {}).length === 0) throw new RangeError('這一桌沒有人入座，不開黑夜');
+  return { night: { round: state.round, submitted: 0 } };
+}
+
+// 一個選擇的檢查，照順序：黑夜、這一回合已開黑夜、還沒揭曉、有座位、是這一桌這一回合的選擇、截止前送出（有 revealAt 時）、
+// 選項、層數（只有豪賭有，1–3 的整數）。回傳原因（NIGHT_REASONS 的鍵），合法是 null。計票時（sending: false）不查階段，
+// 另外只收黑夜開始之後（at ≥ openedAt）送到的選擇（同黃昏，多一道保險）。
+function checkChoice(state, uid, pick, { sending = true } = {}) {
+  if (sending && state.phase !== 'night') return 'not-night';
+  const stage = nightStage(state.night, state.round);
+  if (stage === 'none') return 'not-open';
+  if (stage === 'revealed') return 'revealed';
+  if (!state.seats?.[uid]) return 'not-seated';
+  if (!pick || typeof pick !== 'object') return 'bad-choice';
+  if (String(pick.table) !== String(state.table)) return 'wrong-table';
+  if (pick.round !== state.round) return 'wrong-round';
+  const { revealAt, openedAt } = state.night;
+  if (revealAt !== null && revealAt !== undefined && !(typeof pick.at === 'number' && pick.at <= revealAt)) return 'too-late';
+  if (!sending && !(typeof pick.at === 'number' && (typeof openedAt !== 'number' || pick.at >= openedAt))) return 'too-early';
+  if (!NIGHT_CHOICES.includes(pick.choice)) return 'bad-choice';
+  if (pick.choice === 'gamble') {
+    if (!Number.isInteger(pick.tiers) || pick.tiers < 1 || pick.tiers > GAMBLE_TIERS) return 'bad-tiers';
+  } else if (pick.tiers !== null && pick.tiers !== undefined) {
+    return 'tiers-not-gamble';
+  }
+  return null;
+}
+
+// 畫面送出前先查一次：這個選擇現在送得出去嗎。state 要有 table、round、phase、seats、night；pick 是
+// { table, round, choice, tiers, at: 估計的伺服器時間 }。回傳原因（NIGHT_REASONS 的鍵），送得出去是 null。
+export function choiceProblem(state, uid, pick) {
+  return checkChoice(state, uid, pick);
+}
+
+// 算數的選擇：picks 是 { uid: 最新的選擇 }（每人只有一筆，重送會蓋掉，所以就是最後一次），只留入座的人、這一桌這一回合、
+// 黑夜開始之後到截止之前送出的合法選擇。回傳照座位排好的 { uid: { choice, tiers? } }；沒有的人＝沒送出，算睡覺。
+export function countChoices(state, picks) {
+  const counted = {};
+  for (const [uid] of seatsInOrder(state.seats)) {
+    const pick = picks?.[uid];
+    if (!pick || checkChoice(state, uid, pick, { sending: false }) !== null) continue;
+    counted[uid] = pick.choice === 'gamble' ? { choice: 'gamble', tiers: pick.tiers } : { choice: pick.choice };
+  }
+  return counted;
+}
+
+// 已送出的人數（公開在 night.submitted，畫面顯示「已送出 n／m 人」）。
+export function submittedChoices(state, picks) {
+  return Object.keys(countChoices(state, picks)).length;
+}
+
+// 豪賭一個人：從第 1 層擲到第 tiers 層（每層一顆六面骰，主持端的亂數），回傳 { rolls, bust, pounds, influence }：
+// rolls 是每一擲的點數；爆了 bust 是 true、累積歸零；沒爆就是最後一層的累積。
+export function gamble(tiers, settings, random = cryptoRandom) {
+  const rules = nightSettings(settings);
+  const rolls = [];
+  let pounds = 0;
+  let influence = 0;
+  for (let tier = 0; tier < tiers; tier += 1) {
+    const roll = randomBelow(DIE_SIDES, random) + 1;
+    rolls.push(roll);
+    if (roll <= rules.bust[tier]) return { rolls, bust: true, pounds: 0, influence: 0 };
+    pounds = rules.pounds[tier];
+    influence = rules.influence[tier];
+  }
+  return { rolls, bust: false, pounds, influence };
+}
+
+// 揭曉：照座位順序，每人照自己的選擇結算（沒送出＝睡覺；骰子照座位順序、一層一層擲）。picks 是剛從伺服器讀到的 { uid: 選擇 }。
+// 回傳 { state, result, log }：result＝{ players: { uid: { choice, tiers, rolls, bust, pounds, influence, sin } } }，每位入座的人都有一筆
+// （tiers、rolls、bust 只有豪賭有）；pounds、influence、sin 是這一夜實際的變化（爆了的醫藥費是負數，付不起時只付到 0）。
+// state 的座位加上這些變化，night 多了 result；log 是公開的黑夜紀錄（nightLog/{round}），內容同 result。
+export function resolveNight(state, picks, data, random = cryptoRandom) {
+  const stage = nightStage(state.night, state.round);
+  if (stage !== 'choosing' && stage !== 'closing') throw new RangeError('這一桌沒有在等揭曉的黑夜');
+  const rules = nightSettings(data.settings);
+  const counted = countChoices(state, picks);
+  const order = seatsInOrder(state.seats).map(([uid]) => uid);
+  const splitters = order.filter((uid) => counted[uid]?.choice === 'split').length;
+  const share = splitters > 0 ? Math.floor(rules.splitPounds / splitters) : 0;
+  const seats = { ...state.seats };
+  const players = {};
+  for (const uid of order) {
+    const seat = seats[uid];
+    const pick = counted[uid] ?? { choice: 'sleep' };
+    let outcome = { choice: 'sleep', pounds: 0, influence: 0, sin: 0 };
+    if (pick.choice === 'gamble') {
+      const played = gamble(pick.tiers, data.settings, random);
+      const fee = Math.min(rules.medicalFee, seat.pounds);
+      outcome = { choice: 'gamble', tiers: pick.tiers, ...played, pounds: played.bust ? 0 - fee : played.pounds, sin: 0 };
+    } else if (pick.choice === 'split') {
+      outcome = { choice: 'split', pounds: share, influence: 0, sin: rules.splitSin };
+    }
+    players[uid] = outcome;
+    seats[uid] = { ...seat, pounds: seat.pounds + outcome.pounds, influence: seat.influence + outcome.influence };
+    if (outcome.sin > 0) seats[uid].sin = (seat.sin ?? 0) + outcome.sin;
+  }
+  const result = { players };
+  return { state: { ...state, seats, night: { ...state.night, result } }, result, log: result };
+}
+
+// 主持端處理一桌的黑夜。picks 是剛從伺服器讀到的 { uid: 選擇 }，now 是伺服器時間。回傳：
+//   { kind: 'none' }                       沒事可做：不是黑夜、已揭曉，或沒有座位
+//   { kind: 'opened', night }              進黑夜了、這一回合還沒開：開黑夜
+//   { kind: 'counted', submitted, revealAt }   已送出人數變了（寫 submitted）；全員送出、還沒有截止時間時
+//                                          revealAt＝now＋nightRevealSeconds 秒（最多 60 秒；否則是 null）
+//   { kind: 'revealed', state, result, log }   到了 revealAt＋緩衝：揭曉（resolveNight）
+//   { kind: 'waiting' }                    選擇中沒有新的變化，或還沒到揭曉的時間
+// 揭曉一定在同一回合的黑夜：推進到下一回合日出時回合變了，這一夜就不再揭曉（畫面在揭曉前擋住「下一階段」）。
+export function nightStep(state, picks, data, { now, random = cryptoRandom } = {}) {
+  if (Object.keys(state.seats ?? {}).length === 0) return { kind: 'none' };
+  const stage = nightStage(state.night, state.round);
+  if (stage === 'none') return state.phase === 'night' ? { kind: 'opened', ...openNight(state) } : { kind: 'none' };
+  if (stage === 'revealed') return { kind: 'none' };
+  if (stage === 'closing' && now >= nightSettleAt(state.night)) return { kind: 'revealed', ...resolveNight(state, picks, data, random) };
+  if (state.phase !== 'night') return { kind: 'waiting' };
+  const submitted = submittedChoices(state, picks);
+  const countdown = stage === 'choosing' && submitted === Object.keys(state.seats).length;
+  if (submitted === (state.night.submitted ?? 0) && !countdown) return { kind: 'waiting' };
+  const seconds = Math.min(nightSettings(data.settings).revealSeconds, NIGHT_MAX_REVEAL_SECONDS);
+  return { kind: 'counted', submitted, revealAt: countdown ? now + seconds * 1000 : null };
+}
+
+// ---- 手牌上限（M8；企劃 10/13 第 5 題、10/15 確認） ----
+// 黑夜結束時手牌超過 settings.handLimit 就棄到上限。黑夜期間（揭曉前後都可以）超過的人自己挑要棄哪幾張，寫進
+// discards/{code}/{uid}：{ table, round, cards: [牌編號…], seq, at }。主持端推進到下一回合日出時，在同一筆日出寫入的最前面先套用
+// （applyHandLimits）：挑的合法（這一桌、剛結束的那一回合、張數剛好、都是自己手上的牌）就照挑的棄，沒挑或不合法就由主持端亂數
+// 棄到上限；棄的牌進棄牌堆。接著才領薪、抽牌、翻一般事件（settleSunrise）。
+
+// 挑的棄牌為什麼不照用（畫面也用這張表顯示原因）。
+export const DISCARD_REASONS = {
+  'not-over': '手牌沒有超過上限，不用棄',
+  'no-pick': '還沒挑要棄的牌',
+  'bad-pick': '看不懂挑的牌',
+  'wrong-table': '挑的牌不是這一桌的',
+  'wrong-round': '挑的牌不是這一回合黑夜的',
+  'wrong-count': '張數不對',
+  'not-in-hand': '有的牌不在手上',
+};
+
+// 要棄幾張：手牌超過 handLimit 的張數（沒超過是 0）。
+export function overLimit(hand, settings) {
+  return Math.max(0, (hand?.length ?? 0) - settings.handLimit);
+}
+
+// 挑的牌（Firebase 的陣列讀回來可能是陣列或數字鍵的物件），照編號排好的 [牌編號…]；不是牌編號的陣列是 null。
+function pickedCards(cards) {
+  if (!cards || typeof cards !== 'object') return null;
+  const list = Object.entries(cards)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([, card]) => card);
+  return list.every((card) => typeof card === 'string') ? list : null;
+}
+
+// 挑的棄牌能不能照用：hand 是他現在的手牌，where 是 { table, round }（round＝剛結束的那一回合）。回傳原因（DISCARD_REASONS 的鍵），
+// 能照用是 null。同一張牌有好幾張時，挑幾張就要手上有幾張。
+export function discardProblem(hand, pick, { table, round }, settings) {
+  const over = overLimit(hand, settings);
+  if (over === 0) return 'not-over';
+  if (!pick) return 'no-pick';
+  const cards = typeof pick === 'object' ? pickedCards(pick.cards) : null;
+  if (!cards) return 'bad-pick';
+  if (String(pick.table) !== String(table)) return 'wrong-table';
+  if (pick.round !== round) return 'wrong-round';
+  if (cards.length !== over) return 'wrong-count';
+  const left = [...hand];
+  for (const card of cards) {
+    const index = left.indexOf(card);
+    if (index === -1) return 'not-in-hand';
+    left.splice(index, 1);
+  }
+  return null;
+}
+
+// 套用手牌上限：照座位順序，手牌超過上限的人照挑的棄（discardProblem 是 null），不然由主持端亂數棄到上限；棄的牌照順序進棄牌堆。
+// picks 是剛從伺服器讀到的 { uid: 挑的棄牌 }，round 是剛結束的那一回合。回傳 { state, discards }：discards＝{ uid: { cards, picked } }
+// （只有棄了牌的人；picked 是不是照他挑的）。沒有人超過時 state 原樣回傳、不用亂數。
+export function applyHandLimits(state, picks, data, { round, random = cryptoRandom } = {}) {
+  let next = state;
+  const discards = {};
+  for (const [uid] of seatsInOrder(state.seats)) {
+    const hand = next.hands?.[uid] ?? [];
+    const over = overLimit(hand, data.settings);
+    if (over === 0) continue;
+    const pick = picks?.[uid];
+    const picked = discardProblem(hand, pick, { table: state.table, round }, data.settings) === null;
+    let kept;
+    let cards;
+    if (picked) {
+      kept = [...hand];
+      cards = pickedCards(pick.cards);
+      for (const card of cards) kept.splice(kept.indexOf(card), 1);
+    } else {
+      ({ hand: kept, discarded: cards } = discardRandom(hand, over, random));
+    }
+    next = { ...withHand(next, uid, kept), discard: [...(next.discard ?? []), ...cards] };
+    discards[uid] = { cards, picked };
+  }
+  return { state: next, discards };
+}
+
+// 下一回合日出的整筆計算（processSunrise 用）：先套手牌上限（上一回合黑夜挑的棄牌，applyHandLimits），再領薪、抽牌（sunrise），
+// 最後翻一般事件與它引發的迷霧事件（settleSunriseEvents）。state 要有 table、round（新的回合）與 settleSunriseEvents 要的欄位。
+// 回傳 { state, events, discards }。
+export function settleSunrise(state, picks, data, random = cryptoRandom) {
+  const limited = applyHandLimits(state, picks, data, { round: state.round - 1, random });
+  const paid = sunrise(limited.state, data, random);
+  const { state: next, events } = settleSunriseEvents(paid, data, random);
+  return { state: next, events, discards: limited.discards };
 }

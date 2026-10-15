@@ -15,6 +15,25 @@ const templateDir = join(root, 'docs/data-templates');
 // 樣板匯入的結果要和這份範例資料一模一樣；play/data/ 放的是企劃交的正式資料。
 const sampleDir = join(root, 'test/fixtures/data-example');
 const importScript = join(root, 'scripts/data-import.mjs');
+// 黑夜（M8）的選填設定：試算表沒有這幾列時用的預設值與匯入時的提醒。
+const NIGHT_DEFAULTS = {
+  nightRevealSeconds: 3,
+  gambleBust: [1, 2, 3],
+  gamblePounds: [5, 20, 30],
+  gambleInfluence: [0, 1, 1],
+  gambleMedicalFee: 2,
+  splitPounds: 6,
+  splitSin: 1,
+};
+const NIGHT_NOTES = [
+  'settings.csv：沒有「黑夜揭曉倒數秒數」這一列，用預設值 3',
+  'settings.csv：沒有「豪賭爆掉點數」這一列，用預設值 1、2、3',
+  'settings.csv：沒有「豪賭累積英鎊」這一列，用預設值 5、20、30',
+  'settings.csv：沒有「豪賭累積影響力」這一列，用預設值 0、1、1',
+  'settings.csv：沒有「豪賭醫藥費」這一列，用預設值 2',
+  'settings.csv：沒有「分贓英鎊」這一列，用預設值 6',
+  'settings.csv：沒有「分贓罪孽」這一列，用預設值 1',
+];
 
 test('effect text becomes structured effects', () => {
   assert.deepEqual(parseEffects('英鎊+5@自己; 迷霧+3', 'self'), {
@@ -228,13 +247,21 @@ test('settings rows become one object in a fixed order', () => {
   const csv = '項目,值,說明\n迷霧門檻,30/60/90,\n起始手牌,４,\n白晝每人提醒秒數,45,\n不知道的項目,1,\n';
   const sheet = convertSheet('settings', csv);
   assert.deepEqual(sheet.errors, []);
-  assert.deepEqual(sheet.data, { startingHand: 4, reminderSeconds: { day: 45 }, fogThresholds: [30, 60, 90], responseSeconds: 5, sunriseEvents: 1 });
-  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds', 'sunriseEvents']);
+  assert.deepEqual(sheet.data, {
+    startingHand: 4,
+    reminderSeconds: { day: 45 },
+    fogThresholds: [30, 60, 90],
+    responseSeconds: 5,
+    sunriseEvents: 1,
+    ...NIGHT_DEFAULTS,
+  });
+  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds', 'sunriseEvents', ...Object.keys(NIGHT_DEFAULTS)]);
   assert.deepEqual(sheet.fieldRows, { startingHand: 3, 'reminderSeconds.day': 4, fogThresholds: 2 });
   assert.deepEqual(sheet.notes, [
     'settings.csv 第 5 列：不認得的設定項目「不知道的項目」，略過',
     'settings.csv：沒有「響應等待秒數」這一列，用預設值 5',
     'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1',
+    ...NIGHT_NOTES,
   ]);
   assert.deepEqual(convertSheet('settings', '項目,值\n迷霧門檻,"30, 60、90"\n').data.fogThresholds, [30, 60, 90]);
   assert.match(convertSheet('settings', '項目,值\n起始手牌,4\n起始手牌,5\n').errors[0], /第 3 列：設定項目「起始手牌」和第 2 列重複/);
@@ -245,14 +272,15 @@ test('settings rows become one object in a fixed order', () => {
 
 test('optional settings use their default when the row is missing; the original items stay required', () => {
   const withRow = convertSheet('settings', '項目,值\n響應等待秒數,８\n日出一般事件張數,2\n');
-  assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, []]);
+  assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, NIGHT_NOTES]);
   assert.deepEqual([withRow.data.sunriseEvents, withRow.fieldRows.sunriseEvents], [2, 3]);
   const withoutRow = convertSheet('settings', '項目,值\n起始手牌,4\n');
   assert.deepEqual([withoutRow.data.responseSeconds, withoutRow.data.sunriseEvents], [5, 1]);
-  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5', 'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1']);
+  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5', 'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1', ...NIGHT_NOTES]);
   const fields = checkData({ settings: withoutRow.data }).errors.map((issue) => issue.field);
   assert.equal(fields.length, 12);
   assert.ok(!fields.includes('responseSeconds') && !fields.includes('sunriseEvents') && !fields.includes('startingHand'));
+  assert.ok(Object.keys(NIGHT_DEFAULTS).every((key) => !fields.includes(key)));
   // 有這一列就要填能用的值；日出一般事件張數可以是 0（不翻）。
   const zero = convertSheet('settings', '項目,值\n響應等待秒數,0\n日出一般事件張數,0\n').data;
   const issues = checkData({ settings: zero }).errors.filter((item) => ['responseSeconds', 'sunriseEvents'].includes(item.field));
@@ -260,6 +288,26 @@ test('optional settings use their default when the row is missing; the original 
   const negative = convertSheet('settings', '項目,值\n日出一般事件張數,-1\n').data;
   const bad = checkData({ settings: negative }).errors.find((item) => item.field === 'sunriseEvents');
   assert.equal(formatIssue(bad), '錯誤｜settings.json｜sunriseEvents（日出一般事件張數）｜要是 0 以上的整數，現在是 -1');
+});
+
+test('the night settings: three numbers per gamble list in tier order, the bust points 0–6, the countdown 0–60', () => {
+  const sheet = convertSheet('settings', '項目,值\n豪賭爆掉點數,0、6、3\n豪賭累積影響力,"0, 1, 1"\n黑夜揭曉倒數秒數,60\n分贓英鎊,0\n');
+  assert.deepEqual([sheet.data.gambleBust, sheet.data.gambleInfluence, sheet.data.nightRevealSeconds, sheet.data.splitPounds], [[0, 6, 3], [0, 1, 1], 60, 0]);
+  const fieldsOf = (settings) => checkData({ settings }).errors.filter((issue) => issue.field in NIGHT_DEFAULTS);
+  assert.deepEqual(fieldsOf(sheet.data), [], 'not in order and repeated numbers are fine; 0 and 60 are allowed');
+  const bad = convertSheet('settings', '項目,值\n豪賭爆掉點數,1、2、7\n豪賭累積英鎊,5、20\n豪賭累積影響力,0、1、1、1\n黑夜揭曉倒數秒數,61\n豪賭醫藥費,-1\n分贓罪孽,1.5\n').data;
+  assert.deepEqual(fieldsOf(bad).map((issue) => formatIssue(issue)), [
+    '錯誤｜settings.json｜nightRevealSeconds（黑夜揭曉倒數秒數）｜要是 0–60 的整數，現在是 61',
+    '錯誤｜settings.json｜gambleBust（豪賭爆掉點數）｜要是 3 個 0–6 的整數，照順序寫，例如 1、2、3，現在是 [1,2,7]',
+    '錯誤｜settings.json｜gamblePounds（豪賭累積英鎊）｜要是 3 個 0 以上的整數，照順序寫，例如 5、20、30，現在是 [5,20]',
+    '錯誤｜settings.json｜gambleInfluence（豪賭累積影響力）｜要是 3 個 0 以上的整數，照順序寫，例如 0、1、1，現在是 [0,1,1,1]',
+    '錯誤｜settings.json｜gambleMedicalFee（豪賭醫藥費）｜要是 0 以上的整數，現在是 -1',
+    '錯誤｜settings.json｜splitSin（分贓罪孽）｜要是 0 以上的整數，現在是 1.5',
+  ]);
+  // 遊戲讀到的預設值是複本：改了不會動到下一次讀檔的預設值。
+  const first = withDefaultSettings({});
+  first.gambleBust[0] = 6;
+  assert.deepEqual(withDefaultSettings({}).gambleBust, [1, 2, 3]);
 });
 
 test('optional settings may be missing from the data file: the check passes and the game reads the default', async () => {

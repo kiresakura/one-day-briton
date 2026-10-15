@@ -59,6 +59,13 @@ test('settings hold the agreed provisional values', () => {
     sunsetMinutes: 75,
     responseSeconds: 5,
     sunriseEvents: 1,
+    nightRevealSeconds: 3,
+    gambleBust: [1, 2, 3],
+    gamblePounds: [5, 20, 30],
+    gambleInfluence: [0, 1, 1],
+    gambleMedicalFee: 2,
+    splitPounds: 6,
+    splitSin: 1,
   });
   assert.equal(sample.roles.length, 6);
   for (const role of sample.roles) assert.equal(role.salary, 5);

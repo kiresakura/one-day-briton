@@ -32,6 +32,7 @@ export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 // 設定檔的每一項：key 是 JSON 裡的位置（點號表示下一層），label 是試算表上的項目名稱。
 // 有 default 的是選填項目：試算表沒有這一列時，匯入寫入 default 並提醒一聲；資料檔沒有這一項時，檢查不報錯，
 // 遊戲讀檔時補上 default（withDefaultSettings）。之後新加的設定都做成選填。
+// list 是數字的清單：有 size 的是固定項數、照順序各管一項（例如豪賭的第 1–3 層），不用由小到大；沒有 size 的要由小到大、不重複。
 export const SETTINGS = [
   { key: 'startingHand', label: '起始手牌', min: 0 },
   { key: 'startingPounds', label: '起始英鎊', min: 0 },
@@ -49,6 +50,15 @@ export const SETTINGS = [
   { key: 'responseSeconds', label: '響應等待秒數', min: 1, default: 5 },
   // 每回合日出每桌翻幾張一般事件，0＝不翻（企劃 10/15 回「照建議」，暫定）。
   { key: 'sunriseEvents', label: '日出一般事件張數', min: 0, default: 1 },
+  // 黑夜（企劃 10/15 第 8 題雛形，暫定）：全員送出後倒數幾秒揭曉；豪賭第 1–3 層各自擲到幾點以下（含）就爆、過關時累積變成多少英鎊與
+  // 影響力；爆了另付的醫藥費；分贓平分的英鎊與每人記的罪孽。
+  { key: 'nightRevealSeconds', label: '黑夜揭曉倒數秒數', min: 0, max: 60, default: 3 },
+  { key: 'gambleBust', label: '豪賭爆掉點數', min: 0, max: 6, list: true, size: 3, default: [1, 2, 3] },
+  { key: 'gamblePounds', label: '豪賭累積英鎊', min: 0, list: true, size: 3, default: [5, 20, 30] },
+  { key: 'gambleInfluence', label: '豪賭累積影響力', min: 0, list: true, size: 3, default: [0, 1, 1] },
+  { key: 'gambleMedicalFee', label: '豪賭醫藥費', min: 0, default: 2 },
+  { key: 'splitPounds', label: '分贓英鎊', min: 0, default: 6 },
+  { key: 'splitSin', label: '分贓罪孽', min: 0, default: 1 },
 ];
 
 // 補上資料檔沒寫的選填設定（用 default），回傳新的物件；遊戲讀到的設定永遠是齊的。settings 不是物件時原樣回傳，交給檢查報錯。
@@ -61,7 +71,7 @@ export function withDefaultSettings(settings) {
       const last = keys.pop();
       let target = result;
       for (const key of keys) target = isPlainObject(target[key]) ? target[key] : (target[key] = {});
-      target[last] = setting.default;
+      target[last] = structuredClone(setting.default);
     }
   }
   return result;
@@ -278,6 +288,12 @@ function checkSettings(settings, result) {
       continue;
     }
     const value = getPath(settings, key);
+    if (setting.size) {
+      if (!Array.isArray(value) || value.length !== setting.size || !value.every((item) => inRange(item, min, max))) {
+        error(key, `要是 ${setting.size} 個 ${rangeText(min, max)}，照順序寫，例如 ${setting.default.join('、')}，${now(value)}`);
+      }
+      continue;
+    }
     if (!Array.isArray(value) || value.length === 0 || !value.every((item) => inRange(item, min, max))) {
       error(key, `要是 ${rangeText(min, max)}陣列，例如 [30, 60, 90]，${now(value)}`);
     } else if (!value.every((item, position) => position === 0 || item > value[position - 1])) {

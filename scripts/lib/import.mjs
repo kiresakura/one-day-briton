@@ -204,9 +204,9 @@ function convertSettings(table, file) {
       setPath(data, key, found.get(key).value);
       fieldRows[key] = found.get(key).row;
     } else if ('default' in setting) {
-      // 選填項目沒有這一列就用預設值；必填的沒填由檢查報出來。
-      setPath(data, key, setting.default);
-      notes.push(`${file}：沒有「${label}」這一列，用預設值 ${setting.default}`);
+      // 選填項目沒有這一列就用預設值；必填的沒填由檢查報出來。清單的預設值用頓號隔開（例如 1、2、3）。
+      setPath(data, key, structuredClone(setting.default));
+      notes.push(`${file}：沒有「${label}」這一列，用預設值 ${[setting.default].flat().join('、')}`);
     }
   }
   return { data, fieldRows, errors, notes, unknownEffects: [] };
