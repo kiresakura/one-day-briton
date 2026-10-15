@@ -237,6 +237,39 @@ test('the rules turn down bad votes: over the influence, an abstain with a bid, 
   assert.deepEqual(result, { yes: 0, no: 3, passed: false, votes: { [first.uid]: { side: 'abstain', bid: 0 }, [second.uid]: { side: 'no', bid: 3 } } });
 });
 
+test('a vote changed field by field cannot keep an old time or an old bid: every write is checked as a whole', TIMEOUT, async (t) => {
+  const { code, first } = await duskRoom(t, ['b01', 'b04']);
+  const mine = ref(first.db, `votes/${code}/${first.uid}`);
+  await vote(first, code, 'yes', 3);
+  await untilServerTime(first, (await read(first, `votes/${code}/${first.uid}`)).at + 50); // 同一毫秒內的「舊」時間就是現在
+  await assert.rejects(update(mine, { side: 'no', seq: 2 }), denied, 'the old time cannot be kept');
+  await assert.rejects(update(mine, { bid: 4, seq: 2, at: serverTimestamp() }), denied, 'the bid is checked against the influence');
+  await update(mine, { side: 'no', seq: 2, at: serverTimestamp() });
+  assert.deepEqual(await read(first, `votes/${code}/${first.uid}`).then(({ side, bid, seq }) => [side, bid, seq]), ['no', 3, 2], 'a whole valid vote is fine');
+  assert.deepEqual(await revealDusk(host, code, 2), { closed: true });
+  const { revealAt } = await read(host, `rooms/${code}/games/2/dusk`);
+  await untilServerTime(host, revealAt + 50);
+  await assert.rejects(update(mine, { side: 'yes', seq: 3, at: serverTimestamp() }), denied, 'after the deadline, field by field too');
+  await untilServerTime(host, duskSettleAt({ revealAt }) + 50);
+  assert.deepEqual((await settleDusk(host, code, 2, data)).result.votes, { [first.uid]: { side: 'no', bid: 3 } });
+  assert.equal(await read(host, `rooms/${code}/games/2/seats/${first.uid}/influence`), 0, 'first paid 3');
+
+  // 下一回合：只改回合、沿用上一回合出價 3（影響力已經是 0）的票要被拒。
+  for (const [round, phase] of [
+    [1, 'dusk'],
+    [1, 'night'],
+    [2, 'sunrise'],
+    [2, 'day'],
+  ]) {
+    await advanceTable(host, code, 2, { round, phase });
+  }
+  assert.equal((await settleDusk(host, code, 2, data)).outcome, 'opened');
+  await untilServerTime(first, (await read(first, `votes/${code}/${first.uid}`)).at + 50);
+  await assert.rejects(update(mine, { round: 2, seq: 3, at: serverTimestamp() }), denied, 'last round’s bid cannot be carried over');
+  await assert.rejects(update(mine, { round: 2, seq: 3 }), denied, 'nor last round’s time');
+  assert.equal(await vote(first, code, 'yes', 0, 2), 3, 'a fresh vote within the influence is fine');
+});
+
 test('the rules check every dusk field the hosts write', TIMEOUT, async (t) => {
   const { code, first, second, third } = await dayRoom(t);
   const game = `rooms/${code}/games/2`;

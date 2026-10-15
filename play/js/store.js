@@ -25,6 +25,7 @@ import {
 } from 'firebase/database';
 import { config } from './config.js';
 import {
+  DUSK_GRACE_MS,
   checkSeating,
   duskSettleAt,
   duskStage,
@@ -725,10 +726,14 @@ function duskWrites(code, table, before, result, version, data) {
 // 已送出人數變了就更新（counted；全員送出時寫截止時間）、到了截止＋緩衝就揭曉（revealed）。每次都先記下伺服器時間、
 // 再從伺服器重讀整房的票。回傳 { outcome, result }：outcome 是 opened、counted、revealed（result 是 { yes, no, passed, votes }）、
 // waiting（投票中沒有新的變化，或還沒到揭曉的時間）或 none（不是黃昏、休會、已揭曉，或另一台主持端先做了）。
-// 多台主持端同時做時靠 version 只成一筆。被拒的一方等局面變了再重讀重算；局面沒變（例如主持端估的伺服器時間比實際早，
-// 揭曉被規則擋在截止之前）就等一下再試，最多 3 次。
+// 多台主持端同時做時靠 version 只成一筆。被拒的一方等局面變了再重讀重算：票接連進來時，兩台主持端會一步接一步地搶，
+// 局面一直在變就一直重算（最多 DUSK_ATTEMPTS 次）。揭曉被拒而局面沒變（主持端估的伺服器時間比實際早，被規則擋在截止之前）
+// 就等 1 秒再試（最多 3 次）；其他被拒而局面沒變的就報錯（同 settleWindow），不讓自動化卡太久。
+const DUSK_ATTEMPTS = 10;
+
 export async function settleDusk(session, code, table, data, random) {
   const clock = serverClock(session);
+  let stalls = 0; // 被拒而局面沒變的次數
   for (let attempt = 1; ; attempt += 1) {
     const room = await readRoom(session, code);
     const tableState = room.tables?.[table];
@@ -750,8 +755,12 @@ export async function settleDusk(session, code, table, data, random) {
       return { outcome: result.kind, result: result.result ?? null };
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;
-      await waitFor(session, `rooms/${code}/games/${table}`, (value) => (value?.version ?? 0) !== version);
-      if (attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '黃昏沒有結算成功，請找工作人員');
+      const revealing = result.kind === 'revealed';
+      const changed = (value) => (value?.version ?? 0) !== version;
+      const seen = await waitFor(session, `rooms/${code}/games/${table}`, changed, revealing ? DUSK_GRACE_MS : SETTLE_MS);
+      if (seen === undefined) stalls += 1;
+      const stuck = seen === undefined && (!revealing || stalls >= SETTLE_ATTEMPTS);
+      if (stuck || attempt >= DUSK_ATTEMPTS) throw new StoreError('permission-denied', '黃昏沒有結算成功，請找工作人員');
     }
   }
 }

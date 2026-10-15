@@ -591,6 +591,8 @@ export function settlePending(state, requests, data, { now, random = cryptoRando
 export const VOTE_SIDES = ['yes', 'no', 'abstain'];
 // revealAt 之後主持端再等多久才揭曉（毫秒）：截止前送出、還在路上的票趕得上，主持端估的伺服器時間差一點也沒關係。
 export const DUSK_GRACE_MS = 1000;
+// 全員送出後的倒數最多幾秒：規則只收「伺服器時間到之後 60 秒之間」的截止時間，設定再長也照 60 秒。
+export const DUSK_MAX_REVEAL_SECONDS = 60;
 
 // 票為什麼不算（畫面送出前也用這張表顯示原因）。
 export const VOTE_REASONS = {
@@ -602,6 +604,7 @@ export const VOTE_REASONS = {
   'wrong-table': '這張票不是這一桌的',
   'wrong-round': '這張票不是這一回合的',
   'too-late': '投票已經截止了',
+  'too-early': '這張票比這一回合的法案還早',
   'bad-vote': '看不懂這張票',
   'bad-side': '要選贊成、反對或棄權',
   'bad-bid': '出價要是 0 以上的整數',
@@ -646,7 +649,8 @@ export function openDusk(state, data, random = cryptoRandom) {
 // 一張票的檢查，照順序：黃昏、這一回合已翻開法案、不是休會、還沒揭曉、有座位、是這一桌這一回合的票、截止前送出（有 revealAt 時）、
 // 選邊、出價是 0 以上的整數、棄權不出價、出價不超過目前的影響力。回傳原因（VOTE_REASONS 的鍵），合法是 null。
 // 計票時（sending: false）不查階段與最後一項：揭曉在同一回合的黑夜也照做；規則在票寫入時已經查過當時的影響力，
-// 之後影響力少了，付的時候夾 0。
+// 之後影響力少了，付的時候夾 0。計票時另外只收法案翻開之後（at ≥ openedAt）送到的票：規則要求每次寫入都帶伺服器時間，
+// 合法的票一定在翻開之後，這是多一道保險。
 function checkVote(state, uid, vote, { sending = true } = {}) {
   if (sending && state.phase !== 'dusk') return 'not-dusk';
   const stage = duskStage(state.dusk, state.round);
@@ -657,8 +661,9 @@ function checkVote(state, uid, vote, { sending = true } = {}) {
   if (!vote || typeof vote !== 'object') return 'bad-vote';
   if (String(vote.table) !== String(state.table)) return 'wrong-table';
   if (vote.round !== state.round) return 'wrong-round';
-  const { revealAt } = state.dusk;
+  const { revealAt, openedAt } = state.dusk;
   if (revealAt !== null && revealAt !== undefined && !(typeof vote.at === 'number' && vote.at <= revealAt)) return 'too-late';
+  if (!sending && !(typeof vote.at === 'number' && (typeof openedAt !== 'number' || vote.at >= openedAt))) return 'too-early';
   if (!VOTE_SIDES.includes(vote.side)) return 'bad-side';
   if (!Number.isInteger(vote.bid) || vote.bid < 0) return 'bad-bid';
   if (vote.side === 'abstain' && vote.bid !== 0) return 'abstain-bid';
@@ -689,10 +694,10 @@ export function submittedCount(state, votes) {
 }
 
 // 這張法案這次有哪些效果不結算：todo 的法案全部；@指定（chosen）這一版不結算（還沒定由誰指定）。
-// 法案只會有 @全體、@階層編號 與迷霧（資料檢查擋掉其他對象），其他的也一律略過。
+// 法案只會有 @全體、@階層編號 與迷霧（資料檢查擋掉其他對象），其他的也一律略過。資料裡找不到的法案（bill 是 null）沒有效果可算。
 export function skippedEffects(bill, passed) {
-  const effects = (passed ? bill.onPass : bill.onFail) ?? [];
-  if (bill.todo === true) return effects;
+  const effects = (passed ? bill?.onPass : bill?.onFail) ?? [];
+  if (bill?.todo === true) return effects;
   return effects.filter((effect) => !billEffectApplies(effect));
 }
 
@@ -703,12 +708,13 @@ function billEffectApplies(effect) {
 
 // 揭曉：計票、付出價、套法案效果、記 aligned 與結果。votes 是剛從伺服器讀到的 { uid: 票 }。
 // 回傳 { state, result, log }：state 的 dusk 多了 result、bills 記下這張的結果；result＝{ yes, no, passed, votes }；
-// log 是公開的黃昏紀錄（duskLog/{round}）{ bill, yes, no, passed, votes }。
+// log 是公開的黃昏紀錄（duskLog/{round}）{ bill, yes, no, passed, votes }。翻開後資料檔才拿掉的法案照樣揭曉（計票、付出價、
+// 記結果），只是沒有效果可算，免得那一桌卡在黃昏。
 export function resolveDusk(state, votes, data, random = cryptoRandom) {
   const stage = duskStage(state.dusk, state.round);
   if (stage !== 'voting' && stage !== 'closing') throw new RangeError('這一桌沒有在等揭曉的法案');
-  const bill = findBill(data, state.dusk.bill);
-  if (!bill) throw new RangeError(`找不到法案 ${state.dusk.bill}`);
+  const id = state.dusk.bill;
+  const bill = findBill(data, id);
   const counted = countVotes(state, votes);
   let yes = 0;
   let no = 0;
@@ -725,7 +731,7 @@ export function resolveDusk(state, votes, data, random = cryptoRandom) {
     next.seats[uid] = { ...seat, influence: Math.max(0, seat.influence - bid) };
   }
   // 再套法案效果。
-  if (bill.todo !== true) {
+  if (bill && bill.todo !== true) {
     const source = { by: null, level: 1, target: null };
     for (const effect of (passed ? bill.onPass : bill.onFail) ?? []) {
       if (billEffectApplies(effect)) next = applyEffect(next, effect, source, data.settings, random);
@@ -741,16 +747,16 @@ export function resolveDusk(state, votes, data, random = cryptoRandom) {
     ...next,
     seats,
     dusk: { ...state.dusk, result },
-    bills: { ...state.bills, [bill.id]: passed ? 'passed' : 'failed' },
+    bills: { ...state.bills, [id]: passed ? 'passed' : 'failed' },
   };
-  return { state: next, result, log: { bill: bill.id, ...result } };
+  return { state: next, result, log: { bill: id, ...result } };
 }
 
 // 主持端處理一桌的黃昏。votes 是剛從伺服器讀到的 { uid: 票 }，now 是伺服器時間。回傳：
 //   { kind: 'none' }                                  沒事可做：不是黃昏、休會、已揭曉，或沒有座位
 //   { kind: 'opened', dusk, billDeck }                進黃昏了、這一回合還沒翻法案：抽一張（bill 是 null＝休會）
 //   { kind: 'counted', submitted, revealAt }          已送出人數變了（寫 submitted）；全員送出、還沒有截止時間時
-//                                                     revealAt＝now＋duskRevealSeconds 秒（否則是 null）
+//                                                     revealAt＝now＋duskRevealSeconds 秒（最多 60 秒；否則是 null）
 //   { kind: 'revealed', state, result, log }          到了 revealAt＋緩衝：揭曉（resolveDusk）
 //   { kind: 'waiting' }                               投票中，沒有新的變化，或還沒到揭曉的時間
 // 揭曉在同一回合的黑夜也照做（截止時間已定、票已經不能改）；開黃昏與計人數只在黃昏。
@@ -764,7 +770,8 @@ export function duskStep(state, votes, data, { now, random = cryptoRandom } = {}
   const submitted = submittedCount(state, votes);
   const countdown = stage === 'voting' && submitted === Object.keys(state.seats).length;
   if (submitted === (state.dusk.submitted ?? 0) && !countdown) return { kind: 'waiting' };
-  return { kind: 'counted', submitted, revealAt: countdown ? now + data.settings.duskRevealSeconds * 1000 : null };
+  const seconds = Math.min(data.settings.duskRevealSeconds, DUSK_MAX_REVEAL_SECONDS);
+  return { kind: 'counted', submitted, revealAt: countdown ? now + seconds * 1000 : null };
 }
 
 // 結束這一輪：輪到的人不出（或不再出）牌，換下一位。回傳 { ok: true, state } 或 { ok: false, reason }。

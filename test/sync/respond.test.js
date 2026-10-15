@@ -439,6 +439,22 @@ test('automatic settling only sets a timer while a card waits for responses', TI
   assert.ok(delays.some((ms) => ms > 1500 && ms <= 2100), 'one timer for the end of the window');
 });
 
+test('rules: a request changed field by field cannot keep an old time', TIMEOUT, async (t) => {
+  const { code, first, second } = await dayRoom(t);
+  await arrange(code, { [first.uid]: ['a03'], [second.uid]: ['a31'] });
+  await requestPlay(first, code, { card: 'a03' });
+  assert.equal((await settleRequest(host, code, 2, first.uid, data)).outcome, 'opened');
+  const { id } = await read(host, `rooms/${code}/games/2/pending`);
+  const mine = ref(second.db, `requests/${code}/${second.uid}`);
+  await set(mine, { seq: 1, type: 'pass', at: serverTimestamp() });
+  const old = (await read(second, `requests/${code}/${second.uid}`)).at;
+  await untilServerTime(second, old + 50); // 同一毫秒內的「舊」時間就是現在，要等時間走過去
+  // 只改其他欄位、留著舊的 at：響應會被當成很早送到（先到先算、也過得了截止）。規則要整筆檢查時間。
+  await assert.rejects(update(mine, { seq: 2, type: 'respond', card: 'a31', pending: id }), denied, 'the old time cannot be kept');
+  await update(mine, { seq: 2, type: 'respond', card: 'a31', pending: id, at: serverTimestamp() });
+  assert.ok((await read(second, `requests/${code}/${second.uid}`)).at >= old, 'a fresh time is fine');
+});
+
 test('rules: a response names its card and window, the time is the server time, and only hosts write the window', TIMEOUT, async (t) => {
   const { code, first, second, third } = await dayRoom(t);
   const mine = (session) => ref(session.db, `requests/${code}/${session.uid}`);

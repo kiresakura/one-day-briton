@@ -262,7 +262,7 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('rooms').child($code).child('meta').exists()",
-          ".validate": "newData.hasChildren(['seq', 'type', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && (newData.child('type').val() === 'pass' || newData.hasChild('card')) && (newData.child('type').val() !== 'respond' || newData.hasChild('pending'))",
+          ".validate": "newData.hasChildren(['seq', 'type', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && (newData.child('type').val() === 'pass' || newData.hasChild('card')) && (newData.child('type').val() !== 'respond' || newData.hasChild('pending')) && newData.child('at').val() === now",
           "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
           "type": { ".validate": "newData.isString() && newData.val().matches(/^(play|pass|respond)$/)" },
           "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
@@ -282,17 +282,11 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('rooms').child($code).child('meta').exists()",
-          ".validate": "newData.hasChildren(['table', 'round', 'side', 'bid', 'seq', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val())",
-          "table": {
-            ".validate": "newData.isString() && newData.val().matches(/^[1-6]$/) && root.child('rooms').child($code).child('games').child(newData.val()).child('seats').child($uid).exists() && root.child('rooms').child($code).child('tables').child(newData.val()).child('phase').val() === 'dusk' && root.child('rooms').child($code).child('games').child(newData.val()).child('dusk/bill').exists() && !root.child('rooms').child($code).child('games').child(newData.val()).child('dusk/result').exists() && (!root.child('rooms').child($code).child('games').child(newData.val()).child('dusk/revealAt').exists() || now < root.child('rooms').child($code).child('games').child(newData.val()).child('dusk/revealAt').val())"
-          },
-          "round": {
-            ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() === root.child('rooms').child($code).child('tables').child(newData.parent().child('table').val()).child('round').val() && newData.val() === root.child('rooms').child($code).child('games').child(newData.parent().child('table').val()).child('dusk/round').val()"
-          },
+          ".validate": "newData.hasChildren(['table', 'round', 'side', 'bid', 'seq', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && newData.child('at').val() === now && newData.child('table').isString() && newData.child('table').val().matches(/^[1-6]$/) && root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('seats').child($uid).exists() && root.child('rooms').child($code).child('tables').child(newData.child('table').val()).child('phase').val() === 'dusk' && root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('dusk/bill').exists() && !root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('dusk/result').exists() && (!root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('dusk/revealAt').exists() || now < root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('dusk/revealAt').val()) && newData.child('round').val() === root.child('rooms').child($code).child('tables').child(newData.child('table').val()).child('round').val() && newData.child('round').val() === root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('dusk/round').val() && (newData.child('side').val() !== 'abstain' || newData.child('bid').val() === 0) && newData.child('bid').val() <= root.child('rooms').child($code).child('games').child(newData.child('table').val()).child('seats').child($uid).child('influence').val()",
+          "table": { ".validate": "newData.isString() && newData.val().matches(/^[1-6]$/)" },
+          "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
           "side": { ".validate": "newData.isString() && newData.val().matches(/^(yes|no|abstain)$/)" },
-          "bid": {
-            ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && (newData.parent().child('side').val() !== 'abstain' || newData.val() === 0) && newData.val() <= root.child('rooms').child($code).child('games').child(newData.parent().child('table').val()).child('seats').child($uid).child('influence').val()"
-          },
+          "bid": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
           "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
           "at": { ".validate": "newData.isNumber() && newData.val() === now" },
           "$other": { ".validate": false }

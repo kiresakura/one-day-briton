@@ -78,7 +78,7 @@ const clocks = new Map(); // 桌號 → { key: '回合:第幾位', since }：白
 let windowEnd = { id: null, timer: null }; // 玩家：響應截止時重畫一次的計時器（對應哪一張等著響應的牌）
 let stopVote = null;
 let myVote = null; // 自己最新的一張票 { table, round, side, bid, seq, at }
-let ballot = null; // 玩家：正在選的票 { key: '桌:回合', side, bid }；重畫時留著，換回合就清掉
+let ballot = null; // 玩家：正在選的票 { key: '桌:回合', side, bid, touched }；重畫時留著，換回合就清掉
 let voting = false; // 玩家：票送出中
 const wakeups = new Map(); // 黃昏的截止時間 → 到時重畫一次的計時器（送出鈕、提前揭曉鈕要跟著停用）
 const SIDE_LABELS = { yes: '贊成', no: '反對', abstain: '棄權' };
@@ -390,7 +390,9 @@ function resultLines(room, game, id, result, uid) {
       element('p', 'dusk-paid', `你付了 ${paid} 影響力${sided ? '・站在結果這一邊（議會之聲 +1）' : ''}`),
       element('p', 'dusk-now', `照「${result.passed ? '通過' : '不通過'}」的效果結算後，你現在：英鎊 ${seat.pounds}・影響力 ${seat.influence}`),
     );
-  } else if (bill) {
+  } else if (!bill) {
+    nodes.push(element('p', 'table-note problem', '卡牌資料裡找不到這張法案，效果沒有結算'));
+  } else {
     const skipped = skippedEffects(bill, result.passed);
     if (bill.todo === true) nodes.push(element('p', 'table-note problem', '這張法案的效果還沒做好（todo），這次沒有結算'));
     else if (skipped.length) nodes.push(element('p', 'table-note problem', `這張法案有 ${skipped.length} 個效果要指定一人，這一版不結算，已略過`));
@@ -828,7 +830,8 @@ async function castVote(vote) {
 function ballotBox(me, state, game, sent) {
   const seat = game.seats[session.uid];
   const key = `${me.table}:${state.round}`;
-  if (ballot?.key !== key) ballot = { key, side: sent?.side ?? null, bid: sent?.bid ?? 0 };
+  // 換了回合，或自己還沒動過選票時，跟著已送出的票（重新整理後自己的票可能晚一點才到）。
+  if (ballot?.key !== key || !ballot.touched) ballot = { key, side: sent?.side ?? null, bid: sent?.bid ?? 0, touched: false };
   const box = element('div', 'ballot');
   box.append(element('p', 'caption', `你的影響力 ${seat.influence}：出價 0 到 ${seat.influence}，選邊的人不論輸贏都要付；棄權不用付`));
   const sides = element('p', 'ballot-sides');
@@ -838,7 +841,7 @@ function ballotBox(me, state, game, sent) {
     button.dataset.side = side;
     button.setAttribute('aria-pressed', String(ballot.side === side));
     button.addEventListener('click', () => {
-      ballot = { ...ballot, side, bid: side === 'abstain' ? 0 : Math.min(ballot.bid, seat.influence) };
+      ballot = { ...ballot, side, bid: side === 'abstain' ? 0 : Math.min(ballot.bid, seat.influence), touched: true };
       rerender();
     });
     sides.append(button);
@@ -852,7 +855,7 @@ function ballotBox(me, state, game, sent) {
   }
   select.disabled = ballot.side === 'abstain';
   select.addEventListener('change', () => {
-    ballot = { ...ballot, bid: Number(select.value) };
+    ballot = { ...ballot, bid: Number(select.value), touched: true };
     rerender();
   });
   const label = element('label', 'ballot-bid-label', '影響力出價');

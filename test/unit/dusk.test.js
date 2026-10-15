@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   DUSK_GRACE_MS,
+  DUSK_MAX_REVEAL_SECONDS,
   VOTE_REASONS,
   countVotes,
   drawBill,
@@ -279,6 +280,31 @@ test('counting: only seated players, this table and round, before the deadline; 
   assert.deepEqual(countVotes(duskState({ seats: { a: { influence: 0 } } }), { a: vote('yes', 3) }), { a: { side: 'yes', bid: 3 } });
   // 同一回合的黑夜也照樣算（截止時間已定、票已經不能改）。
   assert.deepEqual(countVotes({ ...state, phase: 'night' }, { a: vote('no', 1) }), { a: { side: 'no', bid: 1 } });
+});
+
+test('counting only takes votes cast after the bill was turned over', () => {
+  const state = duskState({ dusk: { revealAt: OPENED_AT + 5000 } });
+  const votes = { a: vote('yes', 3, { at: OPENED_AT - 1 }), b: vote('no', 1, { at: OPENED_AT }), c: vote('yes', 1, { at: undefined }) };
+  assert.deepEqual(countVotes(state, votes), { b: { side: 'no', bid: 1 } }, 'an old time (or none) is not a vote for this bill');
+  assert.equal(VOTE_REASONS['too-early'].length > 0, true);
+  assert.equal(voteProblem(state, 'a', vote('yes', 3, { at: OPENED_AT - 1 })), null, 'the screen check does not need it');
+});
+
+test('the countdown is never longer than 60 seconds, the most the rules accept', () => {
+  const long = { ...testData, settings: { ...testData.settings, duskRevealSeconds: 90 } };
+  const everyone = { a: vote('yes', 1), b: vote('no', 1), c: vote('abstain') };
+  const now = OPENED_AT + 2000;
+  assert.equal(DUSK_MAX_REVEAL_SECONDS, 60);
+  assert.equal(duskStep(duskState(), everyone, long, { now }).revealAt, now + 60_000);
+  assert.equal(duskStep(duskState(), everyone, testData, { now }).revealAt, now + SECONDS * 1000);
+});
+
+test('a bill missing from the card data is still revealed: votes counted, bids paid, no effects', () => {
+  const { state, result, log } = reveal(duskState({ dusk: { bill: 'gone', revealAt: OPENED_AT + 5000 } }), { a: vote('yes', 2), b: vote('no', 1) });
+  assert.deepEqual([result.yes, result.no, result.passed], [2, 1, true]);
+  assert.deepEqual(influence(state), { a: 1, b: 2, c: 3 });
+  assert.deepEqual([state.bills, log.bill, state.seats.a.aligned], [{ gone: 'passed' }, 'gone', 1]);
+  assert.deepEqual(skippedEffects(null, true), []);
 });
 
 test('an early reveal counts whoever has not voted as abstaining', () => {
