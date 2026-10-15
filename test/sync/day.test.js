@@ -36,9 +36,12 @@ const data = { ...fileData, settings: { ...fileData.settings, responseSeconds: 0
 const actionOf = (id) => data.actions.find((action) => action.id === id);
 
 // 這裡用到的牌（資料檔第二版）：a03 交易、成本 4 英鎊、自己英鎊 +7、迷霧 +2、齒輪「中」；
-// a15 犯罪、自己英鎊 +3、指定的人英鎊 −3、齒輪「小」；a05 政治、成本 3 英鎊、自己影響力 +2、沒有齒輪。
+// a15 犯罪、從指定的人偷 3 英鎊（對方夠付＝指定的人 −3、自己 +3）、齒輪「小」；a05 政治、成本 3 英鎊、自己影響力 +2、沒有齒輪。
 assert.deepEqual(actionOf('a03').cost, { pounds: 4, influence: 0 });
-assert.deepEqual([actionOf('a15').category, actionOf('a15').effects.map((effect) => effect.target)], ['犯罪', ['chosen', 'self']]);
+assert.deepEqual(
+  [actionOf('a15').category, actionOf('a15').gear, actionOf('a15').effects],
+  ['犯罪', '小', [{ op: 'steal', resource: 'pounds', target: 'chosen', amount: 3 }]],
+);
 
 let host;
 let backup;

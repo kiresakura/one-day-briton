@@ -362,17 +362,13 @@
     "gear": "小",
     "effects": [
       {
-        "op": "pounds",
+        "op": "steal",
+        "resource": "pounds",
         "target": "chosen",
-        "amount": -3
-      },
-      {
-        "op": "pounds",
-        "target": "self",
         "amount": 3
       }
     ],
-    "text": "從指定一人身上偷 3 英鎊。"
+    "text": "從指定一人身上偷 3 英鎊（對方不夠就偷光他有的）。"
   },
   {
     "id": "a16",
@@ -414,17 +410,13 @@
     "gear": null,
     "effects": [
       {
-        "op": "influence",
+        "op": "steal",
+        "resource": "influence",
         "target": "chosen",
-        "amount": -1
-      },
-      {
-        "op": "influence",
-        "target": "self",
         "amount": 1
       }
     ],
-    "text": "指定一人失去 1 影響力，你拿 1 影響力。"
+    "text": "從指定一人身上偷 1 影響力。"
   },
   {
     "id": "a18",
@@ -618,17 +610,13 @@
     "gear": null,
     "effects": [
       {
-        "op": "pounds",
+        "op": "steal",
+        "resource": "pounds",
         "target": "originalPlayer",
-        "amount": -2
-      },
-      {
-        "op": "pounds",
-        "target": "self",
         "amount": 2
       }
     ],
-    "text": "別人出「交易」或「生產」牌時打出：從出那張牌的人身上偷 2 英鎊。"
+    "text": "別人出「交易」或「生產」牌時打出：從出那張牌的人身上偷 2 英鎊（對方不夠就偷光他有的）。"
   },
   {
     "id": "a26",

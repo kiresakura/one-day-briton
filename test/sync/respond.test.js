@@ -36,8 +36,8 @@ const quick = { ...data, settings: { ...data.settings, responseSeconds: 1 } };
 const actionOf = (id) => data.actions.find((action) => action.id === id);
 
 // 這裡用到的牌（資料檔第二版）：a03 交易、成本 4 英鎊、自己英鎊 +7、迷霧 +2、齒輪「中」；a05 政治、成本 3 英鎊、自己影響力 +2；
-// a15 犯罪、指定的人英鎊 −3、自己 +3、齒輪「小」；a01 生產、成本 2、自己英鎊 +5、迷霧 +3、齒輪「小」。
-// 響應卡：a31 可回應交易、成本 1 英鎊、自己英鎊 +3；a25 犯罪、可回應交易與生產、出牌者英鎊 −2、自己 +2；
+// a15 犯罪、從指定的人偷 3 英鎊、齒輪「小」；a01 生產、成本 2、自己英鎊 +5、迷霧 +3、齒輪「小」。
+// 響應卡：a31 可回應交易、成本 1 英鎊、自己英鎊 +3；a25 犯罪、可回應交易與生產、從出牌者偷 2 英鎊；
 // a24 可回應犯罪、成本 1 影響力、抵銷。
 assert.deepEqual([actionOf('a31').respondsTo, actionOf('a31').cost.pounds, actionOf('a31').effects], [['交易'], 1, [{ op: 'pounds', target: 'self', amount: 3 }]]);
 assert.deepEqual([actionOf('a25').category, actionOf('a25').respondsTo], ['犯罪', ['交易', '生產']]);
