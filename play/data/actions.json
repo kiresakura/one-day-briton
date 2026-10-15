@@ -567,7 +567,7 @@
     "effects": [
       {
         "op": "pounds",
-        "target": "chosen",
+        "target": "originalPlayer",
         "amount": -4
       },
       {
@@ -593,10 +593,12 @@
       "influence": 1
     },
     "gear": null,
-    "effects": [],
-    "text": "付 1 影響力；別人出「犯罪」牌時打出：那張牌無效。",
-    "todo": true,
-    "todoText": "抵銷那張牌的效果"
+    "effects": [
+      {
+        "op": "cancel"
+      }
+    ],
+    "text": "付 1 影響力；別人出「犯罪」牌時打出：那張牌無效。"
   },
   {
     "id": "a25",
@@ -617,7 +619,7 @@
     "effects": [
       {
         "op": "pounds",
-        "target": "chosen",
+        "target": "originalPlayer",
         "amount": -2
       },
       {
@@ -643,10 +645,12 @@
       "influence": 0
     },
     "gear": null,
-    "effects": [],
-    "text": "付 2 英鎊；別人出「破壞」牌時打出：那張牌無效。",
-    "todo": true,
-    "todoText": "抵銷那張牌的效果"
+    "effects": [
+      {
+        "op": "cancel"
+      }
+    ],
+    "text": "付 2 英鎊；別人出「破壞」牌時打出：那張牌無效。"
   },
   {
     "id": "a27",
@@ -666,7 +670,7 @@
     "effects": [
       {
         "op": "pounds",
-        "target": "chosen",
+        "target": "originalPlayer",
         "amount": -3
       }
     ],
@@ -687,10 +691,12 @@
       "influence": 2
     },
     "gear": null,
-    "effects": [],
-    "text": "付 2 影響力；別人出「查緝」牌時打出：那張牌無效。",
-    "todo": true,
-    "todoText": "抵銷那張牌的效果"
+    "effects": [
+      {
+        "op": "cancel"
+      }
+    ],
+    "text": "付 2 影響力；別人出「查緝」牌時打出：那張牌無效。"
   },
   {
     "id": "a29",
@@ -710,7 +716,7 @@
     "effects": [
       {
         "op": "influence",
-        "target": "chosen",
+        "target": "originalPlayer",
         "amount": -2
       }
     ],
