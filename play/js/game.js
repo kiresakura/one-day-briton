@@ -12,7 +12,7 @@ import { ROLE_COUNT } from './data.js';
 export const MAX_SEATS = ROLE_COUNT;
 export const SUGGESTED_SEATS = 3;
 
-// 第 1 回合日出也領薪抽牌：工程暫定，待企劃確認（MILESTONES「要問企劃的問題」第 5 題）。企劃說不算就改成 false。
+// 第 1 回合日出也領薪抽牌：企劃 10/15 確認（MILESTONES「要問企劃的問題」第 5 題）。
 export const FIRST_SUNRISE_PAYS = true;
 
 // 預設的亂數來源：每次回傳一個 0 到 2^32−1 的均勻整數。

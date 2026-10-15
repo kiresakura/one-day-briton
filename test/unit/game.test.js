@@ -242,7 +242,7 @@ test('sunrise pays each player the salary of their role and draws for them in se
 test('after the start every player has the starting values plus the first sunrise', () => {
   const { settings } = data;
   const salaryOf = (role) => data.roles.find((record) => record.id === role).salary;
-  assert.equal(FIRST_SUNRISE_PAYS, true, 'provisional: the first sunrise pays and draws too');
+  assert.equal(FIRST_SUNRISE_PAYS, true, 'confirmed: the first sunrise pays and draws too');
   for (let count = 1; count <= 6; count += 1) {
     const uids = uidsOf(count);
     const state = startGame(data, uids, { random: seeded(100 + count) });
