@@ -254,7 +254,8 @@ test('the public room carries no hand or destiny', TIMEOUT, async (t) => {
     return value;
   });
   for (const value of values) assert.ok(!hidden.has(value), `the room shows ${value}`);
-  assert.deepEqual(Object.keys(room.games[2]).sort(), ['deckCount', 'discardCount', 'seats', 'startedAt']);
+  assert.deepEqual(Object.keys(room.games[2]).sort(), ['deckCount', 'discardCount', 'seats', 'startedAt', 'version']);
+  assert.equal(room.games[2].version, 1, 'starting a table writes version 1');
   for (const seat of Object.values(room.games[2].seats)) {
     assert.deepEqual(Object.keys(seat).sort(), ['handCount', 'influence', 'order', 'pounds', 'role']);
   }
@@ -354,24 +355,27 @@ test('rules keep the game, private records and deck in shape', TIMEOUT, async (t
   const game = `rooms/${code}/games/2`;
   const seat = `${game}/seats/${alice.uid}`;
   const before = await readGame(code, 2);
+  // 局面的每筆寫入都要帶 version＋1；下面要被拒的寫入都帶對了 version，被拒是因為那一個欄位不對。
+  const bumped = (writes) => update(ref(host.db), { ...writes, [`${game}/version`]: before.game.version + 1 });
 
   // 開局只能一次：開始時間不能改、不能刪，整桌也不能刪掉重來。
-  await assert.rejects(set(ref(host.db, `${game}/startedAt`), Date.now() - 1000), denied);
-  await assert.rejects(remove(ref(host.db, `${game}/startedAt`)), denied);
+  await assert.rejects(bumped({ [`${game}/startedAt`]: Date.now() - 1000 }), denied);
+  await assert.rejects(bumped({ [`${game}/startedAt`]: null }), denied);
   await assert.rejects(remove(ref(host.db, game)), denied);
   await assert.rejects(remove(ref(host.db, `rooms/${code}/games`)), denied);
-  await assert.rejects(update(ref(host.db), { [game]: { ...before.game, startedAt: Date.now() - 1000 } }), denied);
+  await assert.rejects(update(ref(host.db), { [game]: { ...before.game, startedAt: Date.now() - 1000, version: before.game.version + 1 } }), denied);
 
   // 局面的欄位逐一檢查，多的欄位拒絕。
-  await assert.rejects(update(ref(host.db, seat), { pounds: -1 }), denied);
-  await assert.rejects(update(ref(host.db, seat), { influence: 1.5 }), denied);
-  await assert.rejects(update(ref(host.db, seat), { order: 6 }), denied);
-  await assert.rejects(update(ref(host.db, seat), { role: 'not a role' }), denied);
-  await assert.rejects(update(ref(host.db, seat), { hand: ['a01'] }), denied);
-  await assert.rejects(update(ref(host.db, game), { deckCount: -1 }), denied);
-  await assert.rejects(update(ref(host.db, game), { deck: ['a01'] }), denied);
-  await assert.rejects(set(ref(host.db, `${game}/seats`), 'none'), denied);
-  await assert.rejects(set(ref(host.db, `rooms/${code}/games/7`), before.game), denied);
+  await assert.rejects(bumped({ [`${seat}/pounds`]: -1 }), denied);
+  await assert.rejects(bumped({ [`${seat}/influence`]: 1.5 }), denied);
+  await assert.rejects(bumped({ [`${seat}/order`]: 6 }), denied);
+  await assert.rejects(bumped({ [`${seat}/role`]: 'not a role' }), denied);
+  await assert.rejects(bumped({ [`${seat}/hand`]: ['a01'] }), denied);
+  await assert.rejects(bumped({ [`${seat}/sin`]: -1 }), denied);
+  await assert.rejects(bumped({ [`${game}/deckCount`]: -1 }), denied);
+  await assert.rejects(bumped({ [`${game}/deck`]: ['a01'] }), denied);
+  await assert.rejects(bumped({ [`${game}/seats`]: 'none' }), denied);
+  await assert.rejects(set(ref(host.db, `rooms/${code}/games/7`), { ...before.game, version: 1 }), denied);
 
   // 私密資料與牌庫：牌與天命的編號、桌號、陣列的鍵。
   const mine = `private/${code}/${alice.uid}`;
@@ -388,9 +392,10 @@ test('rules keep the game, private records and deck in shape', TIMEOUT, async (t
   await assert.rejects(set(ref(host.db, `hostOnly/${code}/2/deck/x`), 'a01'), denied);
   assert.deepEqual(await readGame(code, 2), before);
 
-  // 合格的寫入照樣成功（主持端之後的結算會用到）。
-  await update(ref(host.db, seat), { pounds: 0 });
+  // 合格的寫入照樣成功（主持端的結算就是這樣寫）。
+  await bumped({ [`${seat}/pounds`]: 0, [`${seat}/sin`]: 1 });
   assert.equal(await read(host, `${seat}/pounds`), 0);
+  assert.equal(await read(host, `${game}/version`), before.game.version + 1);
 });
 
 test('a table cannot start empty, with too many players, or after it has moved on', TIMEOUT, async (t) => {

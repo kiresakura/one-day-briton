@@ -15,6 +15,7 @@ import {
   pickDestiny,
   randomBelow,
   seatsInOrder,
+  seededRandom,
   shuffle,
   startGame,
   sunrise,
@@ -26,16 +27,7 @@ const readCardFile = async (kind) => JSON.parse(await readFile(new URL(`${kind}.
 const { data, errors: loadErrors } = await loadGameData(readCardFile);
 
 // 固定種子的亂數來源（mulberry32），每次回傳 0 到 2^32−1 的整數。
-function seeded(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return (value ^ (value >>> 14)) >>> 0;
-  };
-}
+const seeded = seededRandom;
 
 const uidsOf = (count) => Array.from({ length: count }, (_, index) => `uid-${index + 1}`);
 const sorted = (list) => [...list].sort();

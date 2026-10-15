@@ -64,7 +64,7 @@
         "games": {
           "$table": {
             ".write": "auth != null && newData.exists() && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
-            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['startedAt', 'seats', 'deckCount', 'discardCount']) && newData.parent().parent().child('tables').child($table).exists() && newData.parent().parent().child('deals').child($table).exists()",
+            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['startedAt', 'seats', 'deckCount', 'discardCount']) && newData.parent().parent().child('tables').child($table).exists() && newData.parent().parent().child('deals').child($table).exists() && ((!data.child('version').exists() && newData.child('version').val() === 1) || newData.child('version').val() === data.child('version').val() + 1)",
             "startedAt": {
               ".validate": "newData.isNumber() && newData.val() <= now && (!data.exists() || newData.val() === data.val())"
             },
@@ -79,11 +79,59 @@
                 "pounds": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
                 "influence": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
                 "handCount": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                "sin": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
                 "$other": { ".validate": false }
               }
             },
             "deckCount": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
             "discardCount": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+            "version": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "startOrder": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 5 && (newData.val() === data.val() || !data.parent().child('turn').exists())"
+            },
+            "turn": {
+              ".validate": "newData.hasChildren(['round', 'index', 'plays', 'level'])",
+              "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+              "index": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 6" },
+              "plays": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+              "gear": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 32" },
+              "level": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+              "$other": { ".validate": false }
+            },
+            "fogMax": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 100" },
+            "fogFired": {
+              ".validate": "newData.hasChildren()",
+              "$index": {
+                ".validate": "$index.matches(/^(0|[1-9][0-9]*)$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 100"
+              }
+            },
+            "fogPending": {
+              ".validate": "newData.hasChildren()",
+              "$index": {
+                ".validate": "$index.matches(/^(0|[1-9][0-9]*)$/) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 100"
+              }
+            },
+            "lastSeq": {
+              "$uid": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && (!data.exists() || newData.val() >= data.val()) && newData.val() <= root.child('requests').child($code).child($uid).child('seq').val() && newData.parent().parent().child('seats').child($uid).exists()"
+              }
+            },
+            "log": {
+              "$id": {
+                ".validate": "$id.matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.hasChildren(['round', 'by', 'card', 'level', 'at'])",
+                "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+                "by": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().parent().child('seats').child(newData.val()).exists()"
+                },
+                "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+                "level": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+                "target": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().parent().child('seats').child(newData.val()).exists()"
+                },
+                "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
+                "$other": { ".validate": false }
+              }
+            },
             "$other": { ".validate": false }
           }
         },
@@ -113,6 +161,29 @@
             }
           },
           "destiny": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+          "notice": {
+            ".validate": "newData.hasChildren(['seq', 'reason'])",
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "reason": { ".validate": "newData.isString() && newData.val().matches(/^[a-z-]{1,40}$/)" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+    "requests": {
+      "$code": {
+        ".read": "auth != null && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('rooms').child($code).child('meta').exists()",
+          ".validate": "newData.hasChildren(['seq', 'type', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && (newData.child('type').val() === 'pass' || newData.hasChild('card'))",
+          "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+          "type": { ".validate": "newData.isString() && newData.val().matches(/^(play|pass)$/)" },
+          "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+          "target": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+          "chainTarget": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+          "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
           "$other": { ".validate": false }
         }
       }

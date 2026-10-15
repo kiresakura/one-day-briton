@@ -13,6 +13,14 @@ export function selectEnv({ hostname = '', search = '' } = {}) {
   return LOCAL_HOSTNAMES.has(hostname) ? 'emu' : 'prod';
 }
 
+// 網址帶 ?seed=<整數> 時，主持端用固定種子的亂數洗牌、隨機棄牌，畫面測試時手牌每次都一樣。
+// 只有模擬器才認這個參數；正式專案一律回傳 null（照常用 crypto.getRandomValues）。
+export function selectSeed({ search = '' } = {}, environment = 'prod') {
+  if (environment !== 'emu') return null;
+  const value = new URLSearchParams(search).get('seed');
+  return value !== null && /^\d{1,9}$/.test(value) ? Number(value) : null;
+}
+
 const page = globalThis.location ?? {};
 
 export const environments = {
@@ -40,3 +48,4 @@ export const environments = {
 
 export const env = selectEnv(page);
 export const config = environments[env];
+export const seed = selectSeed(page, env);

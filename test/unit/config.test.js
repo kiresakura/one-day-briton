@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { config, env, environments, selectEnv } from '../../play/js/config.js';
+import { config, env, environments, seed, selectEnv, selectSeed } from '../../play/js/config.js';
 
 test('?env=emu picks the emulator on any host', () => {
   assert.equal(selectEnv({ hostname: 'kiresakura.github.io', search: '?env=emu' }), 'emu');
@@ -53,4 +53,20 @@ test('only the emulator settings use a demo project', () => {
     assert.equal(typeof environments.prod.firebase[key], 'string', key);
     assert.ok(environments.prod.firebase[key].length > 0, key);
   }
+});
+
+test('?seed= fixes the host shuffle only on the emulator', () => {
+  assert.equal(selectSeed({ search: '?seed=42' }, 'emu'), 42);
+  assert.equal(selectSeed({ search: '?slot=p1&seed=7' }, 'emu'), 7);
+  assert.equal(selectSeed({ search: '?seed=0' }, 'emu'), 0);
+  assert.equal(selectSeed({ search: '' }, 'emu'), null);
+  for (const search of ['?seed=', '?seed=abc', '?seed=-1', '?seed=1.5', '?seed=1e3', '?seed=1234567890']) {
+    assert.equal(selectSeed({ search }, 'emu'), null, search);
+  }
+  // 正式專案一律不認，不管網址怎麼寫。
+  assert.equal(selectSeed({ search: '?seed=42' }, 'prod'), null);
+  assert.equal(selectSeed({ search: '?env=prod&seed=42' }, 'prod'), null);
+  assert.equal(selectSeed({ search: '?seed=42' }), null, 'without an environment: the production rule');
+  assert.equal(selectSeed(), null);
+  assert.equal(seed, null, 'Node tests have no ?seed=');
 });
