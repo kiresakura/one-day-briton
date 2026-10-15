@@ -1,7 +1,8 @@
 // 卡牌資料檔（play/data/*.json）的格式定義與檢查。純函式：不碰檔案、不碰網路，
 // 瀏覽器與 Node 的腳本、測試共用同一份。每一欄的意思見 docs/DATA-FORMAT.md。
+import { PHASES, PHASE_LABELS } from './rules.js';
 
-export const DATA_FILES = ['settings', 'roles', 'actions', 'bills', 'events', 'destinies'];
+export const DATA_FILES = ['settings', 'roles', 'actions', 'bills', 'events', 'destinies', 'tutorial'];
 export const DATA_LABELS = {
   settings: '設定',
   roles: '階層',
@@ -9,7 +10,10 @@ export const DATA_LABELS = {
   bills: '法案',
   events: '事件',
   destinies: '隱藏天命',
+  tutorial: '教學提示',
 };
+// 匯入時可以沒有的資料：沒給、資料夾裡也還沒有時寫成空陣列。
+export const OPTIONAL_FILES = ['tutorial'];
 
 export const ROLE_COUNT = 6;
 export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard', 'cancel'];
@@ -24,6 +28,7 @@ export const FOG_AMOUNT_MAX = 100;
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 
 // 設定檔的每一項：key 是 JSON 裡的位置（點號表示下一層），label 是試算表上的項目名稱。
+// 有 default 的是選填項目：試算表沒有這一列時，匯入寫入 default 並提醒一聲。之後新加的設定都做成選填。
 export const SETTINGS = [
   { key: 'startingHand', label: '起始手牌', min: 0 },
   { key: 'startingPounds', label: '起始英鎊', min: 0 },
@@ -38,6 +43,7 @@ export const SETTINGS = [
   { key: 'duskRevealSeconds', label: '黃昏揭曉倒數秒數', min: 0 },
   { key: 'fogThresholds', label: '迷霧門檻', min: 0, max: 100, list: true },
   { key: 'sunsetMinutes', label: '日落鐘分鐘數', min: 1 },
+  { key: 'responseSeconds', label: '響應等待秒數', min: 1, default: 5 },
 ];
 
 const FIELDS = {
@@ -46,6 +52,7 @@ const FIELDS = {
   bills: ['id', 'name', 'year', 'onPass', 'onFail', 'text', 'todo', 'todoText'],
   events: ['id', 'name', 'year', 'kind', 'threshold', 'effects', 'text', 'todo', 'todoText'],
   destinies: ['id', 'role', 'text', 'score'],
+  tutorial: ['id', 'phase', 'text'],
 };
 
 const EFFECT_FIELDS = { actions: ['effects'], bills: ['onPass', 'onFail'], events: ['effects'] };
@@ -71,6 +78,7 @@ const FIELD_LABELS = {
   bills: { ...COMMON_LABELS, onPass: '通過時效果', onFail: '不通過時效果' },
   events: { ...COMMON_LABELS, kind: '類型', threshold: '門檻', effects: '效果' },
   destinies: { ...COMMON_LABELS, role: '所屬階層', text: '天命文字', score: '計分', 'score.text': '計分條件', 'score.points': '分數' },
+  tutorial: { ...COMMON_LABELS, phase: '階段', text: '提示文字' },
 };
 
 function isPlainObject(value) {
@@ -332,9 +340,24 @@ function checkDestiny(record, { roleIds }, error, warn) {
   checkUnknownFields(record.score, ['text', 'points'], warn, 'score.');
 }
 
-const RECORD_CHECKS = { roles: checkRole, actions: checkAction, bills: checkBill, events: checkEvent, destinies: checkDestiny };
+// 教學提示：第一場第一回合各階段顯示的說明；同一階段有好幾筆時照編號順序顯示。
+function checkTip(record, context, error) {
+  if (!PHASES.includes(record.phase)) {
+    error('phase', `只能是 ${PHASES.map((phase) => `${phase}（${PHASE_LABELS[phase]}）`).join('／')}，${now(record.phase)}`);
+  }
+  checkText(record, 'text', error);
+}
 
-// data＝{ settings, roles, actions, bills, events, destinies }，缺的檔不檢查（讀檔的人自己報）。
+const RECORD_CHECKS = {
+  roles: checkRole,
+  actions: checkAction,
+  bills: checkBill,
+  events: checkEvent,
+  destinies: checkDestiny,
+  tutorial: checkTip,
+};
+
+// data＝{ settings, roles, actions, bills, events, destinies, tutorial }，缺的檔不檢查（讀檔的人自己報）。
 // 回傳 { errors, warnings }，每一筆是 { file, index, id, field, label, message }。
 export function checkData(data) {
   const result = { errors: [], warnings: [] };

@@ -226,15 +226,54 @@ test('settings rows become one object in a fixed order', () => {
   const csv = '項目,值,說明\n迷霧門檻,30/60/90,\n起始手牌,４,\n白晝每人提醒秒數,45,\n不知道的項目,1,\n';
   const sheet = convertSheet('settings', csv);
   assert.deepEqual(sheet.errors, []);
-  assert.deepEqual(sheet.data, { startingHand: 4, reminderSeconds: { day: 45 }, fogThresholds: [30, 60, 90] });
-  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds']);
+  assert.deepEqual(sheet.data, { startingHand: 4, reminderSeconds: { day: 45 }, fogThresholds: [30, 60, 90], responseSeconds: 5 });
+  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds']);
   assert.deepEqual(sheet.fieldRows, { startingHand: 3, 'reminderSeconds.day': 4, fogThresholds: 2 });
-  assert.deepEqual(sheet.notes, ['settings.csv 第 5 列：不認得的設定項目「不知道的項目」，略過']);
+  assert.deepEqual(sheet.notes, [
+    'settings.csv 第 5 列：不認得的設定項目「不知道的項目」，略過',
+    'settings.csv：沒有「響應等待秒數」這一列，用預設值 5',
+  ]);
   assert.deepEqual(convertSheet('settings', '項目,值\n迷霧門檻,"30, 60、90"\n').data.fogThresholds, [30, 60, 90]);
   assert.match(convertSheet('settings', '項目,值\n起始手牌,4\n起始手牌,5\n').errors[0], /第 3 列：設定項目「起始手牌」和第 2 列重複/);
   // 沒填到的項目由檢查報出來。
   const missing = checkData({ settings: sheet.data }).errors.find((issue) => issue.field === 'handLimit');
   assert.equal(formatIssue(missing), '錯誤｜settings.json｜handLimit（手牌上限）｜要是 1 以上的整數，現在沒有這一欄');
+});
+
+test('optional settings use their default when the row is missing; the original items stay required', () => {
+  const withRow = convertSheet('settings', '項目,值\n響應等待秒數,８\n');
+  assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, []]);
+  const withoutRow = convertSheet('settings', '項目,值\n起始手牌,4\n');
+  assert.equal(withoutRow.data.responseSeconds, 5);
+  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5']);
+  const fields = checkData({ settings: withoutRow.data }).errors.map((issue) => issue.field);
+  assert.equal(fields.length, 12);
+  assert.ok(!fields.includes('responseSeconds') && !fields.includes('startingHand'));
+  // 有這一列就要填能用的值。
+  const zero = convertSheet('settings', '項目,值\n響應等待秒數,0\n').data;
+  const issue = checkData({ settings: zero }).errors.find((item) => item.field === 'responseSeconds');
+  assert.equal(formatIssue(issue), '錯誤｜settings.json｜responseSeconds（響應等待秒數）｜要是 1 以上的整數，現在是 0');
+});
+
+test('tutorial tips turn phase words into phase names and are checked', () => {
+  const csv = '編號,階段,提示文字,備註\nt01,日出,提示一,\nt02,白晝,"提示二\n第二行",\nt03,白晝,提示三,\nt04, 黃昏 ,提示四,\nt05,黑夜,提示五,\nt05,中午,,\n';
+  const sheet = convertSheet('tutorial', csv);
+  assert.deepEqual([sheet.errors, sheet.notes], [[], []]);
+  assert.deepEqual(sheet.data, [
+    { id: 't01', phase: 'sunrise', text: '提示一' },
+    { id: 't02', phase: 'day', text: '提示二\n第二行' },
+    { id: 't03', phase: 'day', text: '提示三' },
+    { id: 't04', phase: 'dusk', text: '提示四' },
+    { id: 't05', phase: 'night', text: '提示五' },
+    { id: 't05', phase: '中午', text: '' },
+  ]);
+  assert.deepEqual(checkData({ tutorial: sheet.data }).errors.map((issue) => formatIssue(issue)), [
+    '錯誤｜tutorial.json｜t05｜id（編號）｜和第 5 筆重複',
+    '錯誤｜tutorial.json｜t05｜phase（階段）｜只能是 sunrise（日出）／day（白晝）／dusk（黃昏）／night（黑夜），現在是「中午」',
+    '錯誤｜tutorial.json｜t05｜text（提示文字）｜必填，要是不空白的文字，現在是「」',
+  ]);
+  assert.equal(sheetKind('tutorial.csv'), 'tutorial');
+  assert.equal(sheetKind('卡表 - 教學提示.csv'), 'tutorial');
 });
 
 test('a sheet without the template columns is rejected', () => {
@@ -268,7 +307,7 @@ test('importing the templates reproduces the sample data exactly', async () => {
 
 test('every template starts with a byte order mark', async () => {
   const names = (await readdir(templateDir)).filter((name) => name.endsWith('.csv')).sort();
-  assert.deepEqual(names, ['actions.csv', 'bills.csv', 'destinies.csv', 'events.csv', 'roles.csv', 'settings.csv']);
+  assert.deepEqual(names, ['actions.csv', 'bills.csv', 'destinies.csv', 'events.csv', 'roles.csv', 'settings.csv', 'tutorial.csv']);
   for (const name of names) {
     const bytes = await readFile(join(templateDir, name));
     assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], name);
@@ -304,6 +343,35 @@ test('the import command writes the files and checks them', async (t) => {
   assert.match(failed.output, /actions\.csv 第 2 列（a01）效果：「偷看手牌」/);
   assert.match(failed.output, /警告｜actions\.json｜a01（actions\.csv 第 2 列）｜todo（效果）/);
   assert.match(failed.output, /錯誤 2 筆、警告 1 筆/);
+});
+
+test('the import command works without the tutorial sheet or optional settings', async (t) => {
+  const work = await mkdtemp(join(tmpdir(), 'card-data-'));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const source = join(work, 'source');
+  await copyTemplates(source);
+  await rm(join(source, 'tutorial.csv'));
+  const settings = await readFile(join(source, 'settings.csv'), 'utf8');
+  await writeFile(join(source, 'settings.csv'), settings.replace(/^響應等待秒數,.*\n/m, ''));
+  const out = join(work, 'out');
+  const run = runImport(source, '--out', out);
+  assert.equal(run.status, 0, run.output);
+  assert.match(run.output, /提醒：settings\.csv：沒有「響應等待秒數」這一列，用預設值 5/);
+  assert.match(run.output, /提醒：沒有教學提示（tutorial\.csv），寫入空的 tutorial\.json/);
+  assert.match(run.output, /錯誤 0 筆、警告 0 筆/);
+  assert.equal(await readFile(join(out, 'tutorial.json'), 'utf8'), '[]\n');
+  assert.equal(await readFile(join(out, 'settings.json'), 'utf8'), await readFile(join(sampleDir, 'settings.json'), 'utf8'));
+
+  // 只交幾種 CSV 時，已經匯入過的教學提示照舊留著。
+  const partial = join(work, 'partial');
+  await mkdir(partial);
+  await copyFile(join(templateDir, 'actions.csv'), join(partial, 'actions.csv'));
+  const full = join(work, 'full');
+  assert.equal(runImport(templateDir, '--out', full).status, 0);
+  const again = runImport(partial, '--out', full);
+  assert.equal(again.status, 0, again.output);
+  assert.match(again.output, /提醒：沒有教學提示（tutorial\.csv），沿用現有的 tutorial\.json/);
+  assert.equal(await readFile(join(full, 'tutorial.json'), 'utf8'), await readFile(join(sampleDir, 'tutorial.json'), 'utf8'));
 });
 
 test('the import command writes nothing when a sheet cannot be read', async (t) => {

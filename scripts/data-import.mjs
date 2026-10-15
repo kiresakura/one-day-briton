@@ -2,16 +2,18 @@
 // 用法：npm run data:import -- <CSV 資料夾> [--out <輸出資料夾>]（預設寫到 play/data/）
 // 有讀不下去的問題（缺欄位、引號沒關、不是 UTF-8）時一個檔都不寫；
 // 寫完後檢查出的錯誤逐筆列出（附試算表的列號），並以非 0 結束。
-import { mkdir, writeFile } from 'node:fs/promises';
+// 教學提示可以沒有：沒給時沿用輸出資料夾裡現有的檔，連檔都沒有才寫空陣列。
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DATA_FILES, DATA_LABELS } from '../play/js/data.js';
+import { DATA_FILES, DATA_LABELS, OPTIONAL_FILES } from '../play/js/data.js';
 import { checkDataFolder, printReport, serializeData } from './lib/datafiles.mjs';
 import { importFolder, sourceOf } from './lib/import.mjs';
 
 const USAGE = '用法：npm run data:import -- <CSV 資料夾> [--out <輸出資料夾>]';
 const shown = (dir) => relative(process.cwd(), dir) || '.';
+const exists = (path) => access(path).then(() => true, () => false);
 
 async function main() {
   let args;
@@ -42,9 +44,16 @@ async function main() {
   }
 
   await mkdir(outDir, { recursive: true });
+  // 沿用現有的檔，只交幾種 CSV 時才不會把已經匯入的教學提示清掉。
+  for (const kind of OPTIONAL_FILES.filter((name) => !(name in imported.data))) {
+    const kept = await exists(join(outDir, `${kind}.json`));
+    if (!kept) imported.data[kind] = [];
+    console.log(`  提醒：沒有${DATA_LABELS[kind]}（${kind}.csv），${kept ? `沿用現有的 ${kind}.json` : `寫入空的 ${kind}.json`}`);
+  }
   for (const kind of DATA_FILES.filter((name) => name in imported.data)) {
     const value = imported.data[kind];
     await writeFile(join(outDir, `${kind}.json`), serializeData(value));
+    if (!imported.sources[kind]) continue;
     const { file, fieldRows } = imported.sources[kind];
     const size = Array.isArray(value) ? `${value.length} 筆` : `${Object.keys(fieldRows).length} 項`;
     console.log(`  ${kind}.json ← ${file}（${DATA_LABELS[kind]} ${size}）`);

@@ -34,6 +34,7 @@ test('the sample data is clearly marked as sample', () => {
     for (const record of sample[kind]) assert.match(record.name, /^範例/, `${kind} ${record.id}`);
   }
   for (const record of sample.destinies) assert.match(record.text, /^範例/);
+  for (const record of sample.tutorial) assert.match(record.text, /^範例/);
 });
 
 test('settings hold the agreed provisional values', () => {
@@ -48,6 +49,7 @@ test('settings hold the agreed provisional values', () => {
     duskRevealSeconds: 3,
     fogThresholds: [30, 60, 90],
     sunsetMinutes: 75,
+    responseSeconds: 5,
   });
   assert.equal(sample.roles.length, 6);
   for (const role of sample.roles) assert.equal(role.salary, 5);

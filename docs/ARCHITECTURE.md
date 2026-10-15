@@ -61,7 +61,7 @@
 
 ## 卡牌資料從哪來、怎麼進遊戲
 
-- 卡牌與數值是 `play/data/` 的六個 JSON 檔（設定、階層、行動牌、法案、事件、隱藏天命），跟網頁一起部署成靜態檔，不放資料庫。
+- 卡牌與數值是 `play/data/` 的七個 JSON 檔（設定、階層、行動牌、法案、事件、隱藏天命、教學提示 `tutorial.json`），跟網頁一起部署成靜態檔，不放資料庫。
 - 正本是企劃填的試算表，一列一張，樣板在 `docs/data-templates/`。匯出的 CSV 用 `npm run data:import -- <資料夾>` 轉成 JSON，寫完自動檢查；`npm run data:check` 與 `npm test` 也會檢查。資料檔不手改，下次匯入會整個蓋掉。
 - 牌的效果是結構化的物件（`{ op, target, amount }`），試算表用文字語法填（例如 `英鎊+5@自己；迷霧+3`），匯入時轉換；轉不了的標 `todo`、保留原文，先不結算。欄位與語法見 [`DATA-FORMAT.md`](DATA-FORMAT.md)。
 - 格式定義與檢查在 `js/data.js`，是純函式，瀏覽器與 Node 共用；CSV 解析與轉換只在匯入時用，放在 `scripts/lib/`。

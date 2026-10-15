@@ -3,6 +3,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { DATA_FILES, DATA_LABELS, ID_PATTERN, SETTINGS } from '../../play/js/data.js';
+import { PHASE_LABELS } from '../../play/js/rules.js';
 import { readTable } from './csv.mjs';
 
 const RESOURCE_WORDS = { 英鎊: 'pounds', 影響力: 'influence', 迷霧: 'fog' };
@@ -11,6 +12,7 @@ export const TARGET_WORDS = { 自己: 'self', 全體: 'all', 其他人: 'others'
 const CANCEL_WORD = '抵銷';
 const ACTION_KIND_WORDS = { 一般: 'play', 一般牌: 'play', 響應: 'response', 響應卡: 'response' };
 const EVENT_KIND_WORDS = { 一般: 'deck', 迷霧: 'fog' };
+const PHASE_WORDS = Object.fromEntries(Object.entries(PHASE_LABELS).map(([phase, label]) => [label, phase]));
 const ANY_CARD_WORDS = ['任何', '任何牌'];
 const NOTE_COLUMN = '備註';
 
@@ -161,6 +163,10 @@ const SHEETS = {
       score: { text: cell.計分條件, points: number(cell.分數, null) },
     }),
   },
+  tutorial: {
+    columns: ['編號', '階段', '提示文字'],
+    convert: (cell) => ({ id: cell.編號, phase: lookup(PHASE_WORDS, cell.階段) ?? cell.階段, text: cell.提示文字 }),
+  },
 };
 
 function setPath(object, path, value) {
@@ -189,10 +195,16 @@ function convertSettings(table, file) {
   }
   const data = {};
   const fieldRows = {};
-  for (const { key } of SETTINGS) {
-    if (!found.has(key)) continue;
-    setPath(data, key, found.get(key).value);
-    fieldRows[key] = found.get(key).row;
+  for (const setting of SETTINGS) {
+    const { key, label } = setting;
+    if (found.has(key)) {
+      setPath(data, key, found.get(key).value);
+      fieldRows[key] = found.get(key).row;
+    } else if ('default' in setting) {
+      // 選填項目沒有這一列就用預設值；必填的沒填由檢查報出來。
+      setPath(data, key, setting.default);
+      notes.push(`${file}：沒有「${label}」這一列，用預設值 ${setting.default}`);
+    }
   }
   return { data, fieldRows, errors, notes, unknownEffects: [] };
 }
