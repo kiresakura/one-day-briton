@@ -155,6 +155,48 @@ test('fog events need a threshold and deck events must not have one', () => {
   assertError(kinds, { id: 'e01', field: 'kind', message: /deck（一般事件）或 fog/ });
 });
 
+test('action cards are normal or response cards, and only response cards say what they answer', () => {
+  assert.deepEqual(sample.actions.map((card) => [card.kind, card.respondsTo]), [
+    ['play', undefined],
+    ['play', undefined],
+    ['response', null],
+    ['response', ['範例分類甲']],
+  ]);
+  const data = fresh();
+  data.actions[0].kind = '響應';
+  data.actions[1].respondsTo = ['範例分類甲'];
+  data.actions[1].category = '';
+  delete data.actions[2].respondsTo;
+  data.actions[3].respondsTo = [];
+  assertError(data, { id: 'a01', field: 'kind', label: '類型', message: /只能是 play（一般牌）或 response（響應卡），現在是「響應」/ });
+  assertError(data, { id: 'a02', field: 'respondsTo', label: '可回應', message: /一般牌不填可回應，現在是 \["範例分類甲"\]/ });
+  assertError(data, { id: 'a02', field: 'category', label: '分類', message: /沒有就填 null/ });
+  assertError(data, { id: 'a03', field: 'respondsTo', message: '響應卡要寫可回應哪些分類，任何牌都能回應就填 null' });
+  assertError(data, { id: 'a04', field: 'respondsTo', message: /任何牌都能回應就填 null，現在是 \[\]/ });
+
+  const blank = fresh();
+  blank.actions[3].respondsTo = ['範例分類甲', ' '];
+  assertError(blank, { id: 'a04', field: 'respondsTo', message: /第 2 項要是不空白的文字/ });
+
+  // 一般牌寫 respondsTo: null 也可以，和一般事件的 threshold 一樣。
+  const fine = fresh();
+  fine.actions[0].respondsTo = null;
+  assert.deepEqual(errorsOf(fine), []);
+});
+
+test('a response card naming a category no card has is a warning', () => {
+  const data = fresh();
+  data.actions[3].respondsTo = ['範例分類甲', '範例分類乙'];
+  const { errors, warnings } = checkData(data);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(warnings.map((issue) => formatIssue(issue, '警告')), [
+    '警告｜actions.json｜a04｜respondsTo（可回應）｜沒有任何行動牌的分類是「範例分類乙」，這一項回應不到任何牌',
+  ]);
+  // 分類改名之後，原本對得上的那一項也會被提醒。
+  data.actions[1].category = '範例分類丙';
+  assert.equal(checkData(data).warnings.length, 2);
+});
+
 test('todo effects are warnings only', () => {
   const data = fresh();
   Object.assign(data.actions[0], { effects: [], todo: true, todoText: '偷看指定玩家的一張手牌' });

@@ -16,6 +16,8 @@ export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard'];
 export const EFFECT_TARGETS = ['self', 'all', 'others', 'chosen'];
 // 法案與事件沒有「出牌的人」，自己、其他人都沒有對象。
 export const TABLE_TARGETS = ['all', 'chosen'];
+// 一般牌輪到自己時出；響應卡在別人出牌後插話打出。
+export const ACTION_KINDS = ['play', 'response'];
 export const EVENT_KINDS = ['deck', 'fog'];
 export const FOG_AMOUNT_MAX = 100;
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
@@ -39,7 +41,7 @@ export const SETTINGS = [
 
 const FIELDS = {
   roles: ['id', 'name', 'salary', 'privileges', 'missions'],
-  actions: ['id', 'name', 'role', 'copies', 'cost', 'gear', 'effects', 'text', 'todo', 'todoText'],
+  actions: ['id', 'name', 'kind', 'category', 'respondsTo', 'role', 'copies', 'cost', 'gear', 'effects', 'text', 'todo', 'todoText'],
   bills: ['id', 'name', 'year', 'onPass', 'onFail', 'text', 'todo', 'todoText'],
   events: ['id', 'name', 'year', 'kind', 'threshold', 'effects', 'text', 'todo', 'todoText'],
   destinies: ['id', 'role', 'text', 'score'],
@@ -54,6 +56,9 @@ const FIELD_LABELS = {
   roles: { ...COMMON_LABELS, salary: '薪水', privileges: '特權', missions: '使命' },
   actions: {
     ...COMMON_LABELS,
+    kind: '類型',
+    category: '分類',
+    respondsTo: '可回應',
     role: '所屬階層',
     copies: '張數',
     cost: '成本',
@@ -231,8 +236,32 @@ function checkRole(record, context, error) {
   checkTextList(record, 'missions', error);
 }
 
-function checkAction(record, { roleIds }, error, warn) {
+// respondsTo 只有響應卡才有：null＝任何牌都能回應；否則是分類的陣列，別人出的牌分類在裡面才能回應。
+function checkKind(record, categories, error, warn) {
+  const { kind, respondsTo } = record;
+  if (!ACTION_KINDS.includes(kind)) {
+    error('kind', `只能是 play（一般牌）或 response（響應卡），${now(kind)}`);
+  } else if (kind === 'play') {
+    if (respondsTo !== undefined && respondsTo !== null) error('respondsTo', `一般牌不填可回應，${now(respondsTo)}`);
+  } else if (respondsTo === undefined) {
+    error('respondsTo', '響應卡要寫可回應哪些分類，任何牌都能回應就填 null');
+  } else if (respondsTo !== null && (!Array.isArray(respondsTo) || respondsTo.length === 0)) {
+    error('respondsTo', `要是分類的陣列，任何牌都能回應就填 null，${now(respondsTo)}`);
+  } else {
+    (respondsTo ?? []).forEach((item, position) => {
+      if (typeof item !== 'string' || item.trim() === '') {
+        error('respondsTo', `第 ${position + 1} 項要是不空白的文字，${now(item)}`);
+      } else if (categories && !categories.has(item)) {
+        warn('respondsTo', `沒有任何行動牌的分類是${show(item)}，這一項回應不到任何牌`);
+      }
+    });
+  }
+}
+
+function checkAction(record, { roleIds, categories }, error, warn) {
   checkText(record, 'name', error);
+  checkKind(record, categories, error, warn);
+  checkNullableText(record, 'category', error);
   checkRoleRef(record, roleIds, error);
   checkInteger(record, 'copies', 1, undefined, error);
   if (!isPlainObject(record.cost)) {
@@ -309,6 +338,10 @@ export function checkData(data) {
     lists[file] = data[file];
   }
   if (lists.roles) context.roleIds = checkIds('roles', lists.roles, result);
+  if (lists.actions) {
+    const categories = lists.actions.map((record) => (isPlainObject(record) ? record.category : null));
+    context.categories = new Set(categories.filter((value) => typeof value === 'string' && value.trim() !== ''));
+  }
 
   for (const [file, list] of Object.entries(lists)) {
     if (file !== 'roles') checkIds(file, list, result);

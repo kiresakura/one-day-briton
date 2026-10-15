@@ -60,19 +60,21 @@ test('effect text that cannot be read is returned as unknown', () => {
   });
 });
 
+const ACTION_HEADER = '編號,名稱,類型,分類,可回應,所屬階層,張數,英鎊成本,影響力成本,齒輪,效果,牌面文字\n';
+
 test('a cell with any unreadable effect becomes todo and keeps the original text', () => {
-  const csv = '編號,名稱,所屬階層,張數,英鎊成本,影響力成本,齒輪,效果,牌面文字\n'
-    + 'a01,甲,,1,,,,英鎊+5@自己；偷看一張手牌,牌面\n'
-    + 'a02,乙,r1,2,1,0,齒,抽牌1,牌面\n';
+  const csv = ACTION_HEADER
+    + 'a01,甲,一般,,,,1,,,,英鎊+5@自己；偷看一張手牌,牌面\n'
+    + 'a02,乙,一般,,,r1,2,1,0,齒,抽牌1,牌面\n';
   const sheet = convertSheet('actions', csv);
   assert.deepEqual(sheet.errors, []);
   assert.deepEqual(sheet.data, [
     {
-      id: 'a01', name: '甲', role: null, copies: 1, cost: { pounds: 0, influence: 0 }, gear: null,
+      id: 'a01', name: '甲', kind: 'play', category: null, role: null, copies: 1, cost: { pounds: 0, influence: 0 }, gear: null,
       effects: [], text: '牌面', todo: true, todoText: '英鎊+5@自己；偷看一張手牌',
     },
     {
-      id: 'a02', name: '乙', role: 'r1', copies: 2, cost: { pounds: 1, influence: 0 }, gear: '齒',
+      id: 'a02', name: '乙', kind: 'play', category: null, role: 'r1', copies: 2, cost: { pounds: 1, influence: 0 }, gear: '齒',
       effects: [{ op: 'draw', target: 'self', amount: 1 }], text: '牌面',
     },
   ]);
@@ -82,6 +84,35 @@ test('a cell with any unreadable effect becomes todo and keeps the original text
   assert.deepEqual(errors, []);
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0].id, 'a01');
+});
+
+test('action kinds and what response cards can respond to', () => {
+  const csv = ACTION_HEADER
+    + 'a01,甲,一般,交易,,,1,,,,英鎊+1,牌面\n'
+    + 'a02,乙,響應,,,,1,,,,英鎊+1,牌面\n'
+    + 'a03,丙,響應卡,,任何,,1,,,,英鎊+1,牌面\n'
+    + 'a04,丁,響應,,"交易, 干擾；交易二\n交易三",,1,,,,英鎊+1,牌面\n'
+    + 'a05,戊,一般牌,,交易,,1,,,,英鎊+1,牌面\n'
+    + 'a06,己,,,,,1,,,,英鎊+1,牌面\n';
+  const cards = convertSheet('actions', csv).data;
+  assert.deepEqual(cards.map((card) => [card.id, card.kind, card.category, card.respondsTo]), [
+    ['a01', 'play', '交易', undefined],
+    ['a02', 'response', null, null],
+    ['a03', 'response', null, null],
+    ['a04', 'response', null, ['交易', '干擾', '交易二', '交易三']],
+    ['a05', 'play', null, ['交易']],
+    ['a06', '', null, undefined],
+  ]);
+  // 可回應只有響應卡才寫出來；一般牌沒填就沒有這一欄。
+  assert.equal('respondsTo' in cards[0], false);
+  const { errors, warnings } = checkData({ actions: cards });
+  assert.deepEqual(errors.map((issue) => formatIssue(issue)), [
+    '錯誤｜actions.json｜a05｜respondsTo（可回應）｜一般牌不填可回應，現在是 ["交易"]',
+    '錯誤｜actions.json｜a06｜kind（類型）｜只能是 play（一般牌）或 response（響應卡），現在是「」',
+  ]);
+  assert.deepEqual(warnings.map((issue) => issue.message), ['干擾', '交易二', '交易三'].map(
+    (name) => `沒有任何行動牌的分類是「${name}」，這一項回應不到任何牌`,
+  ));
 });
 
 test('bills default to everyone and label which side is todo', () => {
@@ -119,7 +150,7 @@ test('event kinds and thresholds', () => {
 });
 
 test('values that are not numbers are kept so the check can point at them', () => {
-  const csv = '編號,名稱,所屬階層,張數,英鎊成本,影響力成本,齒輪,效果,牌面文字\na01,甲,,兩,,,,,牌面\n,乙,,１,,,,英鎊+1,牌面\n';
+  const csv = `${ACTION_HEADER}a01,甲,一般,,,,兩,,,,,牌面\n,乙,一般,,,,１,,,,英鎊+1,牌面\n`;
   const imported = { sources: { actions: { file: '卡表 - 行動牌.csv', rows: [2, 3], fieldRows: {} } } };
   const sheet = convertSheet('actions', csv, '卡表 - 行動牌.csv');
   assert.equal(sheet.data[0].copies, '兩');
@@ -220,7 +251,7 @@ test('the import command writes the files and checks them', async (t) => {
   const broken = join(work, 'broken');
   await copyTemplates(broken);
   const actions = await readFile(join(broken, 'actions.csv'), 'utf8');
-  await writeFile(join(broken, 'actions.csv'), actions.replace('a01,範例行動牌一,,2,', 'a01,範例行動牌一,r9,0,').replace('英鎊+5@自己', '英鎊+5@自己；偷看手牌'));
+  await writeFile(join(broken, 'actions.csv'), actions.replace('a01,範例行動牌一,一般,,,,2,', 'a01,範例行動牌一,一般,,,r9,0,').replace('英鎊+5@自己', '英鎊+5@自己；偷看手牌'));
   const failed = runImport(broken, '--out', join(work, 'out2'));
   assert.equal(failed.status, 1, failed.output);
   assert.match(failed.output, /錯誤｜actions\.json｜a01（actions\.csv 第 2 列）｜role（所屬階層）｜找不到階層編號「r9」/);

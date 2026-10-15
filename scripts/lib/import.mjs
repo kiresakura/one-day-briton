@@ -8,7 +8,9 @@ import { readTable } from './csv.mjs';
 const RESOURCE_WORDS = { 英鎊: 'pounds', 影響力: 'influence', 迷霧: 'fog' };
 const CARD_WORDS = { 抽: 'draw', 棄: 'discard' };
 export const TARGET_WORDS = { 自己: 'self', 全體: 'all', 其他人: 'others', 指定: 'chosen' };
-const KIND_WORDS = { 一般: 'deck', 迷霧: 'fog' };
+const ACTION_KIND_WORDS = { 一般: 'play', 一般牌: 'play', 響應: 'response', 響應卡: 'response' };
+const EVENT_KIND_WORDS = { 一般: 'deck', 迷霧: 'fog' };
+const ANY_CARD_WORDS = ['任何', '任何牌'];
 const NOTE_COLUMN = '備註';
 
 const lookup = (words, key) => (Object.hasOwn(words, key) ? words[key] : undefined);
@@ -72,6 +74,12 @@ function listColumns(values, prefix) {
     .map(([, value]) => value);
 }
 
+// 可回應：空白或「任何」是任何牌都能回應（null）；否則是用頓號、逗號、分號或換行隔開的分類。
+function respondsTo(value) {
+  if (value === '' || ANY_CARD_WORDS.includes(value)) return null;
+  return value.split(/[、，,；;\n]+/).map((item) => item.trim()).filter(Boolean);
+}
+
 // columns：一定要有的欄。effects：效果欄（欄位 → 欄名），沒寫對象時用 defaultTarget。
 const SHEETS = {
   settings: { columns: ['項目', '值'], extra: ['說明'] },
@@ -87,19 +95,25 @@ const SHEETS = {
     }),
   },
   actions: {
-    columns: ['編號', '名稱', '所屬階層', '張數', '英鎊成本', '影響力成本', '齒輪', '效果', '牌面文字'],
+    columns: ['編號', '名稱', '類型', '分類', '可回應', '所屬階層', '張數', '英鎊成本', '影響力成本', '齒輪', '效果', '牌面文字'],
     effects: { effects: '效果' },
     defaultTarget: 'self',
-    convert: (cell) => ({
-      id: cell.編號,
-      name: cell.名稱,
-      role: optional(cell.所屬階層),
-      copies: number(cell.張數, null),
-      cost: { pounds: number(cell.英鎊成本, 0), influence: number(cell.影響力成本, 0) },
-      gear: optional(cell.齒輪),
-      effects: cell.效果,
-      text: cell.牌面文字,
-    }),
+    convert: (cell) => {
+      const kind = lookup(ACTION_KIND_WORDS, cell.類型) ?? cell.類型;
+      const answers = respondsTo(cell.可回應);
+      // 可回應只有響應卡才寫出來；一般牌填了也照寫，讓檢查報錯。
+      const record = { id: cell.編號, name: cell.名稱, kind, category: optional(cell.分類) };
+      if (kind === 'response' || answers !== null) record.respondsTo = answers;
+      return {
+        ...record,
+        role: optional(cell.所屬階層),
+        copies: number(cell.張數, null),
+        cost: { pounds: number(cell.英鎊成本, 0), influence: number(cell.影響力成本, 0) },
+        gear: optional(cell.齒輪),
+        effects: cell.效果,
+        text: cell.牌面文字,
+      };
+    },
   },
   bills: {
     columns: ['編號', '名稱', '年代', '通過時效果', '不通過時效果', '牌面文字'],
@@ -119,7 +133,7 @@ const SHEETS = {
     effects: { effects: '效果' },
     defaultTarget: 'all',
     convert: (cell) => {
-      const kind = lookup(KIND_WORDS, cell.類型) ?? cell.類型;
+      const kind = lookup(EVENT_KIND_WORDS, cell.類型) ?? cell.類型;
       const threshold = number(cell.門檻, null);
       // 門檻只有迷霧事件才寫出來；一般事件填了門檻也照寫，讓檢查報錯。
       const record = { id: cell.編號, name: cell.名稱, year: optional(cell.年代), kind };
