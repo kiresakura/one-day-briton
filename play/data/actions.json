@@ -1,0 +1,49 @@
+[
+  {
+    "id": "a01",
+    "name": "範例行動牌一",
+    "role": null,
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      }
+    ],
+    "text": "範例：自己拿 5 英鎊。"
+  },
+  {
+    "id": "a02",
+    "name": "範例行動牌二",
+    "role": "r1",
+    "copies": 1,
+    "cost": {
+      "pounds": 3,
+      "influence": 1
+    },
+    "gear": "範例齒輪",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 2
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      },
+      {
+        "op": "discard",
+        "target": "chosen",
+        "amount": 1
+      }
+    ],
+    "text": "範例：自己拿 2 影響力，迷霧加 3，指定一人棄 1 張牌。"
+  }
+]

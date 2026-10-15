@@ -1,0 +1,36 @@
+[
+  {
+    "id": "e01",
+    "name": "範例事件一",
+    "year": "1851",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": 3
+      },
+      {
+        "op": "draw",
+        "target": "chosen",
+        "amount": 1
+      }
+    ],
+    "text": "範例：全體各拿 3 英鎊，指定一人抽 1 張牌。"
+  },
+  {
+    "id": "e02",
+    "name": "範例迷霧事件",
+    "year": null,
+    "kind": "fog",
+    "threshold": 30,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": -1
+      }
+    ],
+    "text": "範例：迷霧超過 30 時觸發，全體各失去 1 影響力。"
+  }
+]

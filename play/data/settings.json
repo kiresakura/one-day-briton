@@ -1,0 +1,21 @@
+{
+  "startingHand": 4,
+  "startingPounds": 10,
+  "startingInfluence": 3,
+  "handLimit": 7,
+  "drawPerSunrise": 2,
+  "maxPlaysPerTurn": 4,
+  "reminderSeconds": {
+    "sunrise": 60,
+    "day": 60,
+    "dusk": 120,
+    "night": 120
+  },
+  "duskRevealSeconds": 3,
+  "fogThresholds": [
+    30,
+    60,
+    90
+  ],
+  "sunsetMinutes": 75
+}

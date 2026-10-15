@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test \"test/unit/*.test.js\"",
+    "test": "node scripts/data-check.mjs && node --test \"test/unit/*.test.js\"",
     "test:sync": "scripts/with-java.sh firebase emulators:exec --only auth,database --project demo-one-day-briton \"node --test --test-force-exit test/sync/*.test.js\"",
     "test:all": "npm test && npm run test:sync",
+    "data:check": "node scripts/data-check.mjs",
     "dev": "scripts/with-java.sh firebase emulators:start --only auth,database,hosting --project demo-one-day-briton",
     "vendor": "node scripts/vendor-firebase.mjs"
   },
