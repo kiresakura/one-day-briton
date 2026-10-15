@@ -1,7 +1,18 @@
 // 畫面與事件：首頁、等待核准、主持端、玩家端幾個畫面切換。資料一律從 store.js 的訂閱來，
 // 牌名與牌面文字從卡牌資料檔（gamedata.js）來。
 import { seed } from './config.js';
-import { REJECT_REASONS, chainLevel, checkSeating, dayStatus, needsTarget, playProblem, seatsInOrder, seededRandom } from './game.js';
+import {
+  REJECT_REASONS,
+  chainLevel,
+  checkSeating,
+  dayStatus,
+  needsTarget,
+  playProblem,
+  responseDeadline,
+  responseProblem,
+  seatsInOrder,
+  seededRandom,
+} from './game.js';
 import { indexGameData, loadGameData } from './gamedata.js';
 import { MAX_TABLES, PHASE_LABELS, confirmCode, hostUids, isHostOf, isRoomCode } from './rules.js';
 import {
@@ -18,6 +29,8 @@ import {
   rejectHost,
   requestPass,
   requestPlay,
+  requestRespond,
+  serverTime,
   setStartOrder,
   startSettling,
   startTable,
@@ -51,10 +64,11 @@ const dealing = new Set(); // 這台主持端正在發牌的桌號
 let stopSettling = null; // 主持端的自動結算（出牌請求）
 const startChoices = new Map(); // 主持端：桌號 → 下拉選單裡選好、還沒按「指定」的起始座位
 let stopRequest = null;
-let myRequest = null; // 自己最新的一筆出牌請求 { seq, type, card, … }
+let myRequest = null; // 自己最新的一筆請求 { seq, type, card, … }（出牌、結束這一輪或響應）
 let composing = null; // 玩家：正在準備出的牌 { index, card, target, chainTarget }
 let sending = false; // 玩家：請求送出中
 const clocks = new Map(); // 桌號 → { key: '回合:第幾位', since }：白晝每人的提醒倒數從這台裝置看到輪到他時算起
+let windowEnd = { id: null, timer: null }; // 玩家：響應截止時重畫一次的計時器（對應哪一張等著響應的牌）
 
 // ?seed=<整數>（只有模擬器認）：主持端洗牌、隨機棄牌用固定種子，畫面測試時手牌每次都一樣。
 const random = seed === null ? undefined : seededRandom(seed);
@@ -135,6 +149,8 @@ function goHome(message = '') {
   dealing.clear();
   startChoices.clear();
   clocks.clear();
+  clearTimeout(windowEnd.timer);
+  windowEnd = { id: null, timer: null };
   code = null;
   requested = false;
   localStorage.removeItem(savedRoomKey);
@@ -225,7 +241,11 @@ function chainText(turn) {
   return turn.gear === null ? '連鎖：上一張沒有齒輪' : `連鎖：齒輪「${turn.gear}」${turn.level} 級`;
 }
 
-// 最近幾筆出牌紀錄，新的在上面。
+function cardName(id) {
+  return cardData?.index.actions.get(id)?.name ?? id;
+}
+
+// 最近幾筆出牌紀錄，新的在上面。響應卡寫在被響應的那張後面。
 function logList(room, game, count = 5) {
   const entries = Object.values(game?.log ?? {})
     .sort((a, b) => a.at - b.at)
@@ -233,10 +253,12 @@ function logList(room, game, count = 5) {
     .reverse();
   const list = element('ol', 'log');
   for (const entry of entries) {
-    const name = cardData?.index.actions.get(entry.card)?.name ?? entry.card;
+    const name = cardName(entry.card);
     const level = entry.level > 1 ? `（${entry.level} 級連鎖）` : '';
     const target = entry.target ? ` → ${nameOf(room, entry.target)}` : '';
-    list.append(element('li', '', `第 ${entry.round} 回合・${nameOf(room, entry.by)} 打出「${name}」${level}${target}`));
+    const chain = entry.chainTarget && !entry.canceled ? `・${nameOf(room, entry.chainTarget)} 隨機棄 1 張` : '';
+    const answer = entry.response ? `・被 ${nameOf(room, entry.response.by)} 以「${cardName(entry.response.card)}」響應${entry.canceled ? '，被抵銷' : ''}` : '';
+    list.append(element('li', '', `第 ${entry.round} 回合・${nameOf(room, entry.by)} 打出「${name}」${level}${target}${chain}${answer}`));
   }
   return entries.length ? list : null;
 }
@@ -260,6 +282,31 @@ function countdownText(since) {
 setInterval(() => {
   for (const node of document.querySelectorAll('.countdown[data-since]')) node.textContent = countdownText(Number(node.dataset.since));
 }, 1000);
+
+// 響應窗口的倒數：照伺服器時間算到截止還有幾秒（主持端判斷用的也是伺服器時間），每 250 毫秒更新一次；
+// 本機估的伺服器時間差個幾毫秒時，顯示的秒數不超過窗口的秒數。before＋秒數＋after 是倒數中的文字，over 是時間到之後的文字。
+function windowLine(className, pending, { before, after, over }) {
+  const node = element('p', `response-window ${className}`);
+  Object.assign(node.dataset, { deadline: responseDeadline(pending), seconds: pending.seconds, before, after, over });
+  showWindowLine(node);
+  return node;
+}
+
+function showWindowLine(node) {
+  const left = Math.min(Number(node.dataset.seconds), Math.ceil((Number(node.dataset.deadline) - serverTime(session)) / 1000));
+  node.textContent = left > 0 ? `${node.dataset.before}${left}${node.dataset.after}` : node.dataset.over;
+}
+
+setInterval(() => {
+  for (const node of document.querySelectorAll('.response-window[data-deadline]')) showWindowLine(node);
+}, 250);
+
+// 等著響應的那張牌：「○○ 打出「X」（分類）」。
+function pendingText(room, pending) {
+  const action = cardData?.index.actions.get(pending.card);
+  const category = action?.category ? `（${action.category}）` : '';
+  return `${nameOf(room, pending.by)} 打出「${cardName(pending.card)}」${category}`;
+}
 
 // 發這一桌這一回合的日出；送出到寫完之間，畫面顯示「發牌中…」。
 async function deal(roomCode, table) {
@@ -312,13 +359,23 @@ function startOrderControls(room, table, game, roomCode) {
   return [label, set];
 }
 
-// 白晝：輪到誰、這一輪出了幾張、連鎖狀態、提醒倒數、還有幾人沒出完。結算是自動的，這裡只顯示。
+// 白晝：輪到誰、這一輪出了幾張、連鎖狀態、提醒倒數、還有幾人沒出完、等著響應的牌與倒數。結算是自動的，這裡只顯示。
 function dayLines(room, table, game, state) {
   const status = dayStatus(game, state.round);
-  if (status.done) return [element('p', 'table-note', '白晝：大家都出完了，可以進黃昏')];
+  const waiting = game.pending
+    ? [
+        windowLine('table-note problem', game.pending, {
+          before: `等響應：${pendingText(room, game.pending)}，還有 `,
+          after: ' 秒',
+          over: `等響應：${pendingText(room, game.pending)}，時間到了，結算中…`,
+        }),
+      ]
+    : [];
+  if (status.done) return [...waiting, element('p', 'table-note', '白晝：大家都出完了，可以進黃昏')];
   return [
     element('p', 'day-turn', `輪到 ${nameOf(room, status.current)}（第 ${status.turn.index + 1}／${status.order.length} 位）`),
     element('p', 'table-note', `這一輪出了 ${status.turn.plays} 張・${chainText(status.turn)}`),
+    ...waiting,
     countdown(table, state.round, status.turn.index),
     element('p', 'table-note problem', `還有 ${status.remaining} 人沒出完`),
   ];
@@ -342,7 +399,7 @@ function gameControls(room, table, game, state, pending, roomCode) {
   const unseated = playersAt(room, table).filter(([uid]) => !game.seats[uid]);
   if (unseated.length) nodes.push(nameLine(room, unseated, '未入座：'));
   nodes.push(element('p', 'table-pile', `牌庫 ${game.deckCount} 張・棄牌堆 ${game.discardCount} 張`));
-  if (state.round === 1 && !game.turn) nodes.push(...startOrderControls(room, table, game, roomCode));
+  if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
   const log = logList(room, game);
   if (log) nodes.push(element('h3', '', '最近出牌'), log);
@@ -384,7 +441,9 @@ function renderHost(room) {
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
-    next.disabled = !game || pending; // 開局前、日出還沒發牌時不能推進
+    // 開局前、日出還沒發牌、有牌在等響應時不能推進（畫面擋，規則不擋）。
+    next.disabled = !game || pending || Boolean(game?.pending);
+    const blocked = game?.pending ? [element('p', 'table-note problem next-blocked', '有牌在等響應，結算完才能進下一階段')] : [];
     // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
     // 是自己這一筆把桌子推進到新回合的日出，就接著發牌。
     next.addEventListener('click', () =>
@@ -397,6 +456,7 @@ function renderHost(room) {
       element('h2', '', `第 ${table} 桌`),
       status,
       ...(game ? gameControls(room, table, game, state, pending, roomCode) : startControls(room, table, roomCode)),
+      ...blocked,
       next,
     );
     cards.push(card);
@@ -412,23 +472,35 @@ function renderHost(room) {
   show('host');
 }
 
-// 白晝輪到自己時，畫面需要的東西：輪次、自己的請求處理到哪、同桌其他人、給 playProblem 查的局面。不是白晝或沒入座是 null。
+// 白晝時畫面需要的東西：輪次、自己的請求處理到哪、等著響應的那張牌（waiting）、同桌其他人、給 playProblem 與
+// responseProblem 查的局面。不是白晝或沒入座是 null。有牌在等響應時，出牌與結束這一輪都停用（busy）。
 function dayContext(state, game) {
   if (state.phase !== 'day' || !game?.seats?.[session.uid] || !cardData || !mine) return null;
   const status = dayStatus(game, state.round);
   const done = game.lastSeq?.[session.uid] ?? 0;
-  const pending = Boolean(myRequest) && myRequest.seq > done; // 送出了、主持端還沒結算
-  const rejected = !pending && myRequest && mine.notice?.seq === myRequest.seq ? mine.notice.reason : null;
+  const unsettled = Boolean(myRequest) && myRequest.seq > done; // 送出了、主持端還沒處理
+  const rejected = !unsettled && myRequest && mine.notice?.seq === myRequest.seq ? mine.notice.reason : null;
+  const waiting = game.pending ?? null;
   return {
     status,
-    pending,
+    unsettled,
     rejected,
-    busy: sending || pending,
+    waiting,
+    sent: sending || unsettled,
+    busy: sending || unsettled || Boolean(waiting),
     myTurn: status.current === session.uid,
     others: seatsInOrder(game.seats)
       .map(([uid]) => uid)
       .filter((uid) => uid !== session.uid),
-    view: { round: state.round, phase: state.phase, seats: game.seats, startOrder: game.startOrder, turn: game.turn, hands: { [session.uid]: mine.hand ?? [] } },
+    view: {
+      round: state.round,
+      phase: state.phase,
+      seats: game.seats,
+      startOrder: game.startOrder,
+      turn: game.turn,
+      pending: waiting,
+      hands: { [session.uid]: mine.hand ?? [] },
+    },
   };
 }
 
@@ -438,8 +510,13 @@ function cardProblem(day, action) {
   const reason = playProblem(day.view, session.uid, { card: action.id, target: someone, chainTarget: someone }, cardData.data);
   if (!reason) return null;
   if (!someone && ['need-target', 'need-chain-target'].includes(reason)) return '同桌沒有可以指定的人';
-  if (reason === 'response-card') return '響應卡要在別人出牌時打出，這一版還不能用';
   return REJECT_REASONS[reason] ?? reason;
+}
+
+// 這張響應卡現在為什麼打不出去（打得出去是 null）：時間用估計的伺服器時間，主持端結算時照樣再查一次。
+function answerProblem(day, action) {
+  const reason = responseProblem(day.view, session.uid, { card: action.id, pending: day.waiting.id, at: serverTime(session) }, cardData.data);
+  return reason ? (REJECT_REASONS[reason] ?? reason) : null;
 }
 
 // 送出請求；送出到主持端結算完之間，出牌與結束這一輪的按鈕停用。
@@ -503,8 +580,8 @@ function composer(room, day, action) {
   return box;
 }
 
-// 一張手牌：牌名、類型、成本、牌面文字；白晝輪到自己時加上「出牌」（出不了就停用並寫原因）。
-// 資料檔裡找不到的牌只顯示編號。
+// 一張手牌：牌名、類型、成本、牌面文字；白晝輪到自己時加上「出牌」（出不了就停用並寫原因）；別人出的牌在等響應時，
+// 響應卡加上「響應」。資料檔裡找不到的牌只顯示編號。
 function handItem(room, day, id, index) {
   const action = cardData.index.actions.get(id);
   const item = element('li', 'hand-card');
@@ -522,6 +599,7 @@ function handItem(room, day, id, index) {
   );
   if (action.gear) head.append(element('span', 'hand-gear', `齒輪「${action.gear}」`));
   item.append(head, element('p', 'hand-text', action.text));
+  if (day?.waiting && day.waiting.by !== session.uid && action.kind === 'response') return withAnswer(item, day, action);
   if (!day?.myTurn) return item;
   const problem = cardProblem(day, action);
   if (!problem && composing?.index === index && composing.card === id) {
@@ -540,7 +618,28 @@ function handItem(room, day, id, index) {
   return item;
 }
 
-// 白晝的那張卡：輪到誰、這一輪出了幾張、連鎖、提醒倒數、請求的狀態、「結束這一輪」。
+// 「響應」鈕：打不出去（分類不合、付不起、時間過了…）就停用並寫原因；送出後到主持端處理完之間停用。
+function withAnswer(item, day, action) {
+  const problem = answerProblem(day, action);
+  const answer = element('button', 'hand-respond', '響應');
+  answer.type = 'button';
+  answer.disabled = Boolean(problem) || day.sent;
+  const pending = day.waiting.id;
+  answer.addEventListener('click', () => submit(() => requestRespond(session, code, { card: action.id, pending })));
+  item.append(answer);
+  if (problem) item.append(element('p', 'hand-problem', problem));
+  return item;
+}
+
+// 響應截止的那一刻重畫一次：「響應」鈕停用、提示換成「時間到了」。
+function rerenderAtDeadline(pending) {
+  if (windowEnd.id === pending.id) return;
+  clearTimeout(windowEnd.timer);
+  const left = responseDeadline(pending) - serverTime(session);
+  windowEnd = { id: pending.id, timer: left > 0 ? setTimeout(rerender, left + 50) : null };
+}
+
+// 白晝的那張卡：輪到誰、這一輪出了幾張、連鎖、等著響應的牌與倒數、提醒倒數、請求的狀態、「結束這一輪」。
 function dayCard(room, me, state, day) {
   const { status } = day;
   const nodes = [element('h2', '', '白晝出牌')];
@@ -552,10 +651,27 @@ function dayCard(room, me, state, day) {
   nodes.push(
     element('p', `day-turn${day.myTurn ? ' mine' : ''}`, day.myTurn ? '輪到你出牌' : `輪到 ${nameOf(room, status.current)}`),
     element('p', 'caption', `這一輪已出 ${status.turn.plays}／${max} 張・${chainText(status.turn)}・還有 ${status.remaining} 人沒出完`),
-    countdown(me.table, state.round, status.turn.index),
   );
-  if (day.pending || sending) nodes.push(element('p', 'request-state', '結算中…'));
-  else if (day.rejected) nodes.push(element('p', 'request-state problem', `沒有出成：${REJECT_REASONS[day.rejected] ?? day.rejected}`));
+  const { waiting } = day;
+  if (waiting) {
+    const own = waiting.by === session.uid;
+    const played = own ? `你打出「${cardName(waiting.card)}」` : pendingText(room, waiting);
+    nodes.push(
+      windowLine(own ? 'day-window' : 'day-window can-respond', waiting, {
+        before: own ? `${played}——等其他人響應 ` : `${played}——`,
+        after: own ? ' 秒' : ' 秒內可以響應',
+        over: `${played}——響應時間到了，等主持端結算`,
+      }),
+    );
+    rerenderAtDeadline(waiting);
+  }
+  nodes.push(countdown(me.table, state.round, status.turn.index));
+  const responding = waiting && waiting.by !== session.uid;
+  if (day.sent) nodes.push(element('p', 'request-state', responding ? '已送出，等結算' : '結算中…'));
+  else if (day.rejected) {
+    const what = myRequest?.type === 'respond' ? '響應沒有成功' : '沒有出成';
+    nodes.push(element('p', 'request-state problem', `${what}：${REJECT_REASONS[day.rejected] ?? day.rejected}`));
+  }
   if (day.myTurn) {
     const pass = element('button', 'day-pass quiet', '結束這一輪');
     pass.type = 'button';

@@ -466,3 +466,14 @@ h3 {
   padding-left: 1.2em;
   font-size: 0.9rem;
 }
+
+/* 響應窗口（M5b） */
+.response-window {
+  margin: 4px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.day-window.can-respond {
+  color: var(--accent);
+}
