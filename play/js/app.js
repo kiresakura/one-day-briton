@@ -3,15 +3,19 @@
 import { seed } from './config.js';
 import {
   REJECT_REASONS,
+  VOTE_REASONS,
   chainLevel,
   checkSeating,
   dayStatus,
+  duskStage,
   needsTarget,
   playProblem,
   responseDeadline,
   responseProblem,
   seatsInOrder,
   seededRandom,
+  skippedEffects,
+  voteProblem,
 } from './game.js';
 import { indexGameData, loadGameData } from './gamedata.js';
 import { MAX_TABLES, PHASE_LABELS, confirmCode, hostUids, isHostOf, isRoomCode } from './rules.js';
@@ -30,6 +34,8 @@ import {
   requestPass,
   requestPlay,
   requestRespond,
+  requestVote,
+  revealDusk,
   serverTime,
   setStartOrder,
   startSettling,
@@ -39,6 +45,7 @@ import {
   watchPrivate,
   watchRequest,
   watchRoom,
+  watchVote,
 } from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -69,6 +76,12 @@ let composing = null; // 玩家：正在準備出的牌 { index, card, target, c
 let sending = false; // 玩家：請求送出中
 const clocks = new Map(); // 桌號 → { key: '回合:第幾位', since }：白晝每人的提醒倒數從這台裝置看到輪到他時算起
 let windowEnd = { id: null, timer: null }; // 玩家：響應截止時重畫一次的計時器（對應哪一張等著響應的牌）
+let stopVote = null;
+let myVote = null; // 自己最新的一張票 { table, round, side, bid, seq, at }
+let ballot = null; // 玩家：正在選的票 { key: '桌:回合', side, bid }；重畫時留著，換回合就清掉
+let voting = false; // 玩家：票送出中
+const wakeups = new Map(); // 黃昏的截止時間 → 到時重畫一次的計時器（送出鈕、提前揭曉鈕要跟著停用）
+const SIDE_LABELS = { yes: '贊成', no: '反對', abstain: '棄權' };
 
 // ?seed=<整數>（只有模擬器認）：主持端洗牌、隨機棄牌用固定種子，畫面測試時手牌每次都一樣。
 const random = seed === null ? undefined : seededRandom(seed);
@@ -142,9 +155,15 @@ function goHome(message = '') {
   stopSettling = null;
   stopRequest?.();
   stopRequest = null;
+  stopVote?.();
+  stopVote = null;
   mine = null;
   myRequest = null;
+  myVote = null;
+  ballot = null;
   composing = null;
+  for (const { timer } of wakeups.values()) clearTimeout(timer);
+  wakeups.clear();
   latestRoom = null;
   dealing.clear();
   startChoices.clear();
@@ -285,9 +304,14 @@ setInterval(() => {
 
 // 響應窗口的倒數：照伺服器時間算到截止還有幾秒（主持端判斷用的也是伺服器時間），每 250 毫秒更新一次；
 // 本機估的伺服器時間差個幾毫秒時，顯示的秒數不超過窗口的秒數。before＋秒數＋after 是倒數中的文字，over 是時間到之後的文字。
-function windowLine(className, pending, { before, after, over }) {
-  const node = element('p', `response-window ${className}`);
-  Object.assign(node.dataset, { deadline: responseDeadline(pending), seconds: pending.seconds, before, after, over });
+function windowLine(className, pending, texts) {
+  return deadlineLine(`response-window ${className}`, responseDeadline(pending), pending.seconds, texts);
+}
+
+// 照伺服器時間倒數到 deadline 的一行（響應窗口、黃昏的提醒與揭曉倒數共用），顯示的秒數不超過 seconds。
+function deadlineLine(className, deadline, seconds, { before, after, over }) {
+  const node = element('p', `server-countdown ${className}`);
+  Object.assign(node.dataset, { deadline, seconds, before, after, over });
   showWindowLine(node);
   return node;
 }
@@ -298,8 +322,109 @@ function showWindowLine(node) {
 }
 
 setInterval(() => {
-  for (const node of document.querySelectorAll('.response-window[data-deadline]')) showWindowLine(node);
+  for (const node of document.querySelectorAll('.server-countdown[data-deadline]')) showWindowLine(node);
 }, 250);
+
+// 到了伺服器時間 at 時重畫一次（同一個時間只排一次）。
+function rerenderAt(at) {
+  if (wakeups.has(at)) return;
+  const left = at - serverTime(session);
+  wakeups.set(at, { timer: left > 0 ? setTimeout(rerender, left + 50) : null });
+}
+
+// ---- 黃昏（M6） ----
+
+function billOf(id) {
+  return cardData?.data.bills.find((bill) => bill.id === id) ?? null;
+}
+
+// 法案卡：名稱、年代、說明。資料檔裡找不到時只顯示編號。
+function billLines(id) {
+  const bill = billOf(id);
+  if (!bill) return [element('p', 'dusk-bill', `法案 ${id}`)];
+  return [element('p', 'dusk-bill', `《${bill.name}》${bill.year ? `（${bill.year}）` : ''}`), element('p', 'dusk-text', bill.text)];
+}
+
+function sideText(vote) {
+  return vote.side === 'abstain' ? '棄權' : `${SIDE_LABELS[vote.side] ?? vote.side} ${vote.bid}`;
+}
+
+// 黃昏的提醒倒數（只顯示，不會自動揭曉）：從翻開法案的伺服器時間算起。
+function reminderLine(dusk) {
+  const seconds = cardData?.data.settings.reminderSeconds.dusk ?? 120;
+  return deadlineLine('countdown dusk-reminder', dusk.openedAt + seconds * 1000, seconds, {
+    before: '提醒倒數 ',
+    after: ' 秒',
+    over: `已經超過 ${seconds} 秒（只是提醒，不會自動揭曉）`,
+  });
+}
+
+// 截止時間（revealAt）的倒數：全員送出後是「n 秒後揭曉」，提前揭曉時直接是截止了。
+function revealLine(dusk) {
+  rerenderAt(dusk.revealAt);
+  return deadlineLine('dusk-countdown', dusk.revealAt, cardData?.data.settings.duskRevealSeconds ?? 3, {
+    before: '大家都送出了，',
+    after: ' 秒後揭曉',
+    over: '投票截止了，揭曉中…',
+  });
+}
+
+// 揭曉結果：通過與否、兩邊總和、每個人的選邊與出價（沒送出的算棄權）。uid 是玩家自己時，另外寫付了多少、現在的數字。
+function resultLines(room, game, id, result, uid) {
+  const nodes = [
+    element('p', `dusk-result ${result.passed ? 'passed' : 'failed'}`, `揭曉：${result.passed ? '通過' : '沒有通過'}（贊成 ${result.yes}：反對 ${result.no}）`),
+  ];
+  const list = element('ul', 'dusk-votes');
+  for (const [seatUid] of seatsInOrder(game.seats)) {
+    const vote = result.votes?.[seatUid];
+    list.append(element('li', seatUid === uid ? 'me' : '', `${nameOf(room, seatUid)}：${vote ? sideText(vote) : '沒送出（算棄權）'}`));
+  }
+  nodes.push(list);
+  const bill = billOf(id);
+  if (uid && game.seats[uid]) {
+    const vote = result.votes?.[uid];
+    const paid = vote && vote.side !== 'abstain' ? vote.bid : 0;
+    const seat = game.seats[uid];
+    const sided = vote && ((vote.side === 'yes' && result.passed) || (vote.side === 'no' && !result.passed));
+    nodes.push(
+      element('p', 'dusk-paid', `你付了 ${paid} 影響力${sided ? '・站在結果這一邊（議會之聲 +1）' : ''}`),
+      element('p', 'dusk-now', `照「${result.passed ? '通過' : '不通過'}」的效果結算後，你現在：英鎊 ${seat.pounds}・影響力 ${seat.influence}`),
+    );
+  } else if (bill) {
+    const skipped = skippedEffects(bill, result.passed);
+    if (bill.todo === true) nodes.push(element('p', 'table-note problem', '這張法案的效果還沒做好（todo），這次沒有結算'));
+    else if (skipped.length) nodes.push(element('p', 'table-note problem', `這張法案有 ${skipped.length} 個效果要指定一人，這一版不結算，已略過`));
+  }
+  return nodes;
+}
+
+// 黃昏（主持端）：法案、已送出人數、提醒倒數、提前揭曉、截止倒數、揭曉結果。翻法案、計人數、揭曉都是自動的。
+function duskLines(room, table, game, state, roomCode) {
+  const stage = duskStage(game.dusk, state.round);
+  if (stage === 'none') return state.phase === 'dusk' ? [element('p', 'table-note', '黃昏：翻開法案中…')] : [];
+  if (stage === 'adjourned') return [element('p', 'dusk-bill', '今天議會休會'), element('p', 'table-note', '法案都通過了，這一回合不投票')];
+  const { dusk } = game;
+  const nodes = [element('h3', '', '黃昏法案'), ...billLines(dusk.bill)];
+  if (stage === 'revealed') return [...nodes, ...resultLines(room, game, dusk.bill, dusk.result, null)];
+  nodes.push(element('p', 'dusk-submitted', `已送出 ${dusk.submitted ?? 0}／${Object.keys(game.seats).length} 人`));
+  nodes.push(stage === 'voting' ? reminderLine(dusk) : revealLine(dusk));
+  if (state.phase === 'dusk' && (stage === 'voting' || dusk.revealAt > serverTime(session) + 500)) {
+    const early = element('button', 'dusk-reveal quiet', '提前揭曉');
+    early.type = 'button';
+    early.addEventListener('click', () => run(early, () => revealDusk(session, roomCode, table)));
+    nodes.push(early, element('p', 'caption', '沒送出的人算棄權；截止後約 1 秒揭曉'));
+  }
+  return nodes;
+}
+
+// 黃昏還沒揭曉時，主持端的「下一階段」停用的原因（不用停是 null）。
+function duskBlock(game, state) {
+  if (!game || state.phase !== 'dusk') return null;
+  const stage = duskStage(game.dusk, state.round);
+  if (stage === 'none') return '法案還沒翻開，揭曉後才能進下一階段';
+  if (stage === 'voting' || stage === 'closing') return '法案還沒揭曉，揭曉後才能進下一階段';
+  return null;
+}
 
 // 等著響應的那張牌：「○○ 打出「X」（分類）」。
 function pendingText(room, pending) {
@@ -401,6 +526,7 @@ function gameControls(room, table, game, state, pending, roomCode) {
   nodes.push(element('p', 'table-pile', `牌庫 ${game.deckCount} 張・棄牌堆 ${game.discardCount} 張`));
   if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
+  if (state.phase === 'dusk' || state.phase === 'night') nodes.push(...duskLines(room, table, game, state, roomCode));
   const log = logList(room, game);
   if (log) nodes.push(element('h3', '', '最近出牌'), log);
   if (pending && dealing.has(table)) {
@@ -441,9 +567,10 @@ function renderHost(room) {
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
-    // 開局前、日出還沒發牌、有牌在等響應時不能推進（畫面擋，規則不擋）。
-    next.disabled = !game || pending || Boolean(game?.pending);
-    const blocked = game?.pending ? [element('p', 'table-note problem next-blocked', '有牌在等響應，結算完才能進下一階段')] : [];
+    // 開局前、日出還沒發牌、有牌在等響應、黃昏的法案還沒揭曉時不能推進（畫面擋，規則不擋）。
+    const why = game?.pending ? '有牌在等響應，結算完才能進下一階段' : duskBlock(game, state);
+    next.disabled = !game || pending || Boolean(why);
+    const blocked = why ? [element('p', 'table-note problem next-blocked', why)] : [];
     // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
     // 是自己這一筆把桌子推進到新回合的日出，就接著發牌。
     next.addEventListener('click', () =>
@@ -682,6 +809,84 @@ function dayCard(room, me, state, day) {
   return nodes;
 }
 
+// 送出（或改）自己的票；送出到寫完之間，送出鈕停用。
+async function castVote(vote) {
+  voting = true;
+  notify();
+  rerender();
+  try {
+    await requestVote(session, code, vote);
+  } catch (error) {
+    notify(explain(error));
+  } finally {
+    voting = false;
+    rerender();
+  }
+}
+
+// 選邊（贊成／反對／棄權）與出價（0 到自己的影響力）、「送出」；選的值記在 ballot，重畫時留著。送不出去就停用並寫原因。
+function ballotBox(me, state, game, sent) {
+  const seat = game.seats[session.uid];
+  const key = `${me.table}:${state.round}`;
+  if (ballot?.key !== key) ballot = { key, side: sent?.side ?? null, bid: sent?.bid ?? 0 };
+  const box = element('div', 'ballot');
+  box.append(element('p', 'caption', `你的影響力 ${seat.influence}：出價 0 到 ${seat.influence}，選邊的人不論輸贏都要付；棄權不用付`));
+  const sides = element('p', 'ballot-sides');
+  for (const side of ['yes', 'no', 'abstain']) {
+    const button = element('button', `ballot-side${ballot.side === side ? ' chosen' : ' quiet'}`, SIDE_LABELS[side]);
+    button.type = 'button';
+    button.dataset.side = side;
+    button.setAttribute('aria-pressed', String(ballot.side === side));
+    button.addEventListener('click', () => {
+      ballot = { ...ballot, side, bid: side === 'abstain' ? 0 : Math.min(ballot.bid, seat.influence) };
+      rerender();
+    });
+    sides.append(button);
+  }
+  const select = element('select', 'ballot-bid');
+  for (let bid = 0; bid <= seat.influence; bid += 1) {
+    const option = element('option', '', `${bid}`);
+    option.value = bid;
+    option.selected = ballot.bid === bid;
+    select.append(option);
+  }
+  select.disabled = ballot.side === 'abstain';
+  select.addEventListener('change', () => {
+    ballot = { ...ballot, bid: Number(select.value) };
+    rerender();
+  });
+  const label = element('label', 'ballot-bid-label', '影響力出價');
+  label.append(select);
+  const vote = { table: me.table, round: state.round, side: ballot.side, bid: ballot.side === 'abstain' ? 0 : ballot.bid };
+  const view = { table: me.table, round: state.round, phase: state.phase, seats: game.seats, dusk: game.dusk };
+  const reason = ballot.side ? voteProblem(view, session.uid, { ...vote, at: serverTime(session) }) : null;
+  const send = element('button', 'ballot-send', sent ? '改成這一張' : '送出');
+  send.type = 'button';
+  send.disabled = !ballot.side || Boolean(reason) || voting;
+  send.addEventListener('click', () => castVote(vote));
+  box.append(sides, label, send);
+  if (reason) box.append(element('p', 'hand-problem', VOTE_REASONS[reason] ?? reason));
+  return box;
+}
+
+// 黃昏的那張卡：法案、已送出人數、提醒倒數、自己的票與選票、揭曉倒數、揭曉結果；休會時只有一句話。
+function duskCard(room, me, state, game) {
+  const stage = duskStage(game.dusk, state.round);
+  const nodes = [element('h2', '', '黃昏：法案表決')];
+  if (stage === 'none') return [...nodes, element('p', 'caption', '等主持端翻開法案…')];
+  if (stage === 'adjourned') return [...nodes, element('p', 'dusk-bill', '今天議會休會'), element('p', 'caption', '這一回合不用投票，等主持端進黑夜')];
+  const { dusk } = game;
+  nodes.push(...billLines(dusk.bill));
+  if (stage === 'revealed') return [...nodes, ...resultLines(room, game, dusk.bill, dusk.result, session.uid)];
+  nodes.push(element('p', 'dusk-submitted', `已送出 ${dusk.submitted ?? 0}／${Object.keys(game.seats).length} 人`));
+  nodes.push(stage === 'voting' ? reminderLine(dusk) : revealLine(dusk));
+  const sent = myVote && String(myVote.table) === String(me.table) && myVote.round === state.round ? myVote : null;
+  if (sent) nodes.push(element('p', 'dusk-sent', `已送出：${sideText(sent)}（揭曉前可以改）`));
+  if (state.phase === 'dusk' && (stage === 'voting' || serverTime(session) < dusk.revealAt)) nodes.push(ballotBox(me, state, game, sent));
+  else nodes.push(element('p', 'caption', sent ? '投票截止了，等揭曉' : '投票截止了，你沒有送出，算棄權'));
+  return nodes;
+}
+
 // 自己的階層、資源、天命與手牌。還沒開局、沒有入座或資料還沒到時，只顯示一句說明。
 function renderMyGame(room, me, state, game) {
   const seat = game?.seats?.[session.uid];
@@ -709,6 +914,10 @@ function renderMyGame(room, me, state, game) {
   if (!day?.myTurn || hand[composing?.index] !== composing?.card) composing = null; // 換人了或那張牌已經不在
   $('player-day').hidden = !day;
   $('player-day').replaceChildren(...(day ? dayCard(room, me, state, day) : []));
+  // 黃昏，以及同一回合的黑夜（看得到這一回合的結果）。
+  const dusk = state.phase === 'dusk' || (state.phase === 'night' && duskStage(game.dusk, state.round) !== 'none');
+  $('player-dusk').hidden = !dusk;
+  $('player-dusk').replaceChildren(...(dusk ? duskCard(room, me, state, game) : []));
   $('player-hand-count').textContent = hand.length;
   $('player-hand').replaceChildren(...hand.map((id, index) => handItem(room, day, id, index)));
   const log = logList(room, game);
@@ -776,10 +985,32 @@ function watchMyRequest() {
   if (stopped) stop();
 }
 
+// 訂閱自己的票（送出後顯示「已送出：…」），做法同 watchMine。
+function watchMyVote() {
+  if (stopVote) return;
+  let stopped = false;
+  let stop = null;
+  stopVote = () => {
+    stopped = true;
+    stop?.();
+  };
+  stop = watchVote(
+    session,
+    code,
+    (value) => {
+      myVote = value;
+      rerender();
+    },
+    () => {},
+  );
+  if (stopped) stop();
+}
+
 function renderPlayer(room, me) {
   markPresent();
   watchMine();
   watchMyRequest();
+  watchMyVote();
   const state = room.tables[me.table];
   const game = room.games?.[me.table];
   $('player-stage').dataset.phase = state.phase;
