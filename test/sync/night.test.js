@@ -396,6 +396,17 @@ test('the rules check every night field the hosts write', TIMEOUT, async (t) => 
   }
   await assert.rejects(bumped(host, { [`${game}/night`]: { ...opened, round: 2 } }), denied, 'round 2 is not at night yet');
   await advanceTable(host, code, 2, { round: 2, phase: 'dusk' });
+  // 開新回合的黑夜一定是剛開的：伺服器時間、0 人、沒有截止時間、沒有結果（不能沿用上一回合的時間，開的當下就截止或揭曉）。
+  const { openedAt: oldOpened, revealAt: oldReveal } = stored.night;
+  const badOpenings = [
+    { round: 2, openedAt: oldOpened, submitted: 0 },
+    { round: 2, openedAt: serverTimestamp(), submitted: 0, revealAt: oldReveal },
+    { round: 2, openedAt: oldOpened, submitted: 0, revealAt: oldReveal },
+    { round: 2, openedAt: serverTimestamp(), submitted: 1 },
+  ];
+  for (const value of badOpenings) await assert.rejects(bumped(host, { [`${game}/night`]: value }), denied, `opening ${JSON.stringify(value)}`);
+  const atOnce = { [`${game}/night`]: { round: 2, openedAt: serverTimestamp(), submitted: 0, revealAt: serverTimestamp(), result: { players } }, [`${game}/nightLog/2`]: { players } };
+  await assert.rejects(bumped(host, atOnce), denied, 'a night cannot open already revealed');
   await accept({ [`${game}/night`]: { ...opened, round: 2 } });
   assert.deepEqual(Object.keys(await read(host, `${game}/night`)).sort(), ['openedAt', 'round', 'submitted']);
 });
@@ -554,8 +565,69 @@ test('a pick changed while the host was offline still counts: the host asks the 
   assert.deepEqual(errorsSeen, []);
 });
 
+test('a host working from a stale copy of the room (offline while the table moved on) gives up at once instead of waiting', TIMEOUT, async (t) => {
+  const { code } = await dayRoom(t);
+  const seenByBackup = watch(backup, code);
+  t.after(() => seenByBackup.stop());
+  await enterAsHost(backup, code);
+  await approveHost(host, code, backup.uid);
+  await toNight(code, 1, { open: false });
+  await seenByBackup.until((room) => room.hosts?.[backup.uid] === true && room.tables[2].phase === 'night', 'backup sees the night');
+  // 備援機斷線時桌子被推進到第 2 回合日出；它照快取（還在黑夜）算「開黑夜」，連回來寫入時被規則擋下，
+  // 這時看到回合與階段變了就重讀、放手，不用等 3 秒再報錯。
+  goOffline(backup.db);
+  t.after(() => goOnline(backup.db));
+  await advanceTable(host, code, 2, { round: 1, phase: 'night' });
+  const settling = settleNight(backup, code, 2, data);
+  await sleep(200);
+  const back = Date.now();
+  goOnline(backup.db);
+  assert.deepEqual(await settling, { outcome: 'none', result: null });
+  assert.ok(Date.now() - back < 2500, `gave up in ${Date.now() - back} ms, not after a 3 s wait`);
+  assert.equal((await read(host, `rooms/${code}/games/2`)).night, undefined, 'no night was opened for the old round');
+});
+
+test('a reveal turned down because the host clock runs ahead is tried again a few seconds later instead of hanging', TIMEOUT, async (t) => {
+  const { code, watchers, first, second, third } = await dayRoom(t);
+  await toNight(code, 1, { open: false });
+  const errorsSeen = [];
+  const stop = startSettling(host, code, quick, { random: always(6), onError: (error) => errorsSeen.push(error) });
+  t.after(stop);
+  await watchers.p1.until((room) => room.games[2].night?.round === 1, 'the night opens');
+  // 主持端估的伺服器時間比實際快 6 秒（例如裝置時鐘在連線之後被校正）：它在截止前就去揭曉，被規則擋下，試三次就放棄；
+  // 之後隔 5 秒再試，伺服器時間過了截止就揭曉成功。
+  const realNow = Date.now;
+  t.after(() => {
+    Date.now = realNow;
+  });
+  Date.now = () => realNow() + 6000;
+  await Promise.all([choose(first, code, 'split'), choose(second, code, 'split'), choose(third, code, 'sleep')]);
+  const done = await watchers.p2.until((room) => room.games[2].night.result, 'revealed after a later try', 20_000);
+  Date.now = realNow;
+  assert.ok(errorsSeen.length >= 1, 'the early tries were turned down and reported');
+  assert.deepEqual(done.games[2].night.result.players[first.uid], { choice: 'split', pounds: 3, influence: 0, sin: 1 });
+});
+
+test('a 0-second countdown closes at the server time once everyone has sent', TIMEOUT, async (t) => {
+  const { code, first, second, third } = await nightRoom(t);
+  const instant = { ...data, settings: { ...data.settings, nightRevealSeconds: 0 } };
+  await Promise.all([choose(first, code, 'sleep'), choose(second, code, 'sleep'), choose(third, code, 'gamble', 1)]);
+  const before = serverTime(host);
+  assert.equal((await settleNight(host, code, 2, instant)).outcome, 'counted');
+  const { revealAt, submitted } = await read(host, `rooms/${code}/games/2/night`);
+  assert.equal(submitted, 3);
+  assert.ok(revealAt >= before - 1000 && revealAt <= serverTime(host) + 1000, 'the deadline is the server time of the write');
+  await assert.rejects(choose(first, code, 'split'), refused, 'closed at once');
+  await untilServerTime(host, nightSettleAt({ revealAt }) + 50);
+  const { outcome, result } = await settleNight(host, code, 2, instant, dice(4));
+  assert.equal(outcome, 'revealed');
+  assert.deepEqual(result.players[third.uid], { choice: 'gamble', tiers: 1, rolls: [4], bust: false, pounds: 5, influence: 0, sin: 0 });
+});
+
 test('hand limit: the next sunrise discards the picked cards first, discards at random for whoever did not pick, then pays and draws', TIMEOUT, async (t) => {
-  const { code, watchers, first, second, third } = await nightRoom(t);
+  // 黑夜還沒開就挑（規則只要求在黑夜）；主持端畫面逐人訂閱挑的棄牌，發牌時讀整房要問伺服器、不能吃這些訂閱的快取。
+  const { code, watchers, first, second, third } = await dayRoom(t);
+  await toNight(code, 1, { open: false });
   // 主持端把手牌排成 first 9 張、second 8 張、third 9 張，其餘照資料順序放回牌庫、棄牌堆清空（牌的總數不變）。
   const cards = buildDeck(data.actions);
   const hands = { [first.uid]: cards.slice(0, 9), [second.uid]: cards.slice(9, 17), [third.uid]: cards.slice(17, 26) };
@@ -573,12 +645,18 @@ test('hand limit: the next sunrise discards the picked cards first, discards at 
     writes[`rooms/${code}/games/2/seats/${uid}/handCount`] = hand.length;
   }
   await update(ref(host.db), writes);
-  const start = await readTable(code);
+  const hostViews = [first, third].map((session) => watch(host, code, (who, roomCode, onDiscard) => watchDiscard(who, roomCode, onDiscard, undefined, session.uid)));
+  t.after(() => hostViews.forEach((view) => view.stop()));
 
   const picked = [hands[first.uid][8], hands[first.uid][0]];
   await requestDiscard(first, code, { table: 2, round: 1, cards: [hands[first.uid][3]] }); // 先挑錯張數，再改
+  await hostViews[0].until((value) => value?.seq === 1, 'the host screen sees the first pick');
   assert.equal(await requestDiscard(first, code, { table: 2, round: 1, cards: picked }), 2);
   await requestDiscard(third, code, { table: 2, round: 1, cards: [hands[third.uid][0]] }); // 張數不對：照亂數棄
+  await hostViews[0].until((value) => value?.seq === 2, 'the host screen sees the new pick');
+  await hostViews[1].until((value) => value?.seq === 1, 'the host screen sees third’s pick');
+  assert.equal((await settleNight(host, code, 2, data)).outcome, 'opened', 'the night opens after the picks');
+  const start = await readTable(code);
   await advanceTable(host, code, 2, { round: 1, phase: 'night' });
   assert.deepEqual(await processSunrise(host, code, 2, data, seededRandom(5)), { dealt: true, round: 2 });
 

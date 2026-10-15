@@ -970,6 +970,8 @@ export async function settleNight(session, code, table, data, random) {
     const state = nightStateOf(table, tableState, game);
     const result = nightStep(state, picks, data, { now, random });
     if (result.kind === 'none' || result.kind === 'waiting') return { outcome: result.kind, result: null };
+    // 倒數的截止時間從寫入前一刻的伺服器時間算：讀整房的選擇要一來一回，網路慢時「讀之前的時間＋3 秒」到寫入時可能已經過了。
+    if (result.kind === 'counted' && result.revealAt !== null) result.revealAt = clock() + (result.revealAt - now);
     const version = game.version ?? 0;
     try {
       await update(ref(session.db), nightWrites(code, table, state, result, version, data));
@@ -986,6 +988,10 @@ export async function settleNight(session, code, table, data, random) {
     }
   }
 }
+
+// 黑夜的揭曉沒成功（例如主持端估的伺服器時間比實際快好幾秒，規則一直擋在截止之前）時，自動化隔多久再試一次（毫秒）。
+// 黑夜揭曉前畫面擋住「下一階段」，不再試的話那一桌就卡在黑夜，要重新整理主持畫面才會再試。
+const NIGHT_RETRY_MS = 5000;
 
 // 提前揭曉黑夜：把第 table 桌的截止時間改成現在（伺服器時間），沒送出的人算睡覺；主持端的自動化在截止＋緩衝後揭曉。
 // 只在黑夜、選擇中或倒數還沒到時有用。回傳 { closed }：false 表示這次沒有寫入（已經截止、已揭曉或不是黑夜）。
@@ -1065,7 +1071,8 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     if (stage === 'none' && tableState.phase === 'night') {
       mark = `${version}@open`;
     } else if (stage === 'closing' && clock() >= nightSettleAt(game.night)) {
-      mark = `${version}@reveal`;
+      // 揭曉沒成功時，每過 NIGHT_RETRY_MS 換一個標記，就會再試（arm 會在那時叫醒自己）。
+      mark = `${version}@reveal@${Math.floor((clock() - nightSettleAt(game.night)) / NIGHT_RETRY_MS)}`;
     } else if ((stage === 'choosing' || stage === 'closing') && tableState.phase === 'night') {
       const view = { table, round: tableState.round, phase: tableState.phase, seats: game.seats, night: game.night };
       const count = submittedChoices(view, nights);
@@ -1102,7 +1109,8 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     }
     return work;
   };
-  // 下一張還沒到期的待響應牌、下一個還沒到揭曉時間的黃昏到期時叫醒自己（伺服器時間換算成本機的計時器）。都沒有就不設計時器。
+  // 下一張還沒到期的待響應牌、下一個還沒到揭曉時間的黃昏或黑夜到期時叫醒自己（伺服器時間換算成本機的計時器）；
+  // 已經過了揭曉時間、還沒揭曉的黑夜，在下一次再試的時間叫醒。都沒有就不設計時器。
   const arm = () => {
     clearTimeout(timer);
     timer = null;
@@ -1113,7 +1121,10 @@ export function startSettling(session, code, data, { random, onError = () => {} 
       const game = room.games?.[table];
       if (game?.pending) due.push(responseSettleAt(game.pending));
       if (game?.seats && duskStage(game.dusk, room.tables?.[table]?.round) === 'closing') due.push(duskSettleAt(game.dusk));
-      if (game?.seats && nightStage(game.night, room.tables?.[table]?.round) === 'closing') due.push(nightSettleAt(game.night));
+      if (game?.seats && nightStage(game.night, room.tables?.[table]?.round) === 'closing') {
+        const at = nightSettleAt(game.night);
+        due.push(at > now ? at : at + (Math.floor((now - at) / NIGHT_RETRY_MS) + 1) * NIGHT_RETRY_MS);
+      }
     }
     const later = due.filter((at) => Number.isFinite(at) && at > now);
     if (later.length) timer = setTimeout(pump, Math.min(...later) - now + 20);
