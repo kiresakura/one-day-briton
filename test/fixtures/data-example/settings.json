@@ -18,5 +18,6 @@
     90
   ],
   "sunsetMinutes": 75,
-  "responseSeconds": 5
+  "responseSeconds": 5,
+  "sunriseEvents": 1
 }

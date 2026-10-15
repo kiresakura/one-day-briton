@@ -1,5 +1,5 @@
-// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌、白晝出牌與響應卡的
-// 請求與結算、黃昏的投票與揭曉、伺服器時間。
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌（含日出一般事件）、
+// 白晝出牌與響應卡的請求與結算、黃昏的投票與揭曉、迷霧事件、伺服器時間。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -30,12 +30,15 @@ import {
   duskSettleAt,
   duskStage,
   duskStep,
+  nextEventIndex,
   processRequest,
   responseSettleAt,
   settlePending,
+  settleSunriseEvents,
   startGame,
   submittedCount,
   sunrise,
+  withFogEvents,
 } from './game.js';
 import {
   MAX_TABLES,
@@ -325,9 +328,30 @@ async function readRoom(session, code) {
   return room;
 }
 
-// 牌庫與棄牌堆分開寫（hostOnly/{code}/{n}/deck、discard），同一層的法案牌堆（billDeck）才不會被蓋掉。空陣列＝刪掉。
+// 牌庫與棄牌堆分開寫（hostOnly/{code}/{n}/deck、discard），同一層的法案牌堆（billDeck）與一般事件牌堆（eventDeck）才不會被
+// 蓋掉。空陣列＝刪掉。
 function pileWrites(code, table, { deck, discard }) {
   return { [`hostOnly/${code}/${table}/deck`]: deck, [`hostOnly/${code}/${table}/discard`]: discard };
+}
+
+// 這次結算的事件紀錄（game.js 的 events）接在 games/{n}/eventLog 現有的後面，編號連號。
+function eventWrites(code, table, game, events) {
+  const writes = {};
+  const first = nextEventIndex(game?.eventLog);
+  (events ?? []).forEach((entry, index) => {
+    writes[`rooms/${code}/games/${table}/eventLog/${first + index}`] = entry;
+  });
+  return writes;
+}
+
+// 迷霧的紀錄（fogMax、fogFired、fogPending）與該桌的迷霧值，有變的才寫。空陣列＝刪掉（例如處理完的 fogPending）。
+function fogWrites(code, table, before, next) {
+  const writes = {};
+  for (const key of ['fogMax', 'fogFired', 'fogPending']) {
+    if (next[key] !== before[key]) writes[`rooms/${code}/games/${table}/${key}`] = next[key];
+  }
+  if (next.fog !== before.fog) writes[`rooms/${code}/tables/${table}/fog`] = next.fog;
+  return writes;
 }
 
 // 牌庫只有主持端讀得到，順便用來確認這台裝置是主持端。
@@ -353,8 +377,8 @@ async function readPrivates(session, code, uids) {
   return { records, hands };
 }
 
-// 開局：players 裡 table＝這一桌的人隨機入座、分階層、發天命與起始手牌，接著做第 1 回合日出，一次寫入。
-// data 是 gamedata.js 讀到、檢查過的卡牌資料；random 讓測試注入亂數來源，平常不給。
+// 開局：players 裡 table＝這一桌的人隨機入座、分階層、發天命與起始手牌，接著做第 1 回合日出（領薪抽牌、翻一般事件、處理它引發的
+// 迷霧事件），一次寫入。data 是 gamedata.js 讀到、檢查過的卡牌資料；random 讓測試注入亂數來源，平常不給。
 // 回傳 { started }：false 表示這一桌已經開過局（例如另一台主持端先開了），這次沒有寫入。
 export async function startTable(session, code, table, data, random) {
   const room = await readRoom(session, code);
@@ -367,18 +391,26 @@ export async function startTable(session, code, table, data, random) {
   if (error) throw new StoreError('cannot-start', error);
   await readPile(session, code, table, '只有主持端可以開局');
 
-  const game = startGame(data, uids, { random });
-  const writes = {
-    [`rooms/${code}/games/${table}`]: {
-      startedAt: serverTimestamp(),
-      seats: game.seats,
-      deckCount: game.deck.length,
-      discardCount: game.discard.length,
-      version: 1,
-    },
-    [`rooms/${code}/deals/${table}`]: 1,
-    [`hostOnly/${code}/${table}`]: { deck: game.deck, discard: game.discard },
+  const before = { round: 1, phase: 'sunrise', fog: state.fog ?? 0, fogFired: [], fogPending: [], eventDeck: [] };
+  const { state: game, events } = settleSunriseEvents({ ...startGame(data, uids, { random }), ...before }, data, random);
+  const opened = {
+    startedAt: serverTimestamp(),
+    seats: game.seats,
+    deckCount: game.deck.length,
+    discardCount: game.discard.length,
+    version: 1,
   };
+  if (events.length > 0) opened.eventLog = events;
+  for (const key of ['fogMax', 'fogFired']) {
+    if (game[key] !== before[key] && game[key] !== undefined) opened[key] = game[key];
+  }
+  const writes = {
+    [`rooms/${code}/games/${table}`]: opened,
+    [`rooms/${code}/deals/${table}`]: 1,
+    ...pileWrites(code, table, game),
+    [`hostOnly/${code}/${table}/eventDeck`]: game.eventDeck,
+  };
+  if (game.fog !== before.fog) writes[`rooms/${code}/tables/${table}/fog`] = game.fog;
   for (const uid of Object.keys(game.seats)) {
     writes[`private/${code}/${uid}`] = { table, hand: game.hands[uid], destiny: game.destinies[uid] };
   }
@@ -386,8 +418,8 @@ export async function startTable(session, code, table, data, random) {
   return { started: await writeOnce(session, writes, settled, '開局沒有成功，請再按一次') };
 }
 
-// 日出發牌：這一桌在日出、已經開局、這一回合還沒發過時，每人領自己階層的薪水、抽牌，一次寫入。
-// 回傳 { dealt, round }：dealt 是 false 表示這次沒有寫入（已經發過、還沒開局或不是日出）。
+// 日出發牌：這一桌在日出、已經開局、這一回合還沒發過時，每人領自己階層的薪水、抽牌，接著翻這一回合的一般事件（與它引發的
+// 迷霧事件），一次寫入。回傳 { dealt, round }：dealt 是 false 表示這次沒有寫入（已經發過、還沒開局或不是日出）。
 export async function processSunrise(session, code, table, data, random) {
   const room = await readRoom(session, code);
   const state = room.tables?.[table];
@@ -397,7 +429,17 @@ export async function processSunrise(session, code, table, data, random) {
   }
   const pile = await readPile(session, code, table, '只有主持端可以發牌');
   const { hands } = await readPrivates(session, code, Object.keys(game.seats));
-  const next = sunrise({ seats: game.seats, hands, deck: pile.deck ?? [], discard: pile.discard ?? [] }, data, random);
+  const paid = sunrise({ seats: game.seats, hands, deck: pile.deck ?? [], discard: pile.discard ?? [] }, data, random);
+  const before = {
+    round: state.round,
+    phase: 'sunrise',
+    fog: state.fog,
+    fogMax: game.fogMax,
+    fogFired: game.fogFired ?? [],
+    fogPending: game.fogPending ?? [],
+    eventDeck: pile.eventDeck ?? [],
+  };
+  const { state: next, events } = settleSunriseEvents({ ...paid, ...before }, data, random);
 
   const writes = {
     [`rooms/${code}/games/${table}/seats`]: next.seats,
@@ -406,7 +448,10 @@ export async function processSunrise(session, code, table, data, random) {
     [`rooms/${code}/games/${table}/version`]: (game.version ?? 0) + 1,
     [`rooms/${code}/deals/${table}`]: state.round,
     ...pileWrites(code, table, next),
+    ...fogWrites(code, table, before, next),
+    ...eventWrites(code, table, game, events),
   };
+  if (next.eventDeck.join() !== before.eventDeck.join()) writes[`hostOnly/${code}/${table}/eventDeck`] = next.eventDeck;
   for (const uid of Object.keys(game.seats)) writes[`private/${code}/${uid}/hand`] = next.hands[uid];
   const settled = { path: `rooms/${code}/deals/${table}`, done: (value) => (value ?? 0) >= state.round };
   return { dealt: await writeOnce(session, writes, settled, '發牌沒有成功，請按「補發」再試一次'), round: state.round };
@@ -512,7 +557,8 @@ const withoutNulls = (record) => Object.fromEntries(Object.entries(record).filte
 //              輪次與棄牌堆不動
 //   passed     輪次
 //   played、resolved   結算一張牌：輪次、座位、張數、出牌紀錄、迷霧的紀錄、該桌的迷霧值、有變的手牌、牌庫與棄牌堆；
-//              resolved 另外刪掉 pending，出牌紀錄用 pending 的 id 當編號
+//              resolved 另外刪掉 pending，出牌紀錄用 pending 的 id 當編號。這張牌引發的迷霧事件已在 result.state 裡結算完
+//              （withFogEvents，fogPending 清空），事件紀錄由呼叫的一端用 eventWrites 接在同一筆
 function settleWrites(session, code, table, before, result, version, data) {
   const game = `rooms/${code}/games/${table}`;
   const next = result.state;
@@ -578,13 +624,13 @@ export async function settleRequest(session, code, table, uid, data, random) {
     const { records, hands } = await readPrivates(session, code, Object.keys(game.seats));
     if (records[uid].table !== table) return none;
     const state = tableStateOf(tableState, game, hands, pile);
-    const result = processRequest(state, uid, request, data, random);
+    const result = withFogEvents(processRequest(state, uid, request, data, random), data, random);
     if (result.kind === 'ignored') return none;
     if (result.kind === 'deferred') return { outcome: 'deferred', reason: null };
     if (result.kind === 'rejected') result.notices = [{ uid, seq: request.seq, reason: result.reason }];
     const version = game.version ?? 0;
     try {
-      await update(ref(session.db), settleWrites(session, code, table, state, result, version, data));
+      await update(ref(session.db), { ...settleWrites(session, code, table, state, result, version, data), ...eventWrites(code, table, game, result.events) });
       return { outcome: result.kind, reason: result.reason ?? null };
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;
@@ -616,11 +662,11 @@ export async function settleWindow(session, code, table, data, random) {
     const { records, hands } = await readPrivates(session, code, Object.keys(game.seats));
     const here = Object.fromEntries(Object.entries(requests).filter(([uid]) => records[uid]?.table === table));
     const state = tableStateOf(tableState, game, hands, pile);
-    const result = settlePending(state, here, data, { now, random });
+    const result = withFogEvents(settlePending(state, here, data, { now, random }), data, random);
     if (result.kind === 'waiting') return { outcome: 'waiting', response: null };
     const version = game.version ?? 0;
     try {
-      await update(ref(session.db), settleWrites(session, code, table, state, result, version, data));
+      await update(ref(session.db), { ...settleWrites(session, code, table, state, result, version, data), ...eventWrites(code, table, game, result.events) });
       const response = result.response ? { by: result.response.by, card: result.response.card } : null;
       return { outcome: result.kind, response };
     } catch (error) {
@@ -686,7 +732,8 @@ function duskStateOf(number, table, game, hands, pile) {
 // 黃昏的一筆寫入（duskStep 的結果）。局面一律 version＋1。
 //   opened     dusk（伺服器時間 openedAt；休會沒有 bill）與剩下的法案牌堆
 //   counted    已送出人數；全員送出時加上截止時間（倒數 0 秒時直接用伺服器時間）
-//   revealed   結果、黃昏紀錄、法案結果、座位（出價、效果、aligned）、有變的張數與手牌、牌庫與棄牌堆、迷霧的紀錄與該桌的迷霧值
+//   revealed   結果、黃昏紀錄、法案結果、座位（出價、效果、aligned）、有變的張數與手牌、牌庫與棄牌堆、迷霧的紀錄與該桌的迷霧值；
+//              法案引發的迷霧事件已在 result.state 裡結算完（withFogEvents），事件紀錄由呼叫的一端用 eventWrites 接在同一筆
 function duskWrites(code, table, before, result, version, data) {
   const game = `rooms/${code}/games/${table}`;
   const writes = { [`${game}/version`]: version + 1 };
@@ -747,11 +794,11 @@ export async function settleDusk(session, code, table, data, random) {
     const pile = await readPile(session, code, table, '只有主持端可以處理黃昏');
     const hands = revealing ? (await readPrivates(session, code, Object.keys(game.seats))).hands : {};
     const state = duskStateOf(table, tableState, game, hands, pile);
-    const result = duskStep(state, votes, data, { now, random });
+    const result = withFogEvents(duskStep(state, votes, data, { now, random }), data, random);
     if (result.kind === 'none' || result.kind === 'waiting') return { outcome: result.kind, result: null };
     const version = game.version ?? 0;
     try {
-      await update(ref(session.db), duskWrites(code, table, state, result, version, data));
+      await update(ref(session.db), { ...duskWrites(code, table, state, result, version, data), ...eventWrites(code, table, game, result.events) });
       return { outcome: result.kind, result: result.result ?? null };
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;

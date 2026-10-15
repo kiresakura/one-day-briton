@@ -31,7 +31,8 @@ const cardDir = new URL('../../play/data/', import.meta.url);
 const { data: fileData, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
 assert.deepEqual(errors, []);
 // 這裡測的是出牌本身，不開響應窗口（responseSeconds 0＝出牌當下就結算）；響應卡在 respond.test.js。
-const data = { ...fileData, settings: { ...fileData.settings, responseSeconds: 0 } };
+// 日出也不翻一般事件（sunriseEvents 0），數字才照 M5a 算；事件在 event.test.js。
+const data = { ...fileData, settings: { ...fileData.settings, responseSeconds: 0, sunriseEvents: 0 } };
 const actionOf = (id) => data.actions.find((action) => action.id === id);
 
 // 這裡用到的牌（資料檔第二版）：a03 交易、成本 4 英鎊、自己英鎊 +7、迷霧 +2、齒輪「中」；

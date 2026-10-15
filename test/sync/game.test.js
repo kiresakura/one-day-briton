@@ -23,7 +23,9 @@ import {
 const TIMEOUT = { timeout: 20_000 };
 const denied = /permission[_ ]denied/i;
 const cardDir = new URL('../../play/data/', import.meta.url);
-const { data, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+const { data: fileData, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+// 這裡測的是 M4–M6 的流程與數字，日出不翻一般事件（sunriseEvents 0）；事件在 event.test.js。
+const data = { ...fileData, settings: { ...fileData.settings, sunriseEvents: 0 } };
 assert.deepEqual(errors, []);
 
 // 目前的資料與設定：開局（含第 1 回合日出）後每人英鎊 10＋5、影響力 3、手牌 4＋2；之後每次日出英鎊＋5、手牌＋2。

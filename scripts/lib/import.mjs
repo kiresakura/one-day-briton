@@ -37,6 +37,9 @@ function parseEffect(part, defaultTarget) {
   // 抵銷＝被回應的那張牌效果不發生，沒有數量也沒有對象。
   if (body === CANCEL_WORD) return targetWord === undefined ? { op: 'cancel' } : null;
   const target = parseTarget(targetWord, defaultTarget);
+  // 偷英鎊3@指定、偷影響力2@出牌者：對象與數量合不合用（只能用在行動牌、只能對 @指定 或 @出牌者、正整數）交給檢查。
+  const steal = /^偷(英鎊|影響力)([+-]?\d+(?:\.\d+)?)$/.exec(body);
+  if (steal) return target ? { op: 'steal', resource: RESOURCE_WORDS[steal[1]], ...target, amount: Number(steal[2]) } : null;
   const resource = /^(英鎊|影響力|迷霧)([+-]\d+)$/.exec(body);
   if (resource) {
     const op = RESOURCE_WORDS[resource[1]];

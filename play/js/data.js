@@ -16,9 +16,12 @@ export const DATA_LABELS = {
 export const OPTIONAL_FILES = ['tutorial'];
 
 export const ROLE_COUNT = 6;
-export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard', 'cancel'];
+export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard', 'cancel', 'steal'];
 // role＝某個階層的玩家（另寫 role 欄）；originalPlayer＝被回應的那張牌是誰出的。
 export const EFFECT_TARGETS = ['self', 'all', 'others', 'chosen', 'role', 'originalPlayer'];
+// 偷（steal）：只能用在行動牌，從 @指定（一般牌）或 @出牌者（響應卡）那裡拿走英鎊或影響力（企劃 10/15）。
+export const STEAL_RESOURCES = ['pounds', 'influence'];
+export const STEAL_TARGETS = ['chosen', 'originalPlayer'];
 // 法案與事件沒有「出牌的人」，自己、其他人都沒有對象。
 export const TABLE_TARGETS = ['all', 'chosen', 'role'];
 // 一般牌輪到自己時出；響應卡在別人出牌後插話打出。
@@ -28,7 +31,8 @@ export const FOG_AMOUNT_MAX = 100;
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 
 // 設定檔的每一項：key 是 JSON 裡的位置（點號表示下一層），label 是試算表上的項目名稱。
-// 有 default 的是選填項目：試算表沒有這一列時，匯入寫入 default 並提醒一聲。之後新加的設定都做成選填。
+// 有 default 的是選填項目：試算表沒有這一列時，匯入寫入 default 並提醒一聲；資料檔沒有這一項時，檢查不報錯，
+// 遊戲讀檔時補上 default（withDefaultSettings）。之後新加的設定都做成選填。
 export const SETTINGS = [
   { key: 'startingHand', label: '起始手牌', min: 0 },
   { key: 'startingPounds', label: '起始英鎊', min: 0 },
@@ -44,7 +48,25 @@ export const SETTINGS = [
   { key: 'fogThresholds', label: '迷霧門檻', min: 0, max: 100, list: true },
   { key: 'sunsetMinutes', label: '日落鐘分鐘數', min: 1 },
   { key: 'responseSeconds', label: '響應等待秒數', min: 1, default: 5 },
+  // 每回合日出每桌翻幾張一般事件，0＝不翻（企劃 10/15 回「照建議」，暫定）。
+  { key: 'sunriseEvents', label: '日出一般事件張數', min: 0, default: 1 },
 ];
+
+// 補上資料檔沒寫的選填設定（用 default），回傳新的物件；遊戲讀到的設定永遠是齊的。settings 不是物件時原樣回傳，交給檢查報錯。
+export function withDefaultSettings(settings) {
+  if (!isPlainObject(settings)) return settings;
+  const result = structuredClone(settings);
+  for (const setting of SETTINGS) {
+    if ('default' in setting && getPath(result, setting.key) === undefined) {
+      const keys = setting.key.split('.');
+      const last = keys.pop();
+      let target = result;
+      for (const key of keys) target = isPlainObject(target[key]) ? target[key] : (target[key] = {});
+      target[last] = setting.default;
+    }
+  }
+  return result;
+}
 
 const FIELDS = {
   roles: ['id', 'name', 'salary', 'privileges', 'missions'],
@@ -158,8 +180,9 @@ function checkTextList(record, field, error) {
   });
 }
 
-// targets：這種牌可用的對象；response：是不是響應卡（只有響應卡能抵銷、能針對出牌者）；roleIds：階層編號。
-function checkEffects(record, field, { targets, response = false, roleIds }, error, warn) {
+// targets：這種牌可用的對象；action：是不是行動牌（只有行動牌能偷）；response：是不是響應卡（只有響應卡能抵銷、能針對出牌者）；
+// roleIds：階層編號。
+function checkEffects(record, field, { targets, action = false, response = false, roleIds }, error, warn) {
   const effects = record[field];
   if (!Array.isArray(effects)) return error(field, `要是效果的陣列，沒有效果就填 []，${now(effects)}`);
   effects.forEach((effect, position) => {
@@ -168,7 +191,21 @@ function checkEffects(record, field, { targets, response = false, roleIds }, err
     const { op, target, amount } = effect;
     if (!EFFECT_OPS.includes(op)) return error(field, `${where}的 op 不認得：${show(op)}，只能是 ${EFFECT_OPS.join('／')}`);
     let allowed = ['op', 'target', 'amount'];
-    if (op === 'cancel') {
+    if (op === 'steal') {
+      // 偷：對方實際少多少、自己就拿多少（企劃 10/15）。法案與事件沒有出牌的人，不能偷。
+      allowed = [...allowed, 'resource'];
+      if (!action) {
+        error(field, `${where}：偷（steal）只能用在行動牌`);
+      } else if (!STEAL_TARGETS.includes(target)) {
+        error(field, `${where}：偷只能對 @指定（一般牌）或 @出牌者（響應卡），${now(target)}`);
+      } else if (target === 'originalPlayer' && !response) {
+        error(field, `${where}：@出牌者（originalPlayer）只能用在響應卡`);
+      }
+      if (!STEAL_RESOURCES.includes(effect.resource)) {
+        error(field, `${where}：偷的 resource 只能是 ${STEAL_RESOURCES.join('／')}（英鎊／影響力），${now(effect.resource)}`);
+      }
+      if (!inRange(amount, 1)) error(field, `${where}：偷的 amount 要是 1 以上的整數，${now(amount)}`);
+    } else if (op === 'cancel') {
       if (!response) error(field, `${where}：抵銷（cancel）只能用在響應卡`);
       if ('target' in effect || 'amount' in effect) error(field, `${where}：抵銷不寫 target 和 amount`);
     } else if (op === 'fog') {
@@ -233,7 +270,10 @@ function checkIds(file, list, result) {
 function checkSettings(settings, result) {
   const { error, warn } = reporter(result, 'settings', null, null);
   if (!isPlainObject(settings)) return error(null, '最外層要是物件 { … }');
-  for (const { key, min, max, list } of SETTINGS) {
+  for (const setting of SETTINGS) {
+    const { key, min, max, list } = setting;
+    // 選填項目可以沒寫（遊戲用 default）；有寫就要能用。
+    if ('default' in setting && getPath(settings, key) === undefined) continue;
     if (!list) {
       checkInteger(settings, key, min, max, error);
       continue;
@@ -296,7 +336,7 @@ function checkAction(record, { roleIds, categories }, error, warn) {
     checkUnknownFields(record.cost, ['pounds', 'influence'], warn, 'cost.');
   }
   checkNullableText(record, 'gear', error);
-  checkEffects(record, 'effects', { targets: EFFECT_TARGETS, response: record.kind === 'response', roleIds }, error, warn);
+  checkEffects(record, 'effects', { targets: EFFECT_TARGETS, action: true, response: record.kind === 'response', roleIds }, error, warn);
   checkText(record, 'text', error);
 }
 

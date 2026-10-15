@@ -5,7 +5,8 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkData, formatIssue } from '../../play/js/data.js';
+import { checkData, formatIssue, withDefaultSettings } from '../../play/js/data.js';
+import { loadGameData } from '../../play/js/gamedata.js';
 import { loadDataFolder } from '../../scripts/lib/datafiles.mjs';
 import { convertSheet, importFolder, parseEffects, sheetKind, sourceOf } from '../../scripts/lib/import.mjs';
 
@@ -227,12 +228,13 @@ test('settings rows become one object in a fixed order', () => {
   const csv = '項目,值,說明\n迷霧門檻,30/60/90,\n起始手牌,４,\n白晝每人提醒秒數,45,\n不知道的項目,1,\n';
   const sheet = convertSheet('settings', csv);
   assert.deepEqual(sheet.errors, []);
-  assert.deepEqual(sheet.data, { startingHand: 4, reminderSeconds: { day: 45 }, fogThresholds: [30, 60, 90], responseSeconds: 5 });
-  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds']);
+  assert.deepEqual(sheet.data, { startingHand: 4, reminderSeconds: { day: 45 }, fogThresholds: [30, 60, 90], responseSeconds: 5, sunriseEvents: 1 });
+  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds', 'sunriseEvents']);
   assert.deepEqual(sheet.fieldRows, { startingHand: 3, 'reminderSeconds.day': 4, fogThresholds: 2 });
   assert.deepEqual(sheet.notes, [
     'settings.csv 第 5 列：不認得的設定項目「不知道的項目」，略過',
     'settings.csv：沒有「響應等待秒數」這一列，用預設值 5',
+    'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1',
   ]);
   assert.deepEqual(convertSheet('settings', '項目,值\n迷霧門檻,"30, 60、90"\n').data.fogThresholds, [30, 60, 90]);
   assert.match(convertSheet('settings', '項目,值\n起始手牌,4\n起始手牌,5\n').errors[0], /第 3 列：設定項目「起始手牌」和第 2 列重複/);
@@ -242,18 +244,37 @@ test('settings rows become one object in a fixed order', () => {
 });
 
 test('optional settings use their default when the row is missing; the original items stay required', () => {
-  const withRow = convertSheet('settings', '項目,值\n響應等待秒數,８\n');
+  const withRow = convertSheet('settings', '項目,值\n響應等待秒數,８\n日出一般事件張數,2\n');
   assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, []]);
+  assert.deepEqual([withRow.data.sunriseEvents, withRow.fieldRows.sunriseEvents], [2, 3]);
   const withoutRow = convertSheet('settings', '項目,值\n起始手牌,4\n');
-  assert.equal(withoutRow.data.responseSeconds, 5);
-  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5']);
+  assert.deepEqual([withoutRow.data.responseSeconds, withoutRow.data.sunriseEvents], [5, 1]);
+  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5', 'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1']);
   const fields = checkData({ settings: withoutRow.data }).errors.map((issue) => issue.field);
   assert.equal(fields.length, 12);
-  assert.ok(!fields.includes('responseSeconds') && !fields.includes('startingHand'));
-  // 有這一列就要填能用的值。
-  const zero = convertSheet('settings', '項目,值\n響應等待秒數,0\n').data;
-  const issue = checkData({ settings: zero }).errors.find((item) => item.field === 'responseSeconds');
-  assert.equal(formatIssue(issue), '錯誤｜settings.json｜responseSeconds（響應等待秒數）｜要是 1 以上的整數，現在是 0');
+  assert.ok(!fields.includes('responseSeconds') && !fields.includes('sunriseEvents') && !fields.includes('startingHand'));
+  // 有這一列就要填能用的值；日出一般事件張數可以是 0（不翻）。
+  const zero = convertSheet('settings', '項目,值\n響應等待秒數,0\n日出一般事件張數,0\n').data;
+  const issues = checkData({ settings: zero }).errors.filter((item) => ['responseSeconds', 'sunriseEvents'].includes(item.field));
+  assert.deepEqual(issues.map((issue) => formatIssue(issue)), ['錯誤｜settings.json｜responseSeconds（響應等待秒數）｜要是 1 以上的整數，現在是 0']);
+  const negative = convertSheet('settings', '項目,值\n日出一般事件張數,-1\n').data;
+  const bad = checkData({ settings: negative }).errors.find((item) => item.field === 'sunriseEvents');
+  assert.equal(formatIssue(bad), '錯誤｜settings.json｜sunriseEvents（日出一般事件張數）｜要是 0 以上的整數，現在是 -1');
+});
+
+test('optional settings may be missing from the data file: the check passes and the game reads the default', async () => {
+  const { data } = await loadDataFolder(sampleDir);
+  const settings = structuredClone(data.settings);
+  delete settings.sunriseEvents;
+  delete settings.responseSeconds;
+  assert.deepEqual(checkData({ settings }).errors, []);
+  assert.deepEqual(withDefaultSettings(settings), data.settings);
+  assert.equal(settings.sunriseEvents, undefined, 'the original object is not changed');
+  const loaded = await loadGameData(async (kind) => (kind === 'settings' ? settings : data[kind]));
+  assert.deepEqual([loaded.errors, loaded.data.settings.sunriseEvents, loaded.data.settings.responseSeconds], [[], 1, 5]);
+  // 必填的照樣不能少。
+  delete settings.handLimit;
+  assert.deepEqual(checkData({ settings }).errors.map((issue) => issue.field), ['handLimit']);
 });
 
 test('tutorial tips turn phase words into phase names and are checked', () => {

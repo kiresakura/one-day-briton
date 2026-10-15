@@ -28,7 +28,9 @@ const TIMEOUT = { timeout: 30_000 };
 const denied = /permission[_ ]denied/i;
 const refused = { name: 'StoreError', code: 'permission-denied' }; // store.js 把規則的拒絕包成 StoreError
 const cardDir = new URL('../../play/data/', import.meta.url);
-const { data, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+const { data: fileData, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+// 這裡測的是 M4–M6 的流程與數字，日出不翻一般事件（sunriseEvents 0）；事件在 event.test.js。
+const data = { ...fileData, settings: { ...fileData.settings, sunriseEvents: 0 } };
 assert.deepEqual(errors, []);
 assert.equal(data.settings.duskRevealSeconds, 3);
 // 測倒數的地方把揭曉倒數改成 1 秒（只改這份資料物件，不改資料檔）。

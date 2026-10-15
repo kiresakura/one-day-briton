@@ -26,7 +26,9 @@ import {
 const TIMEOUT = { timeout: 30_000 };
 const denied = /permission[_ ]denied/i;
 const cardDir = new URL('../../play/data/', import.meta.url);
-const { data, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+const { data: fileData, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+// 這裡測的是 M4–M6 的流程與數字，日出不翻一般事件（sunriseEvents 0）；事件在 event.test.js。
+const data = { ...fileData, settings: { ...fileData.settings, sunriseEvents: 0 } };
 assert.deepEqual(errors, []);
 assert.equal(data.settings.responseSeconds, 5);
 // 測時間到的地方把響應秒數改成 1（只改這份資料物件，不改資料檔）。

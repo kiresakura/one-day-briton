@@ -58,6 +58,7 @@ test('settings hold the agreed provisional values', () => {
     fogThresholds: [30, 60, 90],
     sunsetMinutes: 75,
     responseSeconds: 5,
+    sunriseEvents: 1,
   });
   assert.equal(sample.roles.length, 6);
   for (const role of sample.roles) assert.equal(role.salary, 5);
@@ -133,7 +134,7 @@ test('role references must point at an existing role', () => {
 
 test('effect ops and targets must be known, and fit the kind of card', () => {
   const data = fresh();
-  data.actions[0].effects = [{ op: 'steal', target: 'self', amount: 1 }];
+  data.actions[0].effects = [{ op: 'peek', target: 'self', amount: 1 }];
   data.actions[1].effects = [
     { op: 'pounds', target: 'me', amount: 1 },
     { op: 'draw', target: 'self', amount: 0 },
@@ -143,7 +144,7 @@ test('effect ops and targets must be known, and fit the kind of card', () => {
   data.events[0].effects = [{ op: 'pounds', target: 'self', amount: 1 }];
   data.bills[0].onFail = [{ op: 'pounds', target: 'others', amount: 1 }];
   data.bills[1].onPass = [{ op: 'fog', amount: 101 }];
-  assertError(data, { id: 'a01', field: 'effects', message: /第 1 個效果的 op 不認得：「steal」/ });
+  assertError(data, { id: 'a01', field: 'effects', message: /第 1 個效果的 op 不認得：「peek」/ });
   assertError(data, { id: 'a02', field: 'effects', message: /第 1 個效果的 target 不認得：「me」/ });
   assertError(data, { id: 'a02', field: 'effects', message: /第 2 個效果：draw 的 amount 要是 1 以上/ });
   assertError(data, { id: 'a02', field: 'effects', message: /第 3 個效果：迷霧是全桌一個值，不寫 target/ });

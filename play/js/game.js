@@ -1,4 +1,5 @@
-// 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），白晝的輪流出牌、響應卡與結算，以及黃昏的法案投票。
+// 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），白晝的輪流出牌、響應卡與結算，黃昏的法案投票，
+// 以及事件（日出一般事件、迷霧事件）。
 // 不碰網路、不碰畫面，瀏覽器與 Node 測試共用同一份。輸入資料檔的內容與目前的局面，輸出要寫入的新局面。
 // 亂數一律從注入的來源拿（預設是 crypto.getRandomValues），測試用固定種子。
 //
@@ -6,7 +7,7 @@
 //   seats      { uid: { order, role, pounds, influence, handCount, sin, aligned } }  公開（同桌都看得到）；sin、aligned 沒有＝0
 //   hands      { uid: [牌編號…] }、destinies { uid: 天命編號或 null }   本人與主持端
 //   deck       [牌編號…]（陣列順序＝抽牌順序）、discard [牌編號…]      只有主持端
-import { ROLE_COUNT } from './data.js';
+import { ROLE_COUNT, SETTINGS } from './data.js';
 import { advanceFog } from './rules.js';
 
 // 一桌最多幾人：六個階層各一、不重複。少於 SUGGESTED_SEATS 人可以開，但畫面要提醒（企劃 10/15 回覆第 12 題）。
@@ -157,7 +158,7 @@ export function startGame(data, uids, { random = cryptoRandom, firstSunrise = FI
 //   startOrder          第 1 回合的起始座位，沒設是 0
 //   turn                { round, index, plays, gear, level }：輪到出牌順序裡的第幾位、他這一輪出了幾張、
 //                       上一張的齒輪與級數；round 不是目前的回合＝這一回合的白晝還沒開始
-//   fogMax、fogFired、fogPending   本場迷霧最高值、已觸發的門檻、新越過還沒處理的門檻（事件留給 M7）
+//   fogMax、fogFired、fogPending   本場迷霧最高值、已觸發的門檻、新越過還沒處理的門檻（同一筆結算的最後由 settleFog 處理）
 //   lastSeq             { uid: 已處理過的請求序號 }
 //   pending             等著響應的那張一般牌（見下方「響應卡」），沒有是 null
 // 一張一般牌分兩步：acceptPlay（檢查、付成本、牌離開手牌、算級數）與 resolvePlay（套效果、牌進棄牌堆、記罪孽與紀錄、
@@ -376,13 +377,37 @@ function discardFor(state, uid, count, random) {
   return { ...withHand(state, uid, hand), discard: [...state.discard, ...discarded] };
 }
 
+// 偷（企劃 10/15）：拿走的量＝min(數量 × 倍數, 對方目前的數量)，對方減這麼多、偷的人（source.by；響應卡是打出響應卡的人）
+// 加這麼多，總量不變。倍數（工程暫定）：4 級連鎖加倍（「所有數量加倍、對別人的扣減也加倍」）；2 級的「給自己的加倍」不套在偷上，
+// 否則會憑空生錢；響應卡的 source.level 是 1，不吃加成。對象是 @指定（一般牌）或 @出牌者（響應卡）。
+function stealFrom(state, effect, source) {
+  let next = state;
+  for (const uid of recipients(state, effect, source)) {
+    if (uid === source.by || !next.seats[uid] || !next.seats[source.by]) continue;
+    const wanted = source.level >= 4 ? effect.amount * 2 : effect.amount;
+    const taken = Math.max(0, Math.min(wanted, next.seats[uid][effect.resource]));
+    const victim = next.seats[uid];
+    const thief = next.seats[source.by];
+    next = {
+      ...next,
+      seats: {
+        ...next.seats,
+        [uid]: { ...victim, [effect.resource]: victim[effect.resource] - taken },
+        [source.by]: { ...thief, [effect.resource]: thief[effect.resource] + taken },
+      },
+    };
+  }
+  return next;
+}
+
 // 一個效果。英鎊與影響力夾在 0 以上（資料庫規則要求不小於 0）。迷霧用 settings.fogThresholds 的門檻，
-// 新越過的門檻依序放進 fogPending，事件本身留給 M7。source 見 recipients。
+// 新越過的門檻依序放進 fogPending，由 settleFog 在這一筆結算的最後處理（迷霧事件）。source 見 recipients。
 function applyEffect(state, effect, source, settings, random) {
   if (effect.op === 'fog') {
     const fog = advanceFog({ fog: state.fog, fogMax: state.fogMax, fired: state.fogFired }, effect.amount, settings.fogThresholds);
     return { ...state, fog: fog.fog, fogMax: fog.fogMax, fogFired: fog.fired, fogPending: [...(state.fogPending ?? []), ...fog.crossed] };
   }
+  if (effect.op === 'steal') return stealFrom(state, effect, source);
   let next = state;
   for (const uid of recipients(state, effect, source)) {
     const amount = scaledAmount(effect, uid, source);
@@ -698,12 +723,23 @@ export function submittedCount(state, votes) {
 export function skippedEffects(bill, passed) {
   const effects = (passed ? bill?.onPass : bill?.onFail) ?? [];
   if (bill?.todo === true) return effects;
-  return effects.filter((effect) => !billEffectApplies(effect));
+  return effects.filter((effect) => !tableEffectApplies(effect));
 }
 
-function billEffectApplies(effect) {
+// 法案與事件（沒有出牌的人）結算得了的效果：迷霧，以及對 @全體、@階層編號 的英鎊、影響力、抽牌、棄牌。
+function tableEffectApplies(effect) {
   if (effect.op === 'fog') return true;
   return ['pounds', 'influence', 'draw', 'discard'].includes(effect.op) && ['all', 'role'].includes(effect.target);
+}
+
+// 法案與事件的效果對這一桌結算（tableEffectApplies 以外的略過）。
+function applyTableEffects(state, effects, data, random) {
+  const source = { by: null, level: 1, target: null };
+  let next = state;
+  for (const effect of effects ?? []) {
+    if (tableEffectApplies(effect)) next = applyEffect(next, effect, source, data.settings, random);
+  }
+  return next;
 }
 
 // 揭曉：計票、付出價、套法案效果、記 aligned 與結果。votes 是剛從伺服器讀到的 { uid: 票 }。
@@ -731,12 +767,7 @@ export function resolveDusk(state, votes, data, random = cryptoRandom) {
     next.seats[uid] = { ...seat, influence: Math.max(0, seat.influence - bid) };
   }
   // 再套法案效果。
-  if (bill && bill.todo !== true) {
-    const source = { by: null, level: 1, target: null };
-    for (const effect of (passed ? bill.onPass : bill.onFail) ?? []) {
-      if (billEffectApplies(effect)) next = applyEffect(next, effect, source, data.settings, random);
-    }
-  }
+  if (bill && bill.todo !== true) next = applyTableEffects(next, passed ? bill.onPass : bill.onFail, data, random);
   // 議會之聲：贊成且通過、反對且沒通過的人＋1；棄權不算。
   const seats = { ...next.seats };
   for (const [uid, { side }] of Object.entries(counted)) {
@@ -808,4 +839,128 @@ export function processRequest(state, uid, request, data, random = cryptoRandom)
   if ((data.settings.responseSeconds ?? 0) > 0) return { kind: 'opened', state: accepted.state, pending: accepted.pending };
   const { state: next, log } = resolvePlay(accepted.state, accepted.pending, data, random);
   return { kind: 'played', state: next, log, pending: accepted.pending };
+}
+
+// ---- 事件（M7）：日出一般事件與迷霧事件 ----
+// 迷霧事件（企劃 10/15 第 1、2 題）：迷霧值「大於」門檻才算越過（剛好 30 不算）；每個門檻每場只在第一次越過時觸發，降回門檻以下
+// 再升上來不再觸發；一次越過好幾個門檻由小到大處理；本場最高值記在 fogMax。任何結算讓迷霧新越過門檻時，門檻先進 fogPending，
+// 在這一筆結算的最後由 settleFog 逐一處理：找 kind: fog、threshold 相同的事件，對這一桌結算效果。「造成越過的那個效果結算完」
+// 的口徑（工程暫定）：一張牌（含齒輪加成與響應）、一張法案、一張一般事件整個結算完，才處理迷霧事件。
+// 日出一般事件（企劃 10/15 回「照建議」，暫定）：每回合日出領薪、抽牌之後，每桌從自己的一般事件牌堆翻 settings.sunriseEvents 張
+// （預設 1，0＝不翻），對這一桌結算效果並公開；第 1 回合也翻（跟開局同一筆寫入）。牌堆第一次用時把 kind: deck 的事件隨機洗成一疊
+// （不照年代排），翻完就把全部一般事件重洗再用。
+// 事件的對象：all＝該桌入座的人、role＝坐那個階層的人（沒人坐就打空）；chosen 這一版不結算（略過那一項，畫面寫一行提示，同法案）；
+// todo 的事件只記紀錄、效果不結算。英鎊、影響力夾 0；抽牌、棄牌照白晝的做法（棄牌由主持端亂數挑）。
+// state 除了白晝用的欄位，還有 eventDeck [事件編號…]（還沒翻的一般事件，只有主持端看得到，陣列開頭是下一張）。
+// 公開的事件紀錄（games/{n}/eventLog/{i}，i 從 0 連號）一筆是 { round, phase, event, kind: 'deck' | 'fog', threshold, skipped }：
+// threshold 只有迷霧事件才有；skipped: true＝這一筆的效果都沒結算（事件是 todo，或資料裡找不到這個門檻的事件，這時沒有 event）。
+
+// 資料檔沒有 sunriseEvents 時的張數（data.js 的選填設定）。
+export const SUNRISE_EVENTS_DEFAULT = SETTINGS.find(({ key }) => key === 'sunriseEvents').default;
+
+function findEvent(data, id) {
+  return (data.events ?? []).find((event) => event.id === id) ?? null;
+}
+
+// 這個門檻的迷霧事件（資料裡有好幾張時用第一張）；沒有是 null。
+export function fogEventFor(data, threshold) {
+  return (data.events ?? []).find((event) => event.kind === 'fog' && event.threshold === threshold) ?? null;
+}
+
+// 這張事件有哪些效果不結算：todo 的事件全部；@指定（chosen）這一版不結算。事件只會有 @全體、@指定、@階層編號 與迷霧
+// （資料檢查擋掉其他對象），其他的也一律略過。
+export function skippedEventEffects(event) {
+  if (!event) return [];
+  if (event.todo === true) return event.effects ?? [];
+  return (event.effects ?? []).filter((effect) => !tableEffectApplies(effect));
+}
+
+// 一張事件對這一桌結算，回傳 { state, entry }；entry 是要寫進 eventLog 的那一筆。
+function applyEvent(state, event, entry, data, random) {
+  if (!event || event.todo === true) return { state, entry: { ...entry, skipped: true } };
+  return { state: applyTableEffects(state, event.effects, data, random), entry };
+}
+
+// 處理 fogPending：由小到大一個一個來，每個門檻找它的迷霧事件結算；結算中又越過新的門檻就接著排、接著處理（每個門檻每場只觸發
+// 一次，所以一定會停）。處理完 fogPending 清空；資料裡找不到那個門檻的事件就只記紀錄（skipped）、不結算。線上舊局面留下的
+// fogPending（M5a–M6 只記不處理）在下一次結算時一併處理。phase 是寫進紀錄的階段（預設是 state.phase）。
+// 回傳 { state, events }：events 是要寫進 eventLog 的紀錄，照處理順序；沒有要處理的門檻時 state 原樣回傳。
+export function settleFog(state, data, { phase = state.phase, random = cryptoRandom } = {}) {
+  let next = state;
+  const events = [];
+  while ((next.fogPending ?? []).length > 0) {
+    const [threshold, ...rest] = [...next.fogPending].sort((a, b) => a - b);
+    next = { ...next, fogPending: rest };
+    const event = fogEventFor(data, threshold);
+    const entry = { round: state.round, phase };
+    if (event) entry.event = event.id;
+    const applied = applyEvent(next, event, { ...entry, kind: 'fog', threshold }, data, random);
+    next = applied.state;
+    events.push(applied.entry);
+  }
+  return { state: next, events };
+}
+
+// 從一般事件牌堆翻 count 張：牌堆有牌就翻最上面的；翻完（或第一次用、牌堆是空的）就把全部一般事件（kind: deck）隨機洗成新的一疊
+// 接著翻。資料檔裡已經沒有的編號略過；資料裡沒有任何一般事件就不翻。回傳 { drawn, eventDeck }，不改傳進來的陣列。
+export function drawEvents(eventDeck, data, count, random = cryptoRandom) {
+  const all = (data.events ?? []).filter((event) => event.kind === 'deck').map((event) => event.id);
+  let pile = (eventDeck ?? []).filter((id) => all.includes(id));
+  const drawn = [];
+  while (drawn.length < count && all.length > 0) {
+    if (pile.length === 0) pile = shuffle(all, random);
+    drawn.push(pile.shift());
+  }
+  return { drawn, eventDeck: pile };
+}
+
+// 日出一般事件：領薪、抽牌之後（sunrise、startGame 之後）翻 settings.sunriseEvents 張，一張一張對這一桌結算；每張結算完就處理它
+// 引發的迷霧事件（settleFog），最後再處理一次（0 張時也會處理線上舊局面留下的 fogPending）。state 要有 round、seats、hands、
+// deck、discard、fog、fogMax、fogFired、fogPending、eventDeck。回傳 { state, events }：events 是要寫進 eventLog 的紀錄
+// （一般事件、它引發的迷霧事件），照結算順序，phase 都是 sunrise。
+export function settleSunriseEvents(state, data, random = cryptoRandom) {
+  const count = data.settings.sunriseEvents ?? SUNRISE_EVENTS_DEFAULT;
+  const { drawn, eventDeck } = drawEvents(state.eventDeck, data, count, random);
+  let next = { ...state, eventDeck };
+  const events = [];
+  const fog = () => {
+    const settled = settleFog(next, data, { phase: 'sunrise', random });
+    next = settled.state;
+    events.push(...settled.events);
+  };
+  for (const id of drawn) {
+    const applied = applyEvent(next, findEvent(data, id), { round: state.round, phase: 'sunrise', event: id, kind: 'deck' }, data, random);
+    next = applied.state;
+    events.push(applied.entry);
+    fog();
+  }
+  fog();
+  return { state: next, events };
+}
+
+// 一筆結算（出牌 played、響應窗口結算 resolved、法案揭曉 revealed）的最後處理迷霧事件：結果的 state 換成處理完的，多一個 events
+// （要寫進 eventLog 的紀錄）。其他種類（退回、接下、結束這一輪、開黃昏、計人數…）不是結算，原樣回傳。
+export function withFogEvents(result, data, random = cryptoRandom) {
+  if (!['played', 'resolved', 'revealed'].includes(result?.kind)) return result;
+  const settled = settleFog(result.state, data, { random });
+  return { ...result, state: settled.state, events: settled.events };
+}
+
+// Firebase 的陣列（數字鍵）讀回來可能是陣列，也可能是物件（中間有洞時）。照編號排好的 [紀錄…]，沒有是 []。
+export function eventLogList(eventLog) {
+  if (!eventLog) return [];
+  return Object.entries(eventLog)
+    .filter(([, entry]) => entry && typeof entry === 'object')
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([, entry]) => entry);
+}
+
+// 下一筆事件紀錄的編號（現有最大的編號＋1；沒有紀錄是 0）。
+export function nextEventIndex(eventLog) {
+  return Object.keys(eventLog ?? {}).reduce((next, key) => Math.max(next, Number(key) + 1), 0);
+}
+
+// 這一回合日出翻到的一般事件（畫面從日出到白晝結束一直顯示）。
+export function sunriseEventsOf(eventLog, round) {
+  return eventLogList(eventLog).filter((entry) => entry.round === round && entry.phase === 'sunrise' && entry.kind === 'deck');
 }
