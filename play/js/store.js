@@ -1,4 +1,4 @@
-// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態。
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -22,6 +22,7 @@ import {
   update,
 } from 'firebase/database';
 import { config } from './config.js';
+import { checkSeating, startGame, sunrise } from './game.js';
 import {
   MAX_TABLES,
   NAME_MAX_LENGTH,
@@ -36,7 +37,8 @@ import {
   normalizeRoomCode,
 } from './rules.js';
 
-// code：invalid-code、invalid-name、invalid-table、room-not-found、permission-denied
+// code：invalid-code、invalid-name、invalid-table、room-not-found、permission-denied、
+// cannot-start（人數不對或這一桌已經推進過）、broken-game（局面缺資料）
 export class StoreError extends Error {
   constructor(code, message) {
     super(message);
@@ -230,4 +232,129 @@ export async function advanceTable(session, code, table, expected) {
     throw error;
   }
   return { advanced: result.committed && result.snapshot.exists(), table: result.snapshot.val() };
+}
+
+// 開局與日出發牌都是一筆多路徑寫入：公開的局面（rooms/{code}/games）、處理過日出的回合（rooms/{code}/deals）、
+// 各人的私密資料（private）與只有主持端讀得到的牌庫（hostOnly）一起寫，由主持端算好再送出。
+// 防重複靠規則：deals 只能往上加、而且要等於該桌目前的回合，開局另外靠 startedAt 只能寫一次；
+// 兩台主持端同時寫，後到的那筆整筆被拒。被拒時看伺服器的現況：已經有人寫過（settled）就回傳 false，否則報錯。
+async function writeOnce(session, writes, settled, failure) {
+  try {
+    await update(ref(session.db), writes);
+    return true;
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+    if (await waitUntil(session, settled.path, settled.done)) return false;
+    throw new StoreError('permission-denied', failure);
+  }
+}
+
+// 等到 path 的值讓 done(值) 成立就回傳 true，等太久回傳 false。寫入剛被拒時，本機有訂閱的話
+// 快取可能還沒收到另一台主持端的那筆寫入，直接讀會看到舊的值，所以等伺服器傳來。
+const SETTLE_MS = 3000;
+
+function waitUntil(session, path, done, ms = SETTLE_MS) {
+  return new Promise((resolve) => {
+    let finished = false;
+    let stop = null;
+    const finish = (value) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      stop?.();
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(false), ms);
+    stop = onValue(
+      ref(session.db, path),
+      (snapshot) => done(snapshot.val()) && finish(true),
+      () => finish(false),
+    );
+    if (finished) stop(); // 快取裡已經有答案時，回呼會在 onValue 回傳前就跑完
+  });
+}
+
+async function readRoom(session, code) {
+  const room = (await get(ref(session.db, `rooms/${code}`))).val();
+  if (!room?.meta) throw new StoreError('room-not-found', `找不到房間 ${code}，請確認房號`);
+  return room;
+}
+
+// 牌庫只有主持端讀得到，順便用來確認這台裝置是主持端。
+async function readPile(session, code, table, deniedMessage) {
+  try {
+    return (await get(ref(session.db, `hostOnly/${code}/${table}`))).val() ?? {};
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', deniedMessage);
+    throw error;
+  }
+}
+
+// 開局：players 裡 table＝這一桌的人隨機入座、分階層、發天命與起始手牌，接著做第 1 回合日出，一次寫入。
+// data 是 gamedata.js 讀到、檢查過的卡牌資料；random 讓測試注入亂數來源，平常不給。
+// 回傳 { started }：false 表示這一桌已經開過局（例如另一台主持端先開了），這次沒有寫入。
+export async function startTable(session, code, table, data, random) {
+  const room = await readRoom(session, code);
+  if (room.games?.[table]) return { started: false };
+  const state = room.tables?.[table];
+  if (!state) throw new StoreError('invalid-table', `沒有第 ${table} 桌`);
+  if (state.round !== 1 || state.phase !== 'sunrise') throw new StoreError('cannot-start', '這一桌已經推進過，不能開局');
+  const uids = Object.keys(room.players ?? {}).filter((uid) => room.players[uid].table === table);
+  const { error } = checkSeating(uids.length, data.roles.length);
+  if (error) throw new StoreError('cannot-start', error);
+  await readPile(session, code, table, '只有主持端可以開局');
+
+  const game = startGame(data, uids, { random });
+  const writes = {
+    [`rooms/${code}/games/${table}`]: {
+      startedAt: serverTimestamp(),
+      seats: game.seats,
+      deckCount: game.deck.length,
+      discardCount: game.discard.length,
+    },
+    [`rooms/${code}/deals/${table}`]: 1,
+    [`hostOnly/${code}/${table}`]: { deck: game.deck, discard: game.discard },
+  };
+  for (const uid of Object.keys(game.seats)) {
+    writes[`private/${code}/${uid}`] = { table, hand: game.hands[uid], destiny: game.destinies[uid] };
+  }
+  const settled = { path: `rooms/${code}/games/${table}`, done: (value) => value !== null };
+  return { started: await writeOnce(session, writes, settled, '開局沒有成功，請再按一次') };
+}
+
+// 日出發牌：這一桌在日出、已經開局、這一回合還沒發過時，每人領自己階層的薪水、抽牌，一次寫入。
+// 回傳 { dealt, round }：dealt 是 false 表示這次沒有寫入（已經發過、還沒開局或不是日出）。
+export async function processSunrise(session, code, table, data, random) {
+  const room = await readRoom(session, code);
+  const state = room.tables?.[table];
+  const game = room.games?.[table];
+  if (!state || !game || state.phase !== 'sunrise' || (room.deals?.[table] ?? 0) >= state.round) {
+    return { dealt: false, round: state?.round ?? null };
+  }
+  const uids = Object.keys(game.seats);
+  const pile = await readPile(session, code, table, '只有主持端可以發牌');
+  const privates = await Promise.all(uids.map(async (uid) => (await get(ref(session.db, `private/${code}/${uid}`))).val()));
+  const hands = {};
+  uids.forEach((uid, index) => {
+    if (!privates[index]) throw new StoreError('broken-game', '有玩家的手牌資料不見了，請找工作人員');
+    hands[uid] = privates[index].hand ?? [];
+  });
+  const next = sunrise({ seats: game.seats, hands, deck: pile.deck ?? [], discard: pile.discard ?? [] }, data, random);
+
+  const writes = {
+    [`rooms/${code}/games/${table}/seats`]: next.seats,
+    [`rooms/${code}/games/${table}/deckCount`]: next.deck.length,
+    [`rooms/${code}/games/${table}/discardCount`]: next.discard.length,
+    [`rooms/${code}/deals/${table}`]: state.round,
+    [`hostOnly/${code}/${table}`]: { deck: next.deck, discard: next.discard },
+  };
+  for (const uid of uids) writes[`private/${code}/${uid}/hand`] = next.hands[uid];
+  const settled = { path: `rooms/${code}/deals/${table}`, done: (value) => (value ?? 0) >= state.round };
+  return { dealt: await writeOnce(session, writes, settled, '發牌沒有成功，請按「補發」再試一次'), round: state.round };
+}
+
+// 自己的私密資料（{ table, hand, destiny }）一有變動就呼叫 onPrivate(資料)；還沒開局或沒有入座時是 null。
+// 公開的局面（games、deals）在房間裡，跟著 watchRoom 一起來。回傳取消訂閱的函式。
+export function watchPrivate(session, code, onPrivate, onError) {
+  return onValue(ref(session.db, `private/${code}/${session.uid}`), (snapshot) => onPrivate(snapshot.val()), onError);
 }
