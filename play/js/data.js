@@ -12,10 +12,11 @@ export const DATA_LABELS = {
 };
 
 export const ROLE_COUNT = 6;
-export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard'];
-export const EFFECT_TARGETS = ['self', 'all', 'others', 'chosen'];
+export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard', 'cancel'];
+// role＝某個階層的玩家（另寫 role 欄）；originalPlayer＝被回應的那張牌是誰出的。
+export const EFFECT_TARGETS = ['self', 'all', 'others', 'chosen', 'role', 'originalPlayer'];
 // 法案與事件沒有「出牌的人」，自己、其他人都沒有對象。
-export const TABLE_TARGETS = ['all', 'chosen'];
+export const TABLE_TARGETS = ['all', 'chosen', 'role'];
 // 一般牌輪到自己時出；響應卡在別人出牌後插話打出。
 export const ACTION_KINDS = ['play', 'response'];
 export const EVENT_KINDS = ['deck', 'fog'];
@@ -149,7 +150,8 @@ function checkTextList(record, field, error) {
   });
 }
 
-function checkEffects(record, field, targets, error, warn) {
+// targets：這種牌可用的對象；response：是不是響應卡（只有響應卡能抵銷、能針對出牌者）；roleIds：階層編號。
+function checkEffects(record, field, { targets, response = false, roleIds }, error, warn) {
   const effects = record[field];
   if (!Array.isArray(effects)) return error(field, `要是效果的陣列，沒有效果就填 []，${now(effects)}`);
   effects.forEach((effect, position) => {
@@ -157,7 +159,11 @@ function checkEffects(record, field, targets, error, warn) {
     if (!isPlainObject(effect)) return error(field, `${where}要是物件，${now(effect)}`);
     const { op, target, amount } = effect;
     if (!EFFECT_OPS.includes(op)) return error(field, `${where}的 op 不認得：${show(op)}，只能是 ${EFFECT_OPS.join('／')}`);
-    if (op === 'fog') {
+    let allowed = ['op', 'target', 'amount'];
+    if (op === 'cancel') {
+      if (!response) error(field, `${where}：抵銷（cancel）只能用在響應卡`);
+      if ('target' in effect || 'amount' in effect) error(field, `${where}：抵銷不寫 target 和 amount`);
+    } else if (op === 'fog') {
       if ('target' in effect) error(field, `${where}：迷霧是全桌一個值，不寫 target`);
       if (!Number.isInteger(amount) || !inRange(Math.abs(amount), 1, FOG_AMOUNT_MAX)) {
         error(field, `${where}：迷霧的 amount 要是 -${FOG_AMOUNT_MAX}～${FOG_AMOUNT_MAX}、不是 0 的整數，${now(amount)}`);
@@ -165,8 +171,18 @@ function checkEffects(record, field, targets, error, warn) {
     } else {
       if (!EFFECT_TARGETS.includes(target)) {
         error(field, `${where}的 target 不認得：${show(target)}，只能是 ${EFFECT_TARGETS.join('／')}`);
+      } else if (target === 'originalPlayer' && !response) {
+        error(field, `${where}：@出牌者（originalPlayer）只能用在響應卡`);
       } else if (!targets.includes(target)) {
         error(field, `${where}：${field === 'effects' ? '事件' : '法案'}沒有出牌的人，target 只能是 ${targets.join('／')}，${now(target)}`);
+      }
+      if (target === 'role') {
+        allowed = [...allowed, 'role'];
+        if (typeof effect.role !== 'string' || effect.role === '') {
+          error(field, `${where}：target 是 role 時要在 role 寫階層編號，${now(effect.role)}`);
+        } else if (roleIds && !roleIds.has(effect.role)) {
+          error(field, `${where}：找不到階層編號${show(effect.role)}`);
+        }
       }
       if (op === 'draw' || op === 'discard') {
         if (!inRange(amount, 1)) error(field, `${where}：${op} 的 amount 要是 1 以上的整數，${now(amount)}`);
@@ -174,7 +190,7 @@ function checkEffects(record, field, targets, error, warn) {
         error(field, `${where}：${op} 的 amount 要是不是 0 的整數（正數是拿、負數是付），${now(amount)}`);
       }
     }
-    checkUnknownFields(effect, ['op', 'target', 'amount'], (key) => warn(field, `${where}有不認得的欄位 ${key}`));
+    checkUnknownFields(effect, allowed, (key) => warn(field, `${where}有不認得的欄位 ${key}`));
   });
 }
 
@@ -272,19 +288,19 @@ function checkAction(record, { roleIds, categories }, error, warn) {
     checkUnknownFields(record.cost, ['pounds', 'influence'], warn, 'cost.');
   }
   checkNullableText(record, 'gear', error);
-  checkEffects(record, 'effects', EFFECT_TARGETS, error, warn);
+  checkEffects(record, 'effects', { targets: EFFECT_TARGETS, response: record.kind === 'response', roleIds }, error, warn);
   checkText(record, 'text', error);
 }
 
-function checkBill(record, context, error, warn) {
+function checkBill(record, { roleIds }, error, warn) {
   checkText(record, 'name', error);
   checkNullableText(record, 'year', error);
-  checkEffects(record, 'onPass', TABLE_TARGETS, error, warn);
-  checkEffects(record, 'onFail', TABLE_TARGETS, error, warn);
+  checkEffects(record, 'onPass', { targets: TABLE_TARGETS, roleIds }, error, warn);
+  checkEffects(record, 'onFail', { targets: TABLE_TARGETS, roleIds }, error, warn);
   checkText(record, 'text', error);
 }
 
-function checkEvent(record, { fogThresholds }, error, warn) {
+function checkEvent(record, { fogThresholds, roleIds }, error, warn) {
   checkText(record, 'name', error);
   checkNullableText(record, 'year', error);
   if (!EVENT_KINDS.includes(record.kind)) {
@@ -298,7 +314,7 @@ function checkEvent(record, { fogThresholds }, error, warn) {
   } else if (record.threshold !== undefined && record.threshold !== null) {
     error('threshold', `一般事件不填門檻，${now(record.threshold)}`);
   }
-  checkEffects(record, 'effects', TABLE_TARGETS, error, warn);
+  checkEffects(record, 'effects', { targets: TABLE_TARGETS, roleIds }, error, warn);
   checkText(record, 'text', error);
 }
 

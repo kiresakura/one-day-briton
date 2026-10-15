@@ -143,6 +143,26 @@ test('effect ops and targets must be known, and fit the kind of card', () => {
   assertError(data, { id: 'b02', field: 'onPass', message: /-100～100/ });
 });
 
+test('role targets need a known role, and cancel takes no target or amount', () => {
+  const data = fresh();
+  data.events[0].effects = [{ op: 'pounds', target: 'role', amount: 1 }];
+  data.bills[0].onPass = [{ op: 'influence', target: 'role', role: 'r9', amount: 1 }];
+  data.actions[2].effects = [{ op: 'cancel', amount: 1 }, { op: 'cancel', target: 'originalPlayer' }];
+  data.actions[1].effects = [{ op: 'draw', target: 'role', role: 'r6', amount: 1 }];
+  assertError(data, { id: 'e01', field: 'effects', message: '第 1 個效果：target 是 role 時要在 role 寫階層編號，現在沒有這一欄' });
+  assertError(data, { id: 'b01', field: 'onPass', message: '第 1 個效果：找不到階層編號「r9」' });
+  assertError(data, { id: 'a03', field: 'effects', message: '第 1 個效果：抵銷不寫 target 和 amount' });
+  assertError(data, { id: 'a03', field: 'effects', message: '第 2 個效果：抵銷不寫 target 和 amount' });
+  assert.equal(errorsOf(data).filter((issue) => issue.id === 'a02').length, 0);
+
+  // role 只跟著 target: role；其他對象多寫了 role 是不認得的欄位。
+  const extra = fresh();
+  extra.actions[0].effects = [{ op: 'pounds', target: 'self', role: 'r1', amount: 1 }];
+  const { errors, warnings } = checkData(extra);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(warnings.map((issue) => formatIssue(issue, '警告')), ['警告｜actions.json｜a01｜effects（效果）｜第 1 個效果有不認得的欄位 role']);
+});
+
 test('fog events need a threshold and deck events must not have one', () => {
   const data = fresh();
   delete data.events[1].threshold;

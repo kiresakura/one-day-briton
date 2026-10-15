@@ -2,12 +2,13 @@
 // 這裡只做轉換：數字看不懂、編號沒填這類問題原樣留著，交給 play/js/data.js 的檢查逐筆報出來。
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { DATA_FILES, DATA_LABELS, SETTINGS } from '../../play/js/data.js';
+import { DATA_FILES, DATA_LABELS, ID_PATTERN, SETTINGS } from '../../play/js/data.js';
 import { readTable } from './csv.mjs';
 
 const RESOURCE_WORDS = { 英鎊: 'pounds', 影響力: 'influence', 迷霧: 'fog' };
 const CARD_WORDS = { 抽: 'draw', 棄: 'discard' };
-export const TARGET_WORDS = { 自己: 'self', 全體: 'all', 其他人: 'others', 指定: 'chosen' };
+export const TARGET_WORDS = { 自己: 'self', 全體: 'all', 其他人: 'others', 指定: 'chosen', 出牌者: 'originalPlayer' };
+const CANCEL_WORD = '抵銷';
 const ACTION_KIND_WORDS = { 一般: 'play', 一般牌: 'play', 響應: 'response', 響應卡: 'response' };
 const EVENT_KIND_WORDS = { 一般: 'deck', 迷霧: 'fog' };
 const ANY_CARD_WORDS = ['任何', '任何牌'];
@@ -20,20 +21,30 @@ function normalize(text) {
   return String(text ?? '').normalize('NFKC').replace(/[−–—]/g, '-');
 }
 
+// @對象：對象字，或是階層編號（@r2＝該階層的玩家）。編號存不存在交給檢查。
+function parseTarget(targetWord, defaultTarget) {
+  if (targetWord === undefined) return { target: defaultTarget };
+  const target = lookup(TARGET_WORDS, targetWord);
+  if (target) return { target };
+  return ID_PATTERN.test(targetWord) ? { target: 'role', role: targetWord } : null;
+}
+
 function parseEffect(part, defaultTarget) {
   const [body, targetWord, ...extra] = part.split('@');
   if (extra.length > 0) return null;
-  const target = targetWord === undefined ? defaultTarget : lookup(TARGET_WORDS, targetWord);
+  // 抵銷＝被回應的那張牌效果不發生，沒有數量也沒有對象。
+  if (body === CANCEL_WORD) return targetWord === undefined ? { op: 'cancel' } : null;
+  const target = parseTarget(targetWord, defaultTarget);
   const resource = /^(英鎊|影響力|迷霧)([+-]\d+)$/.exec(body);
   if (resource) {
     const op = RESOURCE_WORDS[resource[1]];
     const amount = Number(resource[2]);
     // 迷霧是全桌一個值，寫了對象反而不知道要做什麼。
     if (op === 'fog') return targetWord === undefined ? { op, amount } : null;
-    return target ? { op, target, amount } : null;
+    return target ? { op, ...target, amount } : null;
   }
   const cards = /^(抽|棄)牌?\+?(\d+)張?$/.exec(body);
-  if (cards) return target ? { op: CARD_WORDS[cards[1]], target, amount: Number(cards[2]) } : null;
+  if (cards) return target ? { op: CARD_WORDS[cards[1]], ...target, amount: Number(cards[2]) } : null;
   return null;
 }
 

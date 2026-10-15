@@ -48,8 +48,30 @@ test('effect text tolerates full-width characters, spaces and other separators',
   assert.deepEqual(parseEffects('；；', 'self'), { effects: [], unknown: [] });
 });
 
+test('effects can target a role or the player being answered, or cancel the answered card', () => {
+  assert.deepEqual(parseEffects('英鎊+4@r2', 'all'), { effects: [{ op: 'pounds', target: 'role', role: 'r2', amount: 4 }], unknown: [] });
+  assert.deepEqual(parseEffects('英鎊-4@出牌者', 'self').effects, [{ op: 'pounds', target: 'originalPlayer', amount: -4 }]);
+  assert.deepEqual(parseEffects('抵銷', 'self').effects, [{ op: 'cancel' }]);
+  // 全形、空白照樣認得，也可以和既有寫法寫在同一格。
+  assert.deepEqual(parseEffects('抵銷；影響力＋１＠ｒ３，抽 1 張 @ 出牌者、迷霧-2；棄牌1@指定。', 'self'), {
+    effects: [
+      { op: 'cancel' },
+      { op: 'influence', target: 'role', role: 'r3', amount: 1 },
+      { op: 'draw', target: 'originalPlayer', amount: 1 },
+      { op: 'fog', amount: -2 },
+      { op: 'discard', target: 'chosen', amount: 1 },
+    ],
+    unknown: [],
+  });
+  // 匯入只看寫法：合法的編號都當成階層，有沒有這個階層由檢查判斷（不會查到物件內建的屬性）。
+  assert.deepEqual(parseEffects('英鎊+5@constructor', 'self').effects, [{ op: 'pounds', target: 'role', role: 'constructor', amount: 5 }]);
+});
+
 test('effect text that cannot be read is returned as unknown', () => {
-  for (const text of ['偷看一張手牌', '英鎊5@自己', '英鎊+5@大家', '英鎊+5@', '迷霧+3@全體', '抽牌-1', '英鎊+1.5', '英鎊+5@自己@全體', '英鎊+5@constructor']) {
+  for (const text of [
+    '偷看一張手牌', '英鎊5@自己', '英鎊+5@大家', '英鎊+5@', '迷霧+3@全體', '抽牌-1', '英鎊+1.5', '英鎊+5@自己@全體',
+    '英鎊+5@r2!', '迷霧+3@r2', '迷霧+3@出牌者', '抵銷@出牌者', '抵銷@r2', '抵銷2', '抵銷那張牌的效果',
+  ]) {
     const { effects, unknown } = parseEffects(text, 'self');
     assert.deepEqual(effects, [], text);
     assert.equal(unknown.length, 1, text);
@@ -113,6 +135,29 @@ test('action kinds and what response cards can respond to', () => {
   assert.deepEqual(warnings.map((issue) => issue.message), ['干擾', '交易二', '交易三'].map(
     (name) => `沒有任何行動牌的分類是「${name}」，這一項回應不到任何牌`,
   ));
+});
+
+test('the check rejects missing roles, and @出牌者 or 抵銷 outside response cards', () => {
+  const actions = convertSheet('actions', ACTION_HEADER
+    + 'a01,甲,一般,,,,1,,,,英鎊+4@r2；抵銷,牌面\n'
+    + 'a02,乙,一般,,,,1,,,,英鎊-1@出牌者,牌面\n'
+    + 'a03,丙,響應,,,,1,,,,抵銷；英鎊-2@出牌者；英鎊+2,牌面\n'
+    + 'a04,丁,響應,,,,1,,,,影響力+1@r9,牌面\n').data;
+  const bills = convertSheet('bills', '編號,名稱,年代,通過時效果,不通過時效果,牌面文字\nb01,甲,,英鎊+2@r1；抵銷,英鎊-1@出牌者,牌面\n').data;
+  const events = convertSheet('events', '編號,名稱,年代,類型,門檻,效果,牌面文字\ne01,甲,,一般,,抽牌1@r1；英鎊+1@出牌者；抵銷,牌面\n').data;
+  assert.deepEqual(actions[2].effects, [{ op: 'cancel' }, { op: 'pounds', target: 'originalPlayer', amount: -2 }, { op: 'pounds', target: 'self', amount: 2 }]);
+  assert.deepEqual(bills[0].onPass[0], { op: 'pounds', target: 'role', role: 'r1', amount: 2 });
+  const roles = ['r1', 'r2'].map((id) => ({ id, name: id, salary: 5, privileges: [], missions: [] }));
+  const { errors } = checkData({ roles, actions, bills, events });
+  assert.deepEqual(errors.map((issue) => formatIssue(issue)), [
+    '錯誤｜actions.json｜a01｜effects（效果）｜第 2 個效果：抵銷（cancel）只能用在響應卡',
+    '錯誤｜actions.json｜a02｜effects（效果）｜第 1 個效果：@出牌者（originalPlayer）只能用在響應卡',
+    '錯誤｜actions.json｜a04｜effects（效果）｜第 1 個效果：找不到階層編號「r9」',
+    '錯誤｜bills.json｜b01｜onPass（通過時效果）｜第 2 個效果：抵銷（cancel）只能用在響應卡',
+    '錯誤｜bills.json｜b01｜onFail（不通過時效果）｜第 1 個效果：@出牌者（originalPlayer）只能用在響應卡',
+    '錯誤｜events.json｜e01｜effects（效果）｜第 2 個效果：@出牌者（originalPlayer）只能用在響應卡',
+    '錯誤｜events.json｜e01｜effects（效果）｜第 3 個效果：抵銷（cancel）只能用在響應卡',
+  ]);
 });
 
 test('bills default to everyone and label which side is todo', () => {
