@@ -2,7 +2,7 @@
 // 這裡只做轉換：數字看不懂、編號沒填這類問題原樣留著，交給 play/js/data.js 的檢查逐筆報出來。
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { DATA_FILES, DATA_LABELS, ID_PATTERN, SETTINGS } from '../../play/js/data.js';
+import { DATA_FILES, DATA_LABELS, ID_PATTERN, SETTINGS, parseCheck } from '../../play/js/data.js';
 import { PHASE_LABELS } from '../../play/js/rules.js';
 import { readTable } from './csv.mjs';
 
@@ -90,6 +90,12 @@ function listColumns(values, prefix) {
     .map(([, value]) => value);
 }
 
+// 天命的判定：空白是 null；看得懂的轉成結構（data.js 的 parseCheck），看不懂的原文照留，檢查時報出原因。
+function destinyCheck(value) {
+  const parsed = parseCheck(value);
+  return parsed.error ? value : parsed.check;
+}
+
 // 可回應：空白或「任何」是任何牌都能回應（null）；否則是用頓號、逗號、分號或換行隔開的分類。
 function respondsTo(value) {
   if (value === '' || ANY_CARD_WORDS.includes(value)) return null;
@@ -159,12 +165,18 @@ const SHEETS = {
   },
   destinies: {
     columns: ['編號', '所屬階層', '天命文字', '計分條件', '分數'],
-    convert: (cell) => ({
-      id: cell.編號,
-      role: optional(cell.所屬階層),
-      text: cell.天命文字,
-      score: { text: cell.計分條件, points: number(cell.分數, null) },
-    }),
+    // 判定（M9）是選填欄：有這一欄才寫出 check，空白是 null，看不懂的原文留著讓檢查報錯。
+    extra: ['判定'],
+    convert: (cell) => {
+      const record = {
+        id: cell.編號,
+        role: optional(cell.所屬階層),
+        text: cell.天命文字,
+        score: { text: cell.計分條件, points: number(cell.分數, null) },
+      };
+      if (cell.判定 !== undefined) record.check = destinyCheck(cell.判定);
+      return record;
+    },
   },
   tutorial: {
     columns: ['編號', '階段', '提示文字'],

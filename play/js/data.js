@@ -59,6 +59,13 @@ export const SETTINGS = [
   { key: 'gambleMedicalFee', label: '豪賭醫藥費', min: 0, default: 2 },
   { key: 'splitPounds', label: '分贓英鎊', min: 0, default: 6 },
   { key: 'splitSin', label: '分贓罪孽', min: 0, default: 1 },
+  // 終局與計分（企劃 10/15 第 9、11 題；計分值 10/15 定案）：回合的安全上限、資產幾點換 1 分（各自捨去）、公共成就各幾分、
+  // 罪孽幾點扣 1 分（捨去）。
+  { key: 'maxRounds', label: '回合上限', min: 1, default: 12 },
+  { key: 'scoreRates.pounds', label: '資產英鎊換算', min: 1, default: 5 },
+  { key: 'scoreRates.influence', label: '資產影響力換算', min: 1, default: 3 },
+  { key: 'achievementPoints', label: '公共成就分數', min: 0, default: 3 },
+  { key: 'sinPerPenalty', label: '罪孽扣分換算', min: 1, default: 2 },
 ];
 
 // 補上資料檔沒寫的選填設定（用 default），回傳新的物件；遊戲讀到的設定永遠是齊的。settings 不是物件時原樣回傳，交給檢查報錯。
@@ -82,7 +89,7 @@ const FIELDS = {
   actions: ['id', 'name', 'kind', 'category', 'respondsTo', 'role', 'copies', 'cost', 'gear', 'effects', 'text', 'todo', 'todoText'],
   bills: ['id', 'name', 'year', 'onPass', 'onFail', 'text', 'todo', 'todoText'],
   events: ['id', 'name', 'year', 'kind', 'threshold', 'effects', 'text', 'todo', 'todoText'],
-  destinies: ['id', 'role', 'text', 'score'],
+  destinies: ['id', 'role', 'text', 'score', 'check'],
   tutorial: ['id', 'phase', 'text'],
 };
 
@@ -91,7 +98,7 @@ const EFFECT_FIELDS = { actions: ['effects'], bills: ['onPass', 'onFail'], event
 // 錯誤訊息裡附上試算表的欄名，填資料的人比較好對照。
 const COMMON_LABELS = { id: '編號', name: '名稱', year: '年代', text: '牌面文字', todo: '效果', todoText: '效果' };
 const FIELD_LABELS = {
-  settings: { ...Object.fromEntries(SETTINGS.map(({ key, label }) => [key, label])), reminderSeconds: '提醒秒數' },
+  settings: { ...Object.fromEntries(SETTINGS.map(({ key, label }) => [key, label])), reminderSeconds: '提醒秒數', scoreRates: '資產換算' },
   roles: { ...COMMON_LABELS, salary: '薪水', privileges: '特權', missions: '使命' },
   actions: {
     ...COMMON_LABELS,
@@ -108,7 +115,7 @@ const FIELD_LABELS = {
   },
   bills: { ...COMMON_LABELS, onPass: '通過時效果', onFail: '不通過時效果' },
   events: { ...COMMON_LABELS, kind: '類型', threshold: '門檻', effects: '效果' },
-  destinies: { ...COMMON_LABELS, role: '所屬階層', text: '天命文字', score: '計分', 'score.text': '計分條件', 'score.points': '分數' },
+  destinies: { ...COMMON_LABELS, role: '所屬階層', text: '天命文字', score: '計分', 'score.text': '計分條件', 'score.points': '分數', check: '判定' },
   tutorial: { ...COMMON_LABELS, phase: '階段', text: '提示文字' },
 };
 
@@ -302,9 +309,15 @@ function checkSettings(settings, result) {
   }
   const topLevel = [...new Set(SETTINGS.map(({ key }) => key.split('.')[0]))];
   checkUnknownFields(settings, topLevel, warn);
-  if (isPlainObject(settings.reminderSeconds)) {
-    const phases = SETTINGS.filter(({ key }) => key.startsWith('reminderSeconds.')).map(({ key }) => key.split('.')[1]);
-    checkUnknownFields(settings.reminderSeconds, phases, warn, 'reminderSeconds.');
+  // 分兩層的設定（提醒秒數、資產換算）：下一層不認得的欄位提醒一聲；選填的那一層寫了卻不是物件就報錯（不然會被預設值蓋掉）。
+  for (const parent of new Set(SETTINGS.filter(({ key }) => key.includes('.')).map(({ key }) => key.split('.')[0]))) {
+    const nested = SETTINGS.filter(({ key }) => key.startsWith(`${parent}.`));
+    const children = nested.map(({ key }) => key.split('.')[1]);
+    if (isPlainObject(settings[parent])) {
+      checkUnknownFields(settings[parent], children, warn, `${parent}.`);
+    } else if (settings[parent] !== undefined && nested.every((setting) => 'default' in setting)) {
+      error(parent, `要是 { ${children.map((child) => `"${child}": 數字`).join(', ')} }，${now(settings[parent])}`);
+    }
   }
 }
 
@@ -381,9 +394,10 @@ function checkEvent(record, { fogThresholds, roleIds }, error, warn) {
   checkText(record, 'text', error);
 }
 
-function checkDestiny(record, { roleIds }, error, warn) {
-  checkRoleRef(record, roleIds, error);
+function checkDestiny(record, context, error, warn) {
+  checkRoleRef(record, context.roleIds, error);
   checkText(record, 'text', error);
+  checkDestinyCheck(record, context, error, warn);
   if (!isPlainObject(record.score)) {
     error('score', `要是 { "text": 計分條件, "points": 分數或 null }，${now(record.score)}`);
     return;
@@ -393,6 +407,92 @@ function checkDestiny(record, { roleIds }, error, warn) {
     error('score.points', `要是 0 以上的整數，還沒定就填 null，${now(record.score.points)}`);
   }
   checkUnknownFields(record.score, ['text', 'points'], warn, 'score.');
+}
+
+// ---- 天命的「判定」（M9） ----
+// 試算表「判定」欄一格一個條件，匯入時轉成資料檔的 check（選填；空白或沒有這一欄＝null，終局時主持端逐人勾「達成／沒達成」）。
+// 寫法（DATA-FORMAT「隱藏天命」）與轉出的結構：
+//   法案通過 b06、法案沒通過 b05          { kind: 'bills', passed: true／false, bills: ['b06'], atLeast: 1 }
+//   法案都通過 b01、b06、法案都沒通過 …   { kind: 'bills', passed, bills: [...], atLeast: 列出的張數 }
+//   法案通過至少 2：b01、b06、b02、b03     { kind: 'bills', passed: true, bills: [...], atLeast: 2 }（「法案沒通過至少 N：」同理）
+//     「沒通過」都把整場沒被表決的算成沒通過：列出的法案裡，結果合乎 passed 的至少 atLeast 張就達成。
+//   迷霧 < 60、迷霧最高 > 90               { kind: 'compare', what: 'fog'（終局時）／'fogMax'（本場最高）, op, value }
+//   英鎊 >= 40、影響力 >= N、手牌 >= N      { kind: 'compare', what: 'pounds'／'influence'／'hand', op, value }
+//   英鎊最多、影響力最多、手牌最多          { kind: 'most', what }（全桌比，同分都算）
+//   英鎊多於 r5                            { kind: 'moreThan', what: 'pounds', role: 'r5' }（比坐那個階層的人多；那桌沒人坐算達成）
+// 比較符號是 >、>=、<、<=；全形字、空白多寡都可以。
+export const CHECK_KINDS = ['bills', 'compare', 'most', 'moreThan'];
+export const CHECK_OPS = ['>', '>=', '<', '<='];
+export const CHECK_FOG_VALUES = ['fog', 'fogMax'];
+export const CHECK_SEAT_VALUES = ['pounds', 'influence', 'hand'];
+const CHECK_SEAT_WORDS = { 英鎊: 'pounds', 影響力: 'influence', 手牌: 'hand' };
+const CHECK_FIELDS = { bills: ['passed', 'bills', 'atLeast'], compare: ['what', 'op', 'value'], most: ['what'], moreThan: ['what', 'role'] };
+const CHECK_HINT = '寫法見 DATA-FORMAT「隱藏天命」的判定，例如 法案通過 b06、迷霧 < 60、英鎊最多、英鎊 >= 40、英鎊多於 r5';
+
+// 「判定」一格的文字 → { check }（空白是 null）或 { error: 看不懂的原因 }。法案、階層編號存不存在交給 checkData。
+export function parseCheck(text) {
+  const plain = String(text ?? '').normalize('NFKC').replace(/[−–—]/g, '-').replace(/\s+/g, ' ').trim();
+  if (plain === '') return { check: null };
+  const bills = /^法案 ?(都)? ?(沒)? ?通過 ?(?:至少 ?(\d+) ?: ?)?(.+)$/.exec(plain);
+  if (bills) {
+    const [, all, not, least, list] = bills;
+    const ids = list.split(/[、,; ]+/).filter(Boolean);
+    if (ids.length === 0 || !ids.every((id) => ID_PATTERN.test(id))) return { error: `法案編號只能用英文字母、數字、- 和 _，用頓號隔開，現在是「${list}」` };
+    if (all && least) return { error: '「都」和「至少 N：」只能擇一' };
+    if (!all && !least && ids.length > 1) return { error: '好幾張法案要寫「法案都通過」「法案都沒通過」或「法案通過至少 N：」' };
+    return { check: { kind: 'bills', passed: !not, bills: ids, atLeast: least ? Number(least) : all ? ids.length : 1 } };
+  }
+  const fog = /^迷霧 ?(最高)? ?(>=|<=|>|<) ?(\d+)$/.exec(plain);
+  if (fog) return { check: { kind: 'compare', what: fog[1] ? 'fogMax' : 'fog', op: fog[2], value: Number(fog[3]) } };
+  const seat = /^(英鎊|影響力|手牌) ?(?:(最多)|(>=|<=|>|<) ?(\d+)|多於 ?(.+))$/.exec(plain);
+  if (seat) {
+    const what = CHECK_SEAT_WORDS[seat[1]];
+    if (seat[2]) return { check: { kind: 'most', what } };
+    if (seat[3]) return { check: { kind: 'compare', what, op: seat[3], value: Number(seat[4]) } };
+    if (!ID_PATTERN.test(seat[5])) return { error: `「多於」後面要寫階層編號（例如 r5），現在是「${seat[5]}」` };
+    return { check: { kind: 'moreThan', what, role: seat[5] } };
+  }
+  return { error: `看不懂這個寫法；${CHECK_HINT}` };
+}
+
+// 判定的檢查：沒有這一欄或 null 都可以；文字（匯入看不懂、原文留著的）報出看不懂的原因；結構要合乎上面的寫法，
+// 法案編號要是法案表有的、階層編號要是階層表有的。
+function checkDestinyCheck(record, { roleIds, billIds }, error, warn) {
+  const { check } = record;
+  if (check === undefined || check === null) return;
+  if (typeof check === 'string') {
+    const parsed = parseCheck(check);
+    error('check', parsed.error ? `看不懂${show(check)}：${parsed.error}` : `要用匯入工具轉成結構，${now(check)}`);
+    return;
+  }
+  if (!isPlainObject(check)) return error('check', `要是判定的結構，空白就填 null，${now(check)}`);
+  if (!CHECK_KINDS.includes(check.kind)) return error('check', `判定的 kind 不認得：${show(check.kind)}，只能是 ${CHECK_KINDS.join('／')}`);
+  checkUnknownFields(check, ['kind', ...CHECK_FIELDS[check.kind]], warn, 'check.');
+  const seatValue = () => {
+    if (!CHECK_SEAT_VALUES.includes(check.what)) error('check', `判定的 what 只能是 ${CHECK_SEAT_VALUES.join('／')}，${now(check.what)}`);
+  };
+  if (check.kind === 'bills') {
+    if (typeof check.passed !== 'boolean') error('check', `判定的 passed 要是 true 或 false，${now(check.passed)}`);
+    if (!Array.isArray(check.bills) || check.bills.length === 0 || !check.bills.every((id) => typeof id === 'string' && ID_PATTERN.test(id))) {
+      return error('check', `判定的 bills 要是法案編號的陣列，${now(check.bills)}`);
+    }
+    for (const id of check.bills) if (billIds && !billIds.has(id)) error('check', `找不到法案編號${show(id)}`);
+    if (new Set(check.bills).size !== check.bills.length) error('check', `判定的法案重複了，${now(check.bills)}`);
+    const count = check.bills.length;
+    if (!inRange(check.atLeast, 1, count)) error('check', `判定的「至少」要是 1–${count} 的整數（列了 ${count} 張法案），${now(check.atLeast)}`);
+  } else if (check.kind === 'compare') {
+    if (![...CHECK_FOG_VALUES, ...CHECK_SEAT_VALUES].includes(check.what)) {
+      error('check', `判定的 what 只能是 ${[...CHECK_FOG_VALUES, ...CHECK_SEAT_VALUES].join('／')}，${now(check.what)}`);
+    }
+    if (!CHECK_OPS.includes(check.op)) error('check', `判定的比較符號只能是 ${CHECK_OPS.join(' ')}，${now(check.op)}`);
+    if (!inRange(check.value, 0)) error('check', `判定的數值要是 0 以上的整數，${now(check.value)}`);
+  } else if (check.kind === 'most') {
+    seatValue();
+  } else {
+    seatValue();
+    if (typeof check.role !== 'string' || check.role === '') error('check', `判定的 role 要是階層編號，${now(check.role)}`);
+    else if (roleIds && !roleIds.has(check.role)) error('check', `找不到階層編號${show(check.role)}`);
+  }
 }
 
 // 教學提示：第一場第一回合各階段顯示的說明；同一階段有好幾筆時照編號順序顯示。
@@ -432,6 +532,8 @@ export function checkData(data) {
     lists[file] = data[file];
   }
   if (lists.roles) context.roleIds = checkIds('roles', lists.roles, result);
+  // 天命的判定要對到法案編號（法案本身的編號錯誤由下面的 checkIds 報）。
+  if (lists.bills) context.billIds = new Set(lists.bills.filter(isPlainObject).map((record) => record.id).filter((id) => typeof id === 'string' && ID_PATTERN.test(id)));
   if (lists.actions) {
     const categories = lists.actions.map((record) => (isPlainObject(record) ? record.category : null));
     context.categories = new Set(categories.filter((value) => typeof value === 'string' && value.trim() !== ''));

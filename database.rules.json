@@ -19,9 +19,9 @@
         "tables": {
           ".write": "auth != null && (newData.parent().child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
           "$table": {
-            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['round', 'phase', 'fog', 'updatedAt'])",
+            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['round', 'phase', 'fog', 'updatedAt']) && (data.child('phase').val() !== 'end' || (newData.child('phase').val() === 'end' && newData.child('round').val() === data.child('round').val())) && (newData.child('phase').val() !== 'end' || data.child('phase').val() === 'end' || (data.child('phase').val() === 'night' && newData.child('round').val() === data.child('round').val() && newData.parent().parent().child('games').child($table).child('final').exists() && !data.parent().parent().child('games').child($table).child('final').exists()))",
             "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
-            "phase": { ".validate": "newData.isString() && newData.val().matches(/^(sunrise|day|dusk|night)$/)" },
+            "phase": { ".validate": "newData.isString() && newData.val().matches(/^(sunrise|day|dusk|night|end)$/)" },
             "fog": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
             "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
             "$other": { ".validate": false }
@@ -64,7 +64,7 @@
         "games": {
           "$table": {
             ".write": "auth != null && newData.exists() && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
-            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['startedAt', 'seats', 'deckCount', 'discardCount']) && newData.parent().parent().child('tables').child($table).exists() && newData.parent().parent().child('deals').child($table).exists() && ((!data.child('version').exists() && newData.child('version').val() === 1) || newData.child('version').val() === data.child('version').val() + 1) && (!data.child('dusk').exists() || newData.child('dusk').exists()) && (!data.child('duskLog').exists() || newData.child('duskLog').exists()) && (!data.child('bills').exists() || newData.child('bills').exists()) && (!data.child('eventLog').exists() || newData.child('eventLog').exists()) && (!data.child('night').exists() || newData.child('night').exists()) && (!data.child('nightLog').exists() || newData.child('nightLog').exists())",
+            ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['startedAt', 'seats', 'deckCount', 'discardCount']) && newData.parent().parent().child('tables').child($table).exists() && newData.parent().parent().child('deals').child($table).exists() && ((!data.child('version').exists() && newData.child('version').val() === 1) || newData.child('version').val() === data.child('version').val() + 1) && (!data.child('dusk').exists() || newData.child('dusk').exists()) && (!data.child('duskLog').exists() || newData.child('duskLog').exists()) && (!data.child('bills').exists() || newData.child('bills').exists()) && (!data.child('eventLog').exists() || newData.child('eventLog').exists()) && (!data.child('night').exists() || newData.child('night').exists()) && (!data.child('nightLog').exists() || newData.child('nightLog').exists()) && (!data.child('final').exists() || newData.child('final').exists())",
             "startedAt": {
               ".validate": "newData.isNumber() && newData.val() <= now && (!data.exists() || newData.val() === data.val())"
             },
@@ -280,6 +280,46 @@
                 },
                 "$other": { ".validate": false }
               }
+            },
+            "endAfterRound": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() === newData.parent().parent().parent().child('tables').child($table).child('round').val()"
+            },
+            "final": {
+              ".validate": "newData.hasChildren(['round', 'endedAt', 'reason', 'scores']) && newData.parent().parent().parent().child('tables').child($table).child('phase').val() === 'end' && newData.child('round').val() === newData.parent().parent().parent().child('tables').child($table).child('round').val() && (newData.child('endedAt').val() === now || newData.child('endedAt').val() === data.child('endedAt').val()) && (data.exists() ? (newData.child('round').val() === data.child('round').val() && newData.child('reason').val() === data.child('reason').val()) : (root.child('rooms').child($code).child('tables').child($table).child('phase').val() === 'night' && newData.parent().child('night/round').val() === newData.child('round').val() && newData.parent().child('night/result').exists()))",
+              "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+              "endedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+              "reason": { ".validate": "newData.isString() && newData.val().matches(/^(sunset|maxRounds|host)$/)" },
+              "scores": {
+                ".validate": "newData.hasChildren()",
+                "$uid": {
+                  ".validate": "newData.parent().parent().parent().child('seats').child($uid).exists() && newData.hasChildren(['destiny', 'assets', 'sin', 'sinPenalty', 'total', 'rank']) && (data.exists() ? (newData.child('destiny/id').val() === data.child('destiny/id').val() && newData.child('destiny/text').val() === data.child('destiny/text').val() && newData.child('destiny/points').val() === data.child('destiny/points').val() && newData.child('assets/pounds').val() === data.child('assets/pounds').val() && newData.child('assets/influence').val() === data.child('assets/influence').val() && newData.child('assets/points').val() === data.child('assets/points').val() && newData.child('achievements/0').val() === data.child('achievements/0').val() && newData.child('achievements/1').val() === data.child('achievements/1').val() && newData.child('sin').val() === data.child('sin').val() && newData.child('sinPenalty').val() === data.child('sinPenalty').val()) : !data.parent().parent().exists())",
+                  "destiny": {
+                    ".validate": "newData.hasChildren(['points']) && newData.hasChild('id') === newData.hasChild('text')",
+                    "id": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+                    "text": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 500" },
+                    "done": { ".validate": "newData.isBoolean()" },
+                    "points": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                    "$other": { ".validate": false }
+                  },
+                  "assets": {
+                    ".validate": "newData.hasChildren(['pounds', 'influence', 'points'])",
+                    "pounds": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                    "influence": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                    "points": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                    "$other": { ".validate": false }
+                  },
+                  "achievements": {
+                    ".validate": "newData.hasChildren()",
+                    "$i": { ".validate": "$i.matches(/^[01]$/) && newData.isString() && newData.val().matches(/^(parliament|gear)$/)" }
+                  },
+                  "sin": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                  "sinPenalty": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+                  "total": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
+                  "rank": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+                  "$other": { ".validate": false }
+                }
+              },
+              "$other": { ".validate": false }
             },
             "bills": {
               "$billId": {

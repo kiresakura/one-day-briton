@@ -6,6 +6,10 @@
     "score": {
       "text": "終局時英鎊是全桌最多",
       "points": 3
+    },
+    "check": {
+      "kind": "most",
+      "what": "pounds"
     }
   },
   {
@@ -15,6 +19,7 @@
     "score": {
       "text": "範例條件（待定）",
       "points": null
-    }
+    },
+    "check": null
   }
 ]

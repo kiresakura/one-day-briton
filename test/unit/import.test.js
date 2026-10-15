@@ -34,6 +34,15 @@ const NIGHT_NOTES = [
   'settings.csv：沒有「分贓英鎊」這一列，用預設值 6',
   'settings.csv：沒有「分贓罪孽」這一列，用預設值 1',
 ];
+// 終局與計分（M9）的選填設定：試算表沒有這幾列時用的預設值與匯入時的提醒。
+const SCORE_DEFAULTS = { maxRounds: 12, scoreRates: { pounds: 5, influence: 3 }, achievementPoints: 3, sinPerPenalty: 2 };
+const SCORE_NOTES = [
+  'settings.csv：沒有「回合上限」這一列，用預設值 12',
+  'settings.csv：沒有「資產英鎊換算」這一列，用預設值 5',
+  'settings.csv：沒有「資產影響力換算」這一列，用預設值 3',
+  'settings.csv：沒有「公共成就分數」這一列，用預設值 3',
+  'settings.csv：沒有「罪孽扣分換算」這一列，用預設值 2',
+];
 
 test('effect text becomes structured effects', () => {
   assert.deepEqual(parseEffects('英鎊+5@自己; 迷霧+3', 'self'), {
@@ -254,14 +263,16 @@ test('settings rows become one object in a fixed order', () => {
     responseSeconds: 5,
     sunriseEvents: 1,
     ...NIGHT_DEFAULTS,
+    ...SCORE_DEFAULTS,
   });
-  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds', 'sunriseEvents', ...Object.keys(NIGHT_DEFAULTS)]);
+  assert.deepEqual(Object.keys(sheet.data), ['startingHand', 'reminderSeconds', 'fogThresholds', 'responseSeconds', 'sunriseEvents', ...Object.keys(NIGHT_DEFAULTS), ...Object.keys(SCORE_DEFAULTS)]);
   assert.deepEqual(sheet.fieldRows, { startingHand: 3, 'reminderSeconds.day': 4, fogThresholds: 2 });
   assert.deepEqual(sheet.notes, [
     'settings.csv 第 5 列：不認得的設定項目「不知道的項目」，略過',
     'settings.csv：沒有「響應等待秒數」這一列，用預設值 5',
     'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1',
     ...NIGHT_NOTES,
+    ...SCORE_NOTES,
   ]);
   assert.deepEqual(convertSheet('settings', '項目,值\n迷霧門檻,"30, 60、90"\n').data.fogThresholds, [30, 60, 90]);
   assert.match(convertSheet('settings', '項目,值\n起始手牌,4\n起始手牌,5\n').errors[0], /第 3 列：設定項目「起始手牌」和第 2 列重複/);
@@ -272,11 +283,11 @@ test('settings rows become one object in a fixed order', () => {
 
 test('optional settings use their default when the row is missing; the original items stay required', () => {
   const withRow = convertSheet('settings', '項目,值\n響應等待秒數,８\n日出一般事件張數,2\n');
-  assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, NIGHT_NOTES]);
+  assert.deepEqual([withRow.data.responseSeconds, withRow.fieldRows.responseSeconds, withRow.notes], [8, 2, [...NIGHT_NOTES, ...SCORE_NOTES]]);
   assert.deepEqual([withRow.data.sunriseEvents, withRow.fieldRows.sunriseEvents], [2, 3]);
   const withoutRow = convertSheet('settings', '項目,值\n起始手牌,4\n');
   assert.deepEqual([withoutRow.data.responseSeconds, withoutRow.data.sunriseEvents], [5, 1]);
-  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5', 'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1', ...NIGHT_NOTES]);
+  assert.deepEqual(withoutRow.notes, ['settings.csv：沒有「響應等待秒數」這一列，用預設值 5', 'settings.csv：沒有「日出一般事件張數」這一列，用預設值 1', ...NIGHT_NOTES, ...SCORE_NOTES]);
   const fields = checkData({ settings: withoutRow.data }).errors.map((issue) => issue.field);
   assert.equal(fields.length, 12);
   assert.ok(!fields.includes('responseSeconds') && !fields.includes('sunriseEvents') && !fields.includes('startingHand'));

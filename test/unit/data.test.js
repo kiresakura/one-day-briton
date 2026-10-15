@@ -66,6 +66,10 @@ test('settings hold the agreed provisional values', () => {
     gambleMedicalFee: 2,
     splitPounds: 6,
     splitSin: 1,
+    maxRounds: 12,
+    scoreRates: { pounds: 5, influence: 3 },
+    achievementPoints: 3,
+    sinPerPenalty: 2,
   });
   assert.equal(sample.roles.length, 6);
   for (const role of sample.roles) assert.equal(role.salary, 5);

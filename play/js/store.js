@@ -1,5 +1,5 @@
 // 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌（含日出一般事件與手牌上限）、
-// 白晝出牌與響應卡的請求與結算、黃昏的投票與揭曉、迷霧事件、黑夜的選擇與揭曉、挑棄牌、伺服器時間。
+// 白晝出牌與響應卡的請求與結算、黃昏的投票與揭曉、迷霧事件、黑夜的選擇與揭曉、挑棄牌、終局與計分、伺服器時間。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -26,11 +26,14 @@ import {
 import { config } from './config.js';
 import {
   DUSK_GRACE_MS,
+  END_PHASE,
   NIGHT_GRACE_MS,
   checkSeating,
   duskSettleAt,
   duskStage,
   duskStep,
+  endGame,
+  judgeScores,
   nextEventIndex,
   nightSettings,
   nightSettleAt,
@@ -41,6 +44,7 @@ import {
   settlePending,
   settleSunrise,
   settleSunriseEvents,
+  shouldEnd,
   startGame,
   submittedChoices,
   submittedCount,
@@ -62,7 +66,8 @@ import {
 
 // code：invalid-code、invalid-name、invalid-table、room-not-found、permission-denied、
 // cannot-start（人數不對或這一桌已經推進過）、broken-game（局面缺資料）、
-// cannot-set-start（已經有人出過牌，或第一張牌正在等響應，不能再指定起始玩家）
+// cannot-set-start（已經有人出過牌，或第一張牌正在等響應，不能再指定起始玩家）、
+// night-not-revealed（該算分了，但黑夜還沒揭曉）、game-over（這一桌已經算分了）、no-final（這一桌還沒算分）
 export class StoreError extends Error {
   constructor(code, message) {
     super(message);
@@ -268,6 +273,7 @@ export async function advanceTable(session, code, table, expected) {
       (current) => {
         if (current === null) return null; // 本機還沒有這一桌的資料：照原樣送出，伺服器比對後會帶最新資料重跑
         if (current.round !== expected.round || current.phase !== expected.phase) return undefined; // 放棄
+        if (current.phase === END_PHASE) return undefined; // 終局後不再推進（規則也擋）
         return { ...current, ...nextStep(current), updatedAt: serverTimestamp() };
       },
       { applyLocally: false },
@@ -624,7 +630,7 @@ export async function settleRequest(session, code, table, uid, data, random) {
     const room = await readRoom(session, code);
     const tableState = room.tables?.[table];
     const game = room.games?.[table];
-    if (!tableState || !game?.seats?.[uid]) return none;
+    if (!tableState || tableState.phase === END_PHASE || !game?.seats?.[uid]) return none;
     if (game.pending) return { outcome: 'deferred', reason: null };
     const request = await readRequest(session, code, uid);
     if (!(request?.seq > (game.lastSeq?.[uid] ?? 0))) return none;
@@ -663,7 +669,7 @@ export async function settleWindow(session, code, table, data, random) {
     const room = await readRoom(session, code);
     const tableState = room.tables?.[table];
     const game = room.games?.[table];
-    if (!tableState || !game?.pending) return none;
+    if (!tableState || tableState.phase === END_PHASE || !game?.pending) return none;
     const now = clock();
     const requests = await readRequests(session, code);
     const pile = await readPile(session, code, table, '只有主持端可以結算響應');
@@ -793,7 +799,7 @@ export async function settleDusk(session, code, table, data, random) {
     const room = await readRoom(session, code);
     const tableState = room.tables?.[table];
     const game = room.games?.[table];
-    if (!tableState || !game?.seats) return { outcome: 'none', result: null };
+    if (!tableState || tableState.phase === END_PHASE || !game?.seats) return { outcome: 'none', result: null };
     const stage = duskStage(game.dusk, tableState.round);
     if (stage === 'adjourned' || stage === 'revealed' || (stage === 'none' && tableState.phase !== 'dusk')) return { outcome: 'none', result: null };
     const now = clock();
@@ -962,7 +968,7 @@ export async function settleNight(session, code, table, data, random) {
     const room = await readRoom(session, code);
     const tableState = room.tables?.[table];
     const game = room.games?.[table];
-    if (!tableState || !game?.seats) return { outcome: 'none', result: null };
+    if (!tableState || tableState.phase === END_PHASE || !game?.seats) return { outcome: 'none', result: null };
     const stage = nightStage(game.night, tableState.round);
     if (stage === 'revealed' || (stage === 'none' && tableState.phase !== 'night')) return { outcome: 'none', result: null };
     const now = clock();
@@ -1019,11 +1025,131 @@ export async function revealNight(session, code, table) {
   }
 }
 
+// ---- 終局與計分（M9） ----
+// 主持端在黑夜（揭曉後）按「下一階段」時，該終局（game.js 的 shouldEnd：日落鐘到了、到了回合上限、主持端按了「這回合結束後算分」）
+// 就不推進到下一回合日出，改成一筆寫入：該桌 phase＝end、games/{n}/final（分數、名次、每個人的天命與是否達成，天命這時才公開）、
+// version＋1；這一筆不做日出棄牌、不領薪抽牌、不翻事件，挑好的棄牌不用。英鎊、影響力、罪孽讀座位的現值，天命從私密資料讀（伺服器），
+// 判定照天命的 check。「判定」空白的天命由主持端勾（judgeDestiny）。各桌各自結束。
+
+// 資料庫不存 null 與空的陣列、物件：寫入前拿掉（final 裡沒有天命的 id、text，待判定的 done，沒有成就的 achievements）。
+const compact = (value) =>
+  JSON.parse(JSON.stringify(value), (key, item) => {
+    if (item === null) return undefined;
+    if (Array.isArray(item) && item.length === 0) return undefined;
+    if (item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 0) return undefined;
+    return item;
+  });
+
+// 主持端讀成的終局局面（game.js 的 endGame）：回合、座位、各人的天命編號、迷霧值與本場最高、法案結果、出牌紀錄（齒輪大師）。
+function endStateOf(table, game, records) {
+  return {
+    round: table.round,
+    seats: game.seats,
+    destinies: Object.fromEntries(Object.entries(records).map(([uid, record]) => [uid, record.destiny ?? null])),
+    fog: table.fog,
+    fogMax: game.fogMax,
+    bills: game.bills ?? {},
+    log: game.log ?? {},
+  };
+}
+
+// 主持端的「下一階段」。expected 是畫面上這一刻的 { round, phase }（同 advanceTable）。黑夜以外照舊推進；黑夜時先看要不要終局，
+// 要的話寫終局那一筆，不要就照舊推進（推進到新回合日出後由呼叫的一端接著發牌）。data 是卡牌資料（設定、天命）。
+// 回傳 { advanced, ended, reason, table }：ended 是 true＝這次寫了終局（reason 是 sunset、maxRounds 或 host），advanced 是 false＝這次
+// 沒有寫入（資料庫已經不是 expected，例如另一台主持端先推進或先算分了）。黑夜還沒揭曉卻該算分時報錯（畫面已經擋住「下一階段」）。
+// 兩台主持端同時算分只成一筆（version 只收＋1；規則另外擋已經終局的桌），被拒的一方等局面變了重讀，看到已經終局就回 advanced: false。
+export async function advanceOrEnd(session, code, table, expected, data) {
+  const advance = async () => ({ ...(await advanceTable(session, code, table, expected)), ended: false, reason: null });
+  if (expected.phase !== 'night') return advance();
+  const clock = serverClock(session);
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const tableState = room.tables?.[table];
+    const game = room.games?.[table];
+    if (!tableState || tableState.round !== expected.round || tableState.phase !== expected.phase) {
+      return { advanced: false, ended: false, reason: null, table: tableState ?? null };
+    }
+    const reason = game?.seats ? shouldEnd({ round: tableState.round, startedAt: game.startedAt, endAfterRound: game.endAfterRound }, data.settings, clock()) : null;
+    if (!reason) return advance();
+    if (nightStage(game.night, tableState.round) !== 'revealed') throw new StoreError('night-not-revealed', '黑夜還沒揭曉，揭曉後才能算分');
+    await readPile(session, code, table, '只有主持端可以算分');
+    const { records } = await readPrivates(session, code, Object.keys(game.seats));
+    const final = endGame(endStateOf(tableState, game, records), data, reason);
+    const version = game.version ?? 0;
+    try {
+      await update(ref(session.db), {
+        [`rooms/${code}/tables/${table}/phase`]: END_PHASE,
+        [`rooms/${code}/tables/${table}/updatedAt`]: serverTimestamp(),
+        [`rooms/${code}/games/${table}/version`]: version + 1,
+        [`rooms/${code}/games/${table}/final`]: { ...compact(final), endedAt: serverTimestamp() },
+      });
+      return { advanced: true, ended: true, reason, table: { ...tableState, phase: END_PHASE } };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const changed = (value) =>
+        (value?.games?.[table]?.version ?? 0) !== version || value?.tables?.[table]?.round !== tableState.round || value?.tables?.[table]?.phase !== tableState.phase;
+      const seen = await waitFor(session, `rooms/${code}`, changed);
+      if (seen === undefined || attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '算分沒有成功，請再按一次');
+    }
+  }
+}
+
+// 「這回合結束後算分」：on 是 true 時在 games/{n}/endAfterRound 寫下目前的回合（這一回合黑夜揭曉後按「下一階段」就算分），
+// false 時刪掉（取消）。帶 version＋1；跟自動化的寫入撞在一起時等局面變了再試。回傳 { endAfterRound }：寫入後的值（取消是 null）。
+export async function setEndAfterRound(session, code, table, on) {
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const tableState = room.tables?.[table];
+    const game = room.games?.[table];
+    if (!tableState || !game) throw new StoreError('invalid-table', `第 ${table} 桌還沒開局`);
+    if (tableState.phase === END_PHASE) throw new StoreError('game-over', '這一桌已經算分了');
+    const value = on ? tableState.round : null;
+    if ((game.endAfterRound ?? null) === value) return { endAfterRound: value };
+    const version = game.version ?? 0;
+    try {
+      await update(ref(session.db, `rooms/${code}/games/${table}`), { endAfterRound: value, version: version + 1 });
+      return { endAfterRound: value };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const seen = await waitFor(session, `rooms/${code}/games/${table}`, (current) => (current?.version ?? 0) !== version);
+      if (seen === undefined || attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '沒有改成，請再按一次');
+    }
+  }
+}
+
+// 主持端勾天命（「判定」空白的那幾張）：uid 的 final/scores/{uid}/destiny/done 改成 done（true＝達成、false＝沒達成、null＝改回待判定），
+// 總分與全桌的名次跟著改（game.js 的 judgeScores），只寫 done 與有變的 total、rank，帶 version＋1。回傳 { changed }。
+export async function judgeDestiny(session, code, table, uid, done) {
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const game = room.games?.[table];
+    const scores = game?.final?.scores;
+    if (!scores?.[uid]) throw new StoreError('no-final', '這一桌還沒算分');
+    if ((scores[uid].destiny?.done ?? null) === done) return { changed: false };
+    const next = judgeScores(scores, uid, done);
+    const version = game.version ?? 0;
+    const path = `rooms/${code}/games/${table}/final/scores`;
+    const writes = { [`rooms/${code}/games/${table}/version`]: version + 1, [`${path}/${uid}/destiny/done`]: done };
+    for (const [other, score] of Object.entries(next)) {
+      if (score.total !== scores[other].total) writes[`${path}/${other}/total`] = score.total;
+      if (score.rank !== scores[other].rank) writes[`${path}/${other}/rank`] = score.rank;
+    }
+    try {
+      await update(ref(session.db), writes);
+      return { changed: true };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const seen = await waitFor(session, `rooms/${code}/games/${table}`, (current) => (current?.version ?? 0) !== version);
+      if (seen === undefined || attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '天命的判定沒有寫成，請再按一次');
+    }
+  }
+}
+
 // 主持端自動結算：盯著房間與入座玩家的請求，有還沒處理的請求就交給 settleRequest；有牌在等響應的桌，看到新的響應或
 // 到了 responseSettleAt（伺服器時間，本機計時器叫醒）就整桌交給 settleWindow，那一桌的出牌與結束這一輪先等著。
 // 黃昏（M6）：進黃昏還沒翻法案、看到已送出的人數變了、或到了截止＋緩衝（本機計時器叫醒），就整桌交給 settleDusk。
 // 黑夜（M8）：進黑夜還沒開、看到已送出的人數變了、或到了截止＋緩衝，就整桌交給 settleNight（同黃昏）。
-// 畫面不用按。多台主持端可以同時開著，同一筆請求只會套用一次。請求、票與黑夜的選擇都是逐人訂閱（requests/{code}/{uid}、
+// 終局（階段 end）的桌什麼都不做：不開黑夜、不重試、不報錯（M9）。畫面不用按。多台主持端可以同時開著，同一筆請求只會套用一次。請求、票與黑夜的選擇都是逐人訂閱（requests/{code}/{uid}、
 // votes/{code}/{uid}、nights/{code}/{uid}），settleWindow、settleDusk 與 settleNight 讀整房時才會真的問伺服器。
 // onError(error) 在結算失敗時呼叫。回傳停止的函式。
 export function startSettling(session, code, data, { random, onError = () => {} } = {}) {
@@ -1086,7 +1212,7 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     const work = [];
     for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
       const game = room.games?.[table];
-      if (!game?.seats) continue;
+      if (!game?.seats || room.tables?.[table]?.phase === END_PHASE) continue; // 終局的桌什麼都不做
       const dusk = duskWork(table, game);
       if (dusk) work.push(dusk);
       const night = nightWork(table, game);
@@ -1119,6 +1245,7 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     const due = [];
     for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
       const game = room.games?.[table];
+      if (room.tables?.[table]?.phase === END_PHASE) continue;
       if (game?.pending) due.push(responseSettleAt(game.pending));
       if (game?.seats && duskStage(game.dusk, room.tables?.[table]?.round) === 'closing') due.push(duskSettleAt(game.dusk));
       if (game?.seats && nightStage(game.night, room.tables?.[table]?.round) === 'closing') {

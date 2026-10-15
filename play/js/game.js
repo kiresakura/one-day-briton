@@ -1,5 +1,5 @@
 // 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），白晝的輪流出牌、響應卡與結算，黃昏的法案投票，
-// 事件（日出一般事件、迷霧事件），以及黑夜（豪賭、分贓、睡覺）與手牌上限。
+// 事件（日出一般事件、迷霧事件），黑夜（豪賭、分贓、睡覺）與手牌上限，以及終局（日落鐘）與計分。
 // 不碰網路、不碰畫面，瀏覽器與 Node 測試共用同一份。輸入資料檔的內容與目前的局面，輸出要寫入的新局面。
 // 亂數一律從注入的來源拿（預設是 crypto.getRandomValues），測試用固定種子。
 //
@@ -81,11 +81,20 @@ export function assignSeats(uids, roles, random = cryptoRandom) {
 }
 
 // 隱藏天命：從自己階層的天命隨機挑；沒有就從不屬於任何階層的挑；再沒有就是 null。used 裡的（同桌已發出的）不再發。
-export function pickDestiny(destinies, role, used = new Set(), random = cryptoRandom) {
+// seatedRoles（這一桌有人坐的階層）有給時，「判定」提到這桌沒人坐的階層的（目前只有「多於 rN」）先不發，從其他張挑；
+// 這樣過濾後沒得挑，就照原本的挑法（企劃 10/15）。沒有判定的資料不會被過濾，挑的結果與亂數用量都跟沒給 seatedRoles 一樣。
+export function pickDestiny(destinies, role, used = new Set(), random = cryptoRandom, seatedRoles = null) {
   const free = destinies.filter((destiny) => !used.has(destiny.id));
   const own = free.filter((destiny) => destiny.role === role);
   const pool = own.length ? own : free.filter((destiny) => destiny.role === null);
-  return pool.length ? pool[randomBelow(pool.length, random)].id : null;
+  const fits = seatedRoles ? pool.filter((destiny) => checkRoles(destiny.check).every((id) => seatedRoles.has(id))) : pool;
+  const choices = fits.length ? fits : pool;
+  return choices.length ? choices[randomBelow(choices.length, random)].id : null;
+}
+
+// 判定裡提到的階層（目前只有「多於 rN」）。
+export function checkRoles(check) {
+  return check?.kind === 'moreThan' ? [check.role] : [];
 }
 
 // 從牌庫頂（陣列開頭）抽 count 張。牌庫不夠時先抽完剩下的，再把棄牌堆洗回成新牌庫接著抽；兩邊都空就不抽了。
@@ -127,14 +136,17 @@ export function sunrise(state, data, random = cryptoRandom) {
 }
 
 // 開局：入座、分階層、發天命、洗牌庫、發起始手牌與資源；firstSunrise 為 true 時接著做第 1 回合日出。
+// 座位先排好，再照座位發天命（避開判定提到這桌沒人坐的階層的天命，見 pickDestiny）。
 export function startGame(data, uids, { random = cryptoRandom, firstSunrise = FIRST_SUNRISE_PAYS } = {}) {
   const { settings } = data;
   let deck = shuffle(buildDeck(data.actions), random);
   let discard = [];
   const used = new Set();
   const state = { seats: {}, hands: {}, destinies: {}, deck, discard };
-  for (const { uid, order, role } of assignSeats(uids, data.roles, random)) {
-    const destiny = pickDestiny(data.destinies, role, used, random);
+  const seating = assignSeats(uids, data.roles, random);
+  const seatedRoles = new Set(seating.map(({ role }) => role));
+  for (const { uid, order, role } of seating) {
+    const destiny = pickDestiny(data.destinies, role, used, random, seatedRoles);
     if (destiny) used.add(destiny);
     const result = draw({ deck, discard }, settings.startingHand, random);
     ({ deck, discard } = result);
@@ -1243,4 +1255,184 @@ export function settleSunrise(state, picks, data, random = cryptoRandom) {
   const paid = sunrise(limited.state, data, random);
   const { state: next, events } = settleSunriseEvents(paid, data, random);
   return { state: next, events, discards: limited.discards };
+}
+
+// ---- 終局與計分（M9） ----
+// 日落鐘（企劃 10/15 第 10 題暫定）：從該桌主持端按「開始」（games/{n}/startedAt，伺服器時間）起算 settings.sunsetMinutes 分鐘。
+// 主持端在黑夜（揭曉後）按「下一階段」時，日落鐘到了、已經是第 maxRounds 回合（安全上限），或主持端先前按了「這回合結束後算分」
+// （endAfterRound 等於目前回合），就不進下一回合日出，改進終局（shouldEnd）：同一筆寫入把該桌的階段改成 end、寫下 final（endGame），
+// 不做日出棄牌、不領薪抽牌、不翻事件。各桌各自結束。
+// 計分（企劃 10/15 第 9 題，計分值 10/15 定案），每人：
+//   天命      達成得天命的 score.points，沒達成 0。判定照天命的 check（destinyDone）；check 是 null（「判定」空白）的由主持端勾
+//             「達成／沒達成」（judgeScores），勾之前算 0 分
+//   資產      英鎊每 scoreRates.pounds 點 1 分、影響力每 scoreRates.influence 點 1 分，各自捨去
+//   公共成就  各 achievementPoints 分，同分都給：議會之聲（parliament）＝ aligned 最多的人（最多是 0 就沒人拿）；齒輪大師（gear）＝
+//             本場打出過最高級連鎖的人（至少 2 級；被抵銷的那張不算），從全場保留的出牌紀錄 log 算
+//   罪孽      每 sinPerPenalty 點扣 1 分（捨去）
+//   總分＝天命＋資產＋公共成就－罪孽扣分；名次：總分高的在前，同分比英鎊，再同就並列（例如 1、1、3）。
+// final＝{ round, endedAt, reason: 'sunset' | 'maxRounds' | 'host', scores: { uid: 分數 } }，endedAt 由寫入的一端補上伺服器時間。
+// 分數＝{ destiny: { id, text, done, points }, assets: { pounds, influence, points }, achievements: ['parliament' | 'gear'], sin, sinPenalty,
+//        total, rank }：destiny.points 是這張天命值幾分（done 是 true 才算進 total），done 是 true／false／null（待主持人判定）；
+//        沒有天命的人 id、text 是 null、done 是 false。assets.points、sinPenalty 是換算出來的分數。英鎊、影響力、罪孽讀座位的現值
+//        （黑夜的變化與分贓的罪孽已經加進座位）。
+
+export const END_PHASE = 'end';
+export const END_REASONS = ['sunset', 'maxRounds', 'host'];
+export const ACHIEVEMENTS = ['parliament', 'gear'];
+// 齒輪大師至少要打出過幾級的連鎖。
+export const GEAR_MASTER_LEVEL = 2;
+const MINUTE_MS = 60_000;
+
+function settingOf(settings, key) {
+  const value = key.split('.').reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), settings);
+  return value ?? SETTINGS.find((setting) => setting.key === key).default;
+}
+
+// 終局與計分的數值（資料檔沒寫的選填設定用 data.js 的預設值；sunsetMinutes 是必填）。
+export function scoreSettings(settings) {
+  return {
+    sunsetMinutes: settings?.sunsetMinutes,
+    maxRounds: settingOf(settings, 'maxRounds'),
+    poundsRate: settingOf(settings, 'scoreRates.pounds'),
+    influenceRate: settingOf(settings, 'scoreRates.influence'),
+    achievementPoints: settingOf(settings, 'achievementPoints'),
+    sinPerPenalty: settingOf(settings, 'sinPerPenalty'),
+  };
+}
+
+// 日落鐘：從 startedAt 到 now（都是伺服器時間）過了多久、還剩多久（毫秒），到了沒（剛好 sunsetMinutes 分鐘算到了）。
+export function sunsetClock(startedAt, settings, now) {
+  const length = scoreSettings(settings).sunsetMinutes * MINUTE_MS;
+  const elapsed = Math.max(0, now - startedAt);
+  return { elapsed, remaining: Math.max(0, length - elapsed), passed: elapsed >= length };
+}
+
+// 這一回合結束時（黑夜揭曉後按「下一階段」）要不要終局：回傳原因 sunset（日落鐘到了）、maxRounds（已經是第 maxRounds 回合）、
+// host（主持端按了「這回合結束後算分」），不用就是 null；同時成立時照這個順序取第一個。state＝{ round, startedAt, endAfterRound }
+// （startedAt、endAfterRound 在 games/{n}），now 是伺服器時間。玩家畫面也用它顯示「這是最後一回合」。
+export function shouldEnd({ round, startedAt, endAfterRound }, settings, now) {
+  if (typeof startedAt === 'number' && sunsetClock(startedAt, settings, now).passed) return 'sunset';
+  if (round >= scoreSettings(settings).maxRounds) return 'maxRounds';
+  if (endAfterRound === round) return 'host';
+  return null;
+}
+
+function compareBy(left, op, right) {
+  switch (op) {
+    case '>':
+      return left > right;
+    case '>=':
+      return left >= right;
+    case '<':
+      return left < right;
+    case '<=':
+      return left <= right;
+    default:
+      throw new RangeError(`這一版不認得這個比較符號：${op}`);
+  }
+}
+
+function seatValue(seat, what) {
+  return (what === 'hand' ? seat?.handCount : seat?.[what]) ?? 0;
+}
+
+// 天命的判定（check 的寫法見 data.js）對 uid 在終局時成不成立：true／false；check 是 null（「判定」空白）時是 null，待主持人判定。
+// state 要有 seats、fog（該桌終局時的迷霧值）、fogMax（本場最高）、bills（每張法案最後一次的結果；沒被表決的沒有，算沒通過）。
+export function destinyDone(check, uid, state) {
+  if (!check) return null;
+  const seats = state.seats ?? {};
+  switch (check.kind) {
+    case 'bills':
+      return check.bills.filter((id) => (state.bills?.[id] === 'passed') === check.passed).length >= check.atLeast;
+    case 'compare': {
+      const fog = state.fog ?? 0;
+      const value = check.what === 'fog' ? fog : check.what === 'fogMax' ? Math.max(state.fogMax ?? 0, fog) : seatValue(seats[uid], check.what);
+      return compareBy(value, check.op, check.value);
+    }
+    case 'most': {
+      const mine = seatValue(seats[uid], check.what);
+      return Object.values(seats).every((seat) => seatValue(seat, check.what) <= mine);
+    }
+    case 'moreThan': {
+      const mine = seatValue(seats[uid], check.what);
+      return Object.values(seats)
+        .filter((seat) => seat.role === check.role)
+        .every((seat) => mine > seatValue(seat, check.what));
+    }
+    default:
+      throw new RangeError(`這一版不認得這種判定：${check.kind}`);
+  }
+}
+
+// 每人本場打出過的最高連鎖級數，從出牌紀錄（games/{n}/log，全場保留）算；被抵銷的那張不算。回傳 { uid: 級數 }，沒出過牌的人沒有。
+export function maxChains(log) {
+  const best = {};
+  for (const entry of Object.values(log ?? {})) {
+    if (!entry || typeof entry !== 'object' || entry.canceled === true || !Number.isInteger(entry.level)) continue;
+    best[entry.by] = Math.max(best[entry.by] ?? 0, entry.level);
+  }
+  return best;
+}
+
+// 公共成就，同分都給：議會之聲＝ aligned 最多的人（至少 1）；齒輪大師＝最高連鎖的人（至少 GEAR_MASTER_LEVEL 級）。
+// 回傳 { uid: [成就…] }（照 ACHIEVEMENTS 的順序，沒有是 []）。
+export function achievementsOf(seats, log) {
+  const uids = Object.keys(seats ?? {});
+  const chains = maxChains(log);
+  const winners = (value, minimum) => {
+    const best = Math.max(0, ...uids.map(value));
+    return new Set(best >= minimum ? uids.filter((uid) => value(uid) === best) : []);
+  };
+  const parliament = winners((uid) => seats[uid].aligned ?? 0, 1);
+  const gear = winners((uid) => chains[uid] ?? 0, GEAR_MASTER_LEVEL);
+  return Object.fromEntries(uids.map((uid) => [uid, ACHIEVEMENTS.filter((key) => (key === 'parliament' ? parliament : gear).has(uid))]));
+}
+
+// 天命那一項算進總分的分數：達成（done 是 true）才算。
+export function destinyPoints(destiny) {
+  return destiny?.done === true ? (destiny.points ?? 0) : 0;
+}
+
+// 名次：總分高的在前，同分比英鎊（assets.pounds），再同就並列。回傳新的 scores，每人的 rank 換成算好的。
+export function rankScores(scores) {
+  const entries = Object.entries(scores ?? {});
+  const ahead = (score, other) => other.total > score.total || (other.total === score.total && (other.assets?.pounds ?? 0) > (score.assets?.pounds ?? 0));
+  return Object.fromEntries(entries.map(([uid, score]) => [uid, { ...score, rank: 1 + entries.filter(([, other]) => ahead(score, other)).length }]));
+}
+
+// 終局的分數（見上方說明），照座位順序。state 要有 seats、destinies（{ uid: 天命編號或 null }，從私密資料讀的）、fog、fogMax、bills、log。
+export function scoreGame(state, data) {
+  const rules = scoreSettings(data.settings);
+  const awards = achievementsOf(state.seats, state.log);
+  const scores = {};
+  for (const [uid, seat] of seatsInOrder(state.seats)) {
+    const id = state.destinies?.[uid] ?? null;
+    const card = id === null ? null : ((data.destinies ?? []).find((destiny) => destiny.id === id) ?? null);
+    const destiny = { id, text: card?.text ?? null, done: card ? destinyDone(card.check ?? null, uid, state) : false, points: card?.score?.points ?? 0 };
+    const pounds = seat.pounds ?? 0;
+    const influence = seat.influence ?? 0;
+    const assets = { pounds, influence, points: Math.floor(pounds / rules.poundsRate) + Math.floor(influence / rules.influenceRate) };
+    const achievements = awards[uid];
+    const sin = seat.sin ?? 0;
+    const sinPenalty = Math.floor(sin / rules.sinPerPenalty);
+    const total = destinyPoints(destiny) + assets.points + achievements.length * rules.achievementPoints - sinPenalty;
+    scores[uid] = { destiny, assets, achievements, sin, sinPenalty, total, rank: 0 };
+  }
+  return rankScores(scores);
+}
+
+// 終局那一筆的 final（endedAt 以外）：{ round, reason, scores }。state 是 scoreGame 要的局面加上 round。
+export function endGame(state, data, reason) {
+  if (!END_REASONS.includes(reason)) throw new RangeError(`不認得的終局原因：${reason}`);
+  return { round: state.round, reason, scores: scoreGame(state, data) };
+}
+
+// 主持端勾天命：uid 的 destiny.done 改成 done（true／false；null＝改回待判定），總分只換天命那一項，名次全桌重排。
+// 回傳新的 scores，不改傳進來的。scores 可以是從資料庫讀回來的（null 與空陣列已經不見）。
+export function judgeScores(scores, uid, done) {
+  const score = scores?.[uid];
+  if (!score) throw new RangeError(`沒有這個人的分數：${uid}`);
+  const destiny = { ...score.destiny, done };
+  const total = score.total - destinyPoints(score.destiny) + destinyPoints(destiny);
+  return rankScores({ ...scores, [uid]: { ...score, destiny, total } });
 }
