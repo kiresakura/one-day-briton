@@ -97,6 +97,15 @@ test('the check needs known bills and roles and a well-formed structure', () => 
   assert.deepEqual(problems('迷霧 < 60'), ['要用匯入工具轉成結構，現在是「迷霧 < 60」']);
   assert.deepEqual(problems(5), ['要是判定的結構，空白就填 null，現在是 5']);
   assert.deepEqual(warnings({ kind: 'most', what: 'hand', note: 'x' }), ['警告｜destinies.json｜d09｜check.note｜不認得的欄位，遊戲不會用到']);
+  // 「多於」自己的階層：拿到的人就坐那個階層，一定算達成，提醒一聲。
+  const own = { id: 'd10', role: 'r1', text: '天命', score: { text: '條件', points: 10 }, check: { kind: 'moreThan', what: 'pounds', role: 'r1' } };
+  assert.deepEqual(checkData({ roles: sample.roles, destinies: [own] }).warnings.map((issue) => formatIssue(issue, '警告')), [
+    '警告｜destinies.json｜d10｜check（判定）｜「多於 r1」比的是這張天命自己的階層：拿到的人就坐 r1，沒有別人可以比，終局時一定算達成',
+  ]);
+  // 天命文字最多 500 字（終局時寫進公開的結算，規則只收這麼長）。
+  const long = (length) => checkData({ destinies: [{ ...destiny(null), text: '字'.repeat(length) }] }).errors.map((issue) => formatIssue(issue));
+  assert.deepEqual(long(500), []);
+  assert.deepEqual(long(501), ['錯誤｜destinies.json｜d09｜text（天命文字）｜最多 500 個字（終局時會寫進公開的結算），現在有 501 個字']);
   // 沒有法案或階層的資料只檢查格式，不對編號。
   assert.deepEqual(checkData({ destinies: [destiny({ kind: 'bills', passed: false, bills: ['b77'], atLeast: 1 })] }).errors, []);
 });

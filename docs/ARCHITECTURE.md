@@ -153,12 +153,13 @@
 - 什麼時候終局（日落鐘，企劃 10/15 暫定；回合上限是程式的安全值）：主持端在黑夜（揭曉後）按「下一階段」時（`store.js` 的 `advanceOrEnd`），`game.js` 的 `shouldEnd` 照這個順序看：從該桌按「開始」的伺服器時間（`games/{n}/startedAt`）起算過了 `sunsetMinutes`（75）分鐘（剛好 75 分鐘算到了）→ `sunset`；已經是第 `maxRounds`（12）回合 → `maxRounds`；主持端先前按了「這回合結束後算分」（`endAfterRound` 等於目前回合）→ `host`。有一項成立就**不進下一回合日出**，改成終局；都不成立就照舊推進、發牌。各桌各自結束，不等別桌。「現在幾點」用主持端估的伺服器時間（本機時間＋`.info/serverTimeOffset`）。
 - 終局那一筆（一筆多路徑寫入）：`tables/{n}/phase＝end`（回合不變）、`games/{n}/version＋1`、`games/{n}/final`。不做日出棄牌、不領薪抽牌、不翻事件，`/discards` 裡挑好的棄牌不用（手牌是終局當下的張數）。英鎊、影響力、罪孽讀座位的現值（黑夜的變化與分贓的罪孽已經加進座位）；各人的天命從伺服器讀 `/private/{code}/{uid}`（逐人 `get`，不在整房 `/private` 掛訂閱），寫進公開的 `final`，**這時才公開**。黑夜還沒揭曉時不能終局（畫面停用「下一階段」，`advanceOrEnd` 報錯，規則也擋）。兩台主持端同時按，靠 `version` 與規則（已經是 `end` 的桌、`final` 的時間）只成一筆，被拒的一方看到已經終局就停。
 - 計分（`game.js` 的 `scoreGame`；企劃 10/15 第 9 題，計分值 10/15 定案），每人：
-  - 天命：達成得天命的 `score.points`（v1 都是 10），沒達成 0。判定照天命的 `check`（`destinyDone`，寫法見 [`DATA-FORMAT.md`](DATA-FORMAT.md)「隱藏天命」）：法案看每張法案最後一次的結果 `bills`（沒被表決的算沒通過；通過的法案不會再被抽到），迷霧看終局時的 `tables/{n}/fog` 與本場最高 `fogMax`，英鎊、影響力、手牌看座位（全桌比時同分都算；「多於 rN」比坐那個階層的人，沒人坐算達成）。`check` 是 `null`（「判定」空白）的，終局時是待判定（`done` 不存在），主持端在結算表上逐人勾「達成／沒達成」（`judgeDestiny` → `judgeScores`），勾之前算 0 分。
+  - 天命：達成得天命的 `score.points`（v1 都是 10），沒達成 0。判定照天命的 `check`（`destinyDone`，寫法見 [`DATA-FORMAT.md`](DATA-FORMAT.md)「隱藏天命」）：法案看每張法案最後一次的結果 `bills`（沒被表決的算沒通過；通過的法案不會再被抽到），迷霧看終局時的 `tables/{n}/fog` 與本場最高 `fogMax`，英鎊、影響力、手牌看座位（全桌比時同分都算；「多於 rN」比坐那個階層的其他人，沒有別人坐算達成）。發出去的天命在卡牌資料裡找不到時（例如中途重新匯入），天命那一項 0 分、文字寫「（卡牌資料裡找不到天命 dX）」，終局照樣寫得進去。`check` 是 `null`（「判定」空白）的，終局時是待判定（`done` 不存在），主持端在結算表上逐人勾「達成／沒達成」（`judgeDestiny` → `judgeScores`），勾之前算 0 分。
   - 資產：英鎊每 `scoreRates.pounds`（5）點 1 分、影響力每 `scoreRates.influence`（3）點 1 分，各自捨去。
   - 公共成就，各 `achievementPoints`（3）分、同分都給：議會之聲（`parliament`）＝座位的 `aligned` 最多的人（最多是 0 就沒人拿）；齒輪大師（`gear`）＝本場打出過最高級連鎖的人（至少 2 級，被抵銷的那張不算）。齒輪大師從出牌紀錄 `games/{n}/log` 算（全場保留，每筆有 `level`，被抵銷的有 `canceled`），沒有另外存每人的最高級數。
   - 罪孽：座位的 `sin` 每 `sinPerPenalty`（2）點扣 1 分（捨去）。
   - 總分＝天命＋資產＋公共成就－罪孽扣分；名次：總分高的在前，同分比英鎊，再同就並列（例如 1、1、3）。
 - `final`＝`{ round, endedAt（伺服器時間）, reason: 'sunset' | 'maxRounds' | 'host', scores: { uid: { destiny: { id, text, done, points }, assets: { pounds, influence, points }, achievements: ['parliament' | 'gear'], sin, sinPenalty, total, rank } } }`：`destiny.points` 是這張天命值幾分（`done` 是 `true` 才算進 `total`），`done` 沒有＝待主持人判定；沒有天命的人 `destiny` 只有 `{ done: false, points: 0 }`；沒拿成就的人沒有 `achievements`；`assets.points`、`sinPenalty` 是換算後的分數。主持端勾天命只改 `scores/{uid}/destiny/done` 與有變的 `total`、`rank`，每次 `version＋1`。兩場制（M9 下一段）要在這之上加「第幾場」與兩場合計。
+- 最後一回合的黑夜：手牌超過上限的人不再被要求挑棄牌（玩家畫面寫「不用棄牌，照現在的手牌算」，主持端也不列「還沒挑」），因為終局不做日出的棄牌。
 - 「這回合結束後算分」（試玩時間不夠時用）：主持端每桌一個鈕，按下寫 `endAfterRound＝目前回合`（`setEndAfterRound`，`version＋1`），取消＝刪掉；這一回合黑夜揭曉後按「下一階段」就算分。日落鐘到了或到了回合上限時不再顯示這個鈕。
 - 自動化（`startSettling`）遇到 `end` 的桌什麼都不做：不開黑夜、不揭曉黃昏、不處理請求、不重試、不報錯（`settleRequest`、`settleWindow`、`settleDusk`、`settleNight` 也各自擋）。
 - 畫面：主持端每桌有日落鐘（開局後幾分幾秒、還剩幾分幾秒；到了寫「時間到了——這回合結束後算分」）、「這回合結束後算分」與取消；該算分的那一回合黑夜，「下一階段」寫成「下一階段（算分）」。終局後該桌顯示結算表：照名次排，每人的天命（內容、達成條件、是否達成）、資產換算、公共成就、罪孽扣分與總分的算式，「判定」空白的天命有「達成／沒達成」可勾；「下一階段」不再出現。玩家端在最後一回合（`shouldEnd` 成立，日落鐘照伺服器時間算）顯示「這是最後一回合」；終局後最上面是結算：自己的分數明細（每一項怎麼算的）、全桌名次、每個人的天命與是否達成。
@@ -194,7 +195,7 @@
 - 預設全部不可讀寫；`/rooms` 不可列舉，房號就是門票。
 - `/rooms/{code}`：已登入者可讀。
 - `meta`：只能在不存在時建立，`hostUid` 必須是自己。
-- `tables`：只有主持端可寫，並檢查階段、回合、迷霧值的範圍。M9：階段可以是 `end`；進 `end` 只能從黑夜、回合不變，而且同一筆寫入要新寫 `games/{n}/final`；已經是 `end` 的桌，階段與回合都不能再改（條件都在 `tables/{n}` 那一層，只改一個欄位的更新也檢查）。
+- `tables`：只有主持端可寫，並檢查階段、回合、迷霧值的範圍。M9：階段可以是 `end`；進 `end` 只能從黑夜、回合不變，而且同一筆寫入要新寫 `games/{n}/final`；已經是 `end` 的桌，階段與回合都不能再改（條件都在 `tables/{n}` 那一層，只改一個欄位的更新也檢查）；桌子刪不掉（`tables` 那一層要求原本有的桌號寫入後還在、房間那一層擋整個 `tables` 拿掉），免得刪掉再重建繞過終局。
 - `players/{uid}`：只能寫自己那一筆，房間必須存在，暱稱 1–12 字、桌號在範圍內。
 - `hosts/{uid}`：只有現任主持端可寫，值只能是 `true` 或刪除；沒有人能把自己加進名單。
 - `hostRequests/{uid}`：本人可寫（房間必須存在），本人或主持端可刪；內容只有 `requestedAt`。
@@ -210,7 +211,7 @@
 - `/nights/{code}/{uid}`（M8）：只有本人可寫（房間必須存在、不能刪），本人可讀，該房主持端可讀整個 `/nights/{code}`。必有 `table`、`round`、`choice`、`seq`、`at`，多的欄位拒絕；條件都寫在整筆那一層（同票）：`seq` 比舊的大；`at` 剛好是伺服器時間；`table` 是 `1`–`6` 的字串，自己在那一桌有座位、那一桌在黑夜；`round` 等於那一桌目前的回合、也等於 `night.round`（黑夜已開）；`night` 還沒有結果、沒有截止時間或伺服器時間還沒到截止時間；`choice` 是 `gamble`、`split`、`sleep`，`tiers` 只有 `gamble` 有、而且是 1–3 的整數。
 - `/discards/{code}/{uid}`（M8）：寫入者與讀取權同上。必有 `table`、`round`、`cards`、`seq`、`at`，多的欄位拒絕；整筆那一層檢查 `seq` 比舊的大、`at` 剛好是伺服器時間、`table` 是 `1`–`6` 的字串而且自己在那一桌有座位、那一桌在黑夜（揭曉前後都可以）、`round` 等於那一桌目前的回合、`cards` 不是空的。`cards` 是牌編號的陣列，最多 30 張（編號 0–29；規則讀不到資料檔裡的手牌上限，實際張數與牌在不在手上由主持端發牌時查）。
 - `games/{n}` 的黑夜欄位（M8，寫入者照 `games`，只有主持端）：照黃昏的寫法。`night` 必有 `round`、`openedAt`、`submitted`，`round` 等於該桌目前的回合；換到新的回合（開黑夜）時那一桌要在黑夜，而且一定是剛開的（`openedAt` 是伺服器時間、`submitted` 是 0、沒有 `revealAt` 與 `result`，不能沿用上一回合的時間）；同一回合裡 `openedAt` 不能改，`revealAt`、`result` 有了就不能拿掉；`openedAt` 寫入時是伺服器時間；`submitted` 0–6 的整數；`revealAt` 是整數，寫入時在伺服器時間到之後 60 秒之間，之後只能提早；`result` 只能寫一次，要有截止時間而且伺服器時間已經過了截止時間，要跟這一回合的 `nightLog/{round}` 一起寫，只有 `players`。`nightLog/{round}` 只能寫一次、鍵等於目前的回合、`night.round` 也是這一回合，而且 `night.result` 要在同一筆寫入裡新寫（一起寫）。`players` 的鍵是入座的人，內容：`choice` 是三者之一；豪賭必有 `tiers`（1–3）、`rolls`（每一擲 1–6 的整數，最多 `tiers` 個，沒爆時剛好 `tiers` 個）與 `bust`（布林），其他選擇不能有這三個欄位；`pounds` 是整數（醫藥費是負數）；`influence`、`sin` 是 0 以上的整數；多的欄位拒絕。`night`、`nightLog` 整個拿掉會被拒。
-- `games/{n}` 的終局欄位（M9，寫入者照 `games`，只有主持端）：`endAfterRound` 是整數、等於該桌目前的回合，或刪掉。`final` 的條件都寫在整筆那一層（`final`），每次寫入（包括只改一個欄位的更新）都整筆檢查：必有 `round`、`endedAt`、`reason`、`scores`；該桌的 `phase` 是 `end`（同一筆寫入一起改的也算）；`round` 等於該桌目前的回合；`endedAt` 第一次寫時是伺服器時間，之後不能改；`reason` 是 `sunset`、`maxRounds`、`host` 之一。第一次寫時，該桌原本在黑夜、`night.round` 是這一回合而且黑夜已經揭曉（有 `night.result`）；之後 `round`、`reason` 不能改。`scores` 的鍵是入座的人，必有 `destiny`、`assets`、`sin`、`sinPenalty`、`total`、`rank`；第一次寫之後不能多出新的人，天命的編號、文字、分數，資產的三個數，成就，罪孽與扣分都不能改（只剩 `destiny.done`、`total`、`rank` 能改）。欄位格式：`destiny` 必有 `points`，`id`（編號格式）與 `text`（1–500 字）要嘛都有、要嘛都沒有，`done` 是布林；`assets` 的三個數、`points`、`sin`、`sinPenalty` 是 0 以上的整數；`total` 是整數；`rank` 是 1 以上的整數；`achievements` 是 `parliament`、`gear` 的清單（最多兩項）；多的欄位一律拒絕。`final` 有了就不能整個拿掉。
+- `games/{n}` 的終局欄位（M9，寫入者照 `games`，只有主持端）：`endAfterRound` 是整數、等於該桌目前的回合，或刪掉。`final` 的條件都寫在整筆那一層（`final`），每次寫入（包括只改一個欄位的更新）都整筆檢查：必有 `round`、`endedAt`、`reason`、`scores`；該桌的 `phase` 是 `end`（同一筆寫入一起改的也算）；`round` 等於該桌目前的回合；`endedAt` 第一次寫時是伺服器時間，之後不能改（連「再寫一次伺服器時間」也不行）；`reason` 是 `sunset`、`maxRounds`、`host` 之一。第一次寫時，該桌原本在黑夜、`night.round` 是這一回合而且黑夜已經揭曉（有 `night.result`）；之後 `round`、`reason` 不能改。`scores` 的鍵是入座的人，必有 `destiny`、`assets`、`sin`、`sinPenalty`、`total`、`rank`；第一次寫之後不能多出新的人，天命的編號、文字、分數，資產的三個數，成就，罪孽與扣分都不能改（只剩 `destiny.done`、`total`、`rank` 能改）。欄位格式：`destiny` 必有 `points`，`id`（編號格式）與 `text`（1–500 字）要嘛都有、要嘛都沒有，`done` 是布林；`assets` 的三個數、`points`、`sin`、`sinPenalty` 是 0 以上的整數；`total` 是整數；`rank` 是 1 以上的整數；`achievements` 是 `parliament`、`gear` 的清單（最多兩項）；多的欄位一律拒絕。`final` 有了就不能整個拿掉。
 - 主持端的判斷各處都一樣：`meta/hostUid` 是自己，或 `hosts/{uid}` 是 `true`。
 
 ## 身分
@@ -247,5 +248,5 @@
 - 終局（M9）又加了 `tables/{n}/phase` 的 `end`、`games/{n}` 的 `final` 與 `endAfterRound`：只推網頁不發布規則，新版算不了分（舊規則不認得 `end` 與 `final`，主持端等 3 秒後畫面頂端報錯「算分沒有成功」；該算分的那一桌「下一階段」一直是算分，就停在黑夜），「這回合結束後算分」也按不了（`endAfterRound` 是舊規則不認得的欄位）；只發布規則不推網頁，M8 的網頁照樣能玩（它不寫這些欄位），只是沒有終局，一直玩下去。新舊網頁混用同一間房時，舊網頁的主持畫面看到 `end` 的桌會顯示不出階段，按「下一階段」時交易會丟錯（舊版的推進不認得 `end`；規則也不讓它改），不會動到結算。發布後開新房走一次：主持端按「這回合結束後算分」、黑夜揭曉後按「下一階段（算分）」、看結算表與玩家畫面、勾一張「判定」空白的天命。
 - 日落鐘的「現在」是按「下一階段」那台主持端估的伺服器時間（本機時間＋`.info/serverTimeOffset`），`startedAt` 是伺服器時間；主持端的時間估錯幾秒，終局就早或晚幾秒（只影響剛好卡在 75 分鐘的那一回合）。規則不檢查「日落鐘到了沒」（規則讀不到資料檔的分鐘數），也不檢查分數算得對不對、名次排得對不對、天命判定對不對：同其他結算，只能信任主持端。
 - `final` 裡單獨一個人的分數，主持端刪得掉（規則只擋「整份拿掉」與「之後多出新的人」；同 `nightLog` 的單筆）。
-- 終局時的手牌是手牌上限棄牌之前的張數（棄牌在下一回合日出才做，終局不做），「手牌最多」這類判定照這個張數比。
+- 終局時的手牌是手牌上限棄牌之前的張數（棄牌在下一回合日出才做，終局不做），「手牌最多」這類判定照這個張數比。最後一夜的畫面不叫人挑棄牌，是照那台裝置估的時間判斷「這一回合結束就算分」：日落鐘剛好在黑夜裡到的那幾秒，畫面與主持端按下去那一刻的判斷可能差一點；若最後沒有算分、進了下一回合日出，沒挑的人照舊被隨機棄。
 - 開局後換桌或離開房間的人，座位照舊留著；離開的人在畫面上顯示「已離開房間」，日出照樣領薪抽牌。

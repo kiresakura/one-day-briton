@@ -667,6 +667,8 @@ function handLimitLines(room, table, game, state) {
   if (!limit) return [];
   const over = seatsInOrder(game.seats).filter(([, seat]) => seat.handCount > limit);
   if (over.length === 0) return [];
+  // 這一回合黑夜結束就算分：終局不棄牌，照現在的手牌算。
+  if (endReasonNow(game, state) !== null) return [element('p', 'table-note hand-limit-ending', '這一回合結束就算分：手牌超過上限的人不用棄牌，照現在的手牌算')];
   const picked = (uid, seat) => {
     const value = hostDiscards.get(uid)?.value;
     const count = Object.keys(value?.cards ?? {}).length;
@@ -765,7 +767,8 @@ function endControls(table, game, state, roomCode) {
   const marked = game.endAfterRound === state.round;
   if (reason === 'maxRounds') nodes.push(element('p', 'table-note last-round', `第 ${state.round} 回合是回合上限：這一回合黑夜揭曉後，按「下一階段」就算分`));
   if (reason === 'host') nodes.push(element('p', 'table-note last-round', '已按「這回合結束後算分」：這一回合黑夜揭曉後，按「下一階段」就算分'));
-  if (marked || reason === null) {
+  // 日落鐘到了或到了回合上限時，按不按都會算分：不顯示這個鈕（取消也沒用）。
+  if (reason === null || reason === 'host') {
     const toggle = element('button', marked ? 'end-after-round quiet' : 'end-after-round', marked ? '取消「這回合結束後算分」' : '這回合結束後算分');
     toggle.type = 'button';
     toggle.addEventListener('click', () => run(toggle, () => setEndAfterRound(session, roomCode, table, !marked)));
@@ -789,23 +792,19 @@ function destinyText(destiny) {
   return `天命「${destiny.text}」${condition ? `（${condition}）` : ''}：${state}`;
 }
 
-const achievementText = (score) => {
-  const list = score.achievements ?? [];
-  return list.length ? list.map((key) => `${ACHIEVEMENT_LABELS[key] ?? key} +${scoreRules().achievementPoints}`).join('、') : '沒有';
-};
-
-// 一個人的分數明細（每一項怎麼算的）。
+// 一個人的分數明細（每一項怎麼算的）。公共成就的分數從存下來的總分推回來（算分那一刻的設定），算式一定對得上存下來的總分。
 function scoreLines(score) {
   const rules = scoreRules();
   const { assets } = score;
   const earned = score.destiny?.done === true ? score.destiny.points : 0;
-  const parts = [earned, assets.points, (score.achievements ?? []).length * rules.achievementPoints];
+  const list = score.achievements ?? [];
+  const bonus = score.total - earned - assets.points + score.sinPenalty;
   return [
     destinyText(score.destiny),
     `資產：英鎊 ${assets.pounds} ÷ ${rules.poundsRate} → ${Math.floor(assets.pounds / rules.poundsRate)} 分、影響力 ${assets.influence} ÷ ${rules.influenceRate} → ${Math.floor(assets.influence / rules.influenceRate)} 分（各自捨去），共 ${assets.points} 分`,
-    `公共成就：${achievementText(score)}`,
+    `公共成就：${list.length ? list.map((key) => `${ACHIEVEMENT_LABELS[key] ?? key} +${bonus / list.length}`).join('、') : '沒有'}`,
     `罪孽：${score.sin} 點 ÷ ${rules.sinPerPenalty} → 扣 ${score.sinPenalty} 分（捨去）`,
-    `總分：${parts.join('＋')}－${score.sinPenalty}＝${score.total}`,
+    `總分：${earned}＋${assets.points}＋${bonus}－${score.sinPenalty}＝${score.total}`,
   ];
 }
 
@@ -967,7 +966,7 @@ function gameControls(room, table, game, state, pending, roomCode) {
   if (state.phase === 'end' && game.final) nodes.push(...finalLines(room, table, game, roomCode));
   else if (cardData) nodes.push(...endControls(table, game, state, roomCode));
   nodes.push(...eventsBlock(game, state));
-  if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
+  if (state.round === 1 && state.phase !== 'end' && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
   if (state.phase === 'dusk' || state.phase === 'night') nodes.push(...duskLines(room, table, game, state, roomCode));
   nodes.push(...nightLines(room, table, game, state, roomCode));
@@ -1426,11 +1425,13 @@ function handIndexes(hand, cards) {
 }
 
 // 手牌超過上限時：要棄幾張、點牌挑選、「選好了」；已送出的挑選合法就寫「已選好」。黑夜期間（揭曉前後）都可以改。
-function discardBox(me, state) {
+function discardBox(me, state, ending) {
   const hand = mine.hand ?? [];
   const { settings } = cardData.data;
   const over = overLimit(hand, settings);
   if (over === 0) return [];
+  // 這一回合黑夜結束就算分：終局不棄牌（棄牌在下一回合日出才做），照現在的手牌算。
+  if (ending) return [element('p', 'caption discard-skip', `手牌 ${hand.length} 張超過上限，但這一回合結束就算分：不用棄牌，照現在的手牌算`)];
   const where = { table: me.table, round: state.round };
   const saved = myDiscard && String(myDiscard.table) === String(me.table) && myDiscard.round === state.round ? myDiscard : null;
   const problem = saved ? discardProblem(hand, saved, where, settings) : 'no-pick';
@@ -1492,7 +1493,7 @@ function nightCard(room, me, state, game) {
     if (stage === 'choosing' || serverTime(session) < night.revealAt) nodes.push(nightBox(me, state, game, sent));
     else nodes.push(element('p', 'caption', sent ? '黑夜截止了，等揭曉' : '黑夜截止了，你沒有送出，算睡覺'));
   }
-  return [...nodes, ...discardBox(me, state)];
+  return [...nodes, ...discardBox(me, state, endReasonNow(game, state) !== null)];
 }
 
 // 自己的階層、資源、天命與手牌。還沒開局、沒有入座或資料還沒到時，只顯示一句說明。

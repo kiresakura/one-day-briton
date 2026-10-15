@@ -394,9 +394,15 @@ function checkEvent(record, { fogThresholds, roleIds }, error, warn) {
   checkText(record, 'text', error);
 }
 
+// 天命文字最多幾個字（UTF-16 長度，同規則的算法）：終局時會寫進公開的結算，規則只收這麼長。
+export const DESTINY_TEXT_MAX = 500;
+
 function checkDestiny(record, context, error, warn) {
   checkRoleRef(record, context.roleIds, error);
   checkText(record, 'text', error);
+  if (typeof record.text === 'string' && record.text.length > DESTINY_TEXT_MAX) {
+    error('text', `最多 ${DESTINY_TEXT_MAX} 個字（終局時會寫進公開的結算），現在有 ${record.text.length} 個字`);
+  }
   checkDestinyCheck(record, context, error, warn);
   if (!isPlainObject(record.score)) {
     error('score', `要是 { "text": 計分條件, "points": 分數或 null }，${now(record.score)}`);
@@ -492,6 +498,7 @@ function checkDestinyCheck(record, { roleIds, billIds }, error, warn) {
     seatValue();
     if (typeof check.role !== 'string' || check.role === '') error('check', `判定的 role 要是階層編號，${now(check.role)}`);
     else if (roleIds && !roleIds.has(check.role)) error('check', `找不到階層編號${show(check.role)}`);
+    else if (check.role === record.role) warn('check', `「多於 ${check.role}」比的是這張天命自己的階層：拿到的人就坐 ${check.role}，沒有別人可以比，終局時一定算達成`);
   }
 }
 

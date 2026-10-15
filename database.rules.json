@@ -5,7 +5,7 @@
     "rooms": {
       "$code": {
         ".read": "auth != null",
-        ".validate": "$code.matches(/^[A-HJKMNP-Z2-9]{6}$/)",
+        ".validate": "$code.matches(/^[A-HJKMNP-Z2-9]{6}$/) && (!data.child('tables').exists() || newData.child('tables').exists())",
         "meta": {
           ".write": "auth != null && !data.exists() && newData.child('hostUid').val() === auth.uid",
           ".validate": "newData.hasChildren(['hostUid', 'createdAt', 'tableCount'])",
@@ -18,6 +18,7 @@
         },
         "tables": {
           ".write": "auth != null && (newData.parent().child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
+          ".validate": "newData.hasChildren() && (!data.hasChild('1') || newData.hasChild('1')) && (!data.hasChild('2') || newData.hasChild('2')) && (!data.hasChild('3') || newData.hasChild('3')) && (!data.hasChild('4') || newData.hasChild('4')) && (!data.hasChild('5') || newData.hasChild('5')) && (!data.hasChild('6') || newData.hasChild('6'))",
           "$table": {
             ".validate": "$table.matches(/^[1-6]$/) && newData.hasChildren(['round', 'phase', 'fog', 'updatedAt']) && (data.child('phase').val() !== 'end' || (newData.child('phase').val() === 'end' && newData.child('round').val() === data.child('round').val())) && (newData.child('phase').val() !== 'end' || data.child('phase').val() === 'end' || (data.child('phase').val() === 'night' && newData.child('round').val() === data.child('round').val() && newData.parent().parent().child('games').child($table).child('final').exists() && !data.parent().parent().child('games').child($table).child('final').exists()))",
             "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
@@ -285,7 +286,7 @@
               ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() === newData.parent().parent().parent().child('tables').child($table).child('round').val()"
             },
             "final": {
-              ".validate": "newData.hasChildren(['round', 'endedAt', 'reason', 'scores']) && newData.parent().parent().parent().child('tables').child($table).child('phase').val() === 'end' && newData.child('round').val() === newData.parent().parent().parent().child('tables').child($table).child('round').val() && (newData.child('endedAt').val() === now || newData.child('endedAt').val() === data.child('endedAt').val()) && (data.exists() ? (newData.child('round').val() === data.child('round').val() && newData.child('reason').val() === data.child('reason').val()) : (root.child('rooms').child($code).child('tables').child($table).child('phase').val() === 'night' && newData.parent().child('night/round').val() === newData.child('round').val() && newData.parent().child('night/result').exists()))",
+              ".validate": "newData.hasChildren(['round', 'endedAt', 'reason', 'scores']) && newData.parent().parent().parent().child('tables').child($table).child('phase').val() === 'end' && newData.child('round').val() === newData.parent().parent().parent().child('tables').child($table).child('round').val() && (data.exists() ? newData.child('endedAt').val() === data.child('endedAt').val() : newData.child('endedAt').val() === now) && (data.exists() ? (newData.child('round').val() === data.child('round').val() && newData.child('reason').val() === data.child('reason').val()) : (root.child('rooms').child($code).child('tables').child($table).child('phase').val() === 'night' && newData.parent().child('night/round').val() === newData.child('round').val() && newData.parent().child('night/result').exists()))",
               "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
               "endedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
               "reason": { ".validate": "newData.isString() && newData.val().matches(/^(sunset|maxRounds|host)$/)" },

@@ -22,6 +22,7 @@ import {
   revealNight,
   serverTime,
   setEndAfterRound,
+  setStartOrder,
   settleDusk,
   settleNight,
   startSettling,
@@ -290,6 +291,10 @@ test('after the end nothing moves: no next phase, no automatic night or dusk, no
   await assert.rejects(update(ref(host.db, `rooms/${code}/tables/2`), { round: 2 }), denied);
   await assert.rejects(set(ref(host.db, `rooms/${code}/tables/2`), { round: 2, phase: 'sunrise', fog: 0, updatedAt: serverTimestamp() }), denied);
   assert.deepEqual(await update(ref(host.db, `rooms/${code}/tables/2`), { updatedAt: serverTimestamp() }), undefined, 'the time stamp alone is fine');
+  // 刪掉整桌（再重建）也繞不過：桌子刪不掉。
+  await assert.rejects(set(ref(host.db, `rooms/${code}/tables/2`), null), denied, 'delete the table');
+  await assert.rejects(update(ref(host.db, `rooms/${code}`), { tables: null }), denied, 'delete every table');
+  await assert.rejects(setStartOrder(host, code, 2, 1), { name: 'StoreError', code: 'game-over' });
   // 自動化開著：不揭曉黃昏、不開黑夜、不處理請求、不報錯。
   const errorsSeen = [];
   const stop = startSettling(host, code, data, { onError: (error) => errorsSeen.push(error) });
@@ -375,6 +380,7 @@ test('a one-field update cannot get around the final rules, and the final can on
     ['reason', 'sunset'],
     ['round', 2],
     ['endedAt', saved.endedAt - 1],
+    ['endedAt', serverTimestamp()],
     [`scores/${first.uid}/assets/points`, 9],
     [`scores/${first.uid}/assets/pounds`, 9],
     [`scores/${first.uid}/sin`, 9],
@@ -426,6 +432,17 @@ test('the host judges a blank destiny: the total and the ranks change on every s
   assert.equal(await read(host, `rooms/${code}/games/2/final/scores/${first.uid}/destiny/done`), null, 'back to waiting');
   assert.equal(await read(host, `rooms/${code}/games/2/version`), version + 4);
   await assert.rejects(update(ref(second.db, `rooms/${code}/games/2`), { version: version + 5, [`final/scores/${second.uid}/destiny/done`]: true }), denied, 'a player cannot judge');
+});
+
+test('a destiny no longer in the card data at the end still ends the game, scored 0 with a placeholder text', TIMEOUT, async (t) => {
+  const { code, first } = await dayRoom(t);
+  const dealt = await read(host, `private/${code}/${first.uid}/destiny`);
+  const fewer = { ...data, destinies: data.destinies.filter((destiny) => destiny.id !== dealt) };
+  await setEndAfterRound(host, code, 2, true);
+  await nightRevealed(code, 1);
+  assert.equal((await advanceOrEnd(host, code, 2, { round: 1, phase: 'night' }, fewer)).ended, true);
+  const score = await read(host, `rooms/${code}/games/2/final/scores/${first.uid}`);
+  assert.deepEqual(score.destiny, { id: dealt, text: `（卡牌資料裡找不到天命 ${dealt}）`, done: false, points: 0 });
 });
 
 test('two hosts ending at once write only once', TIMEOUT, async (t) => {

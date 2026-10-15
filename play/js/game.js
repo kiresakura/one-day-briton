@@ -1273,7 +1273,8 @@ export function settleSunrise(state, picks, data, random = cryptoRandom) {
 // final＝{ round, endedAt, reason: 'sunset' | 'maxRounds' | 'host', scores: { uid: 分數 } }，endedAt 由寫入的一端補上伺服器時間。
 // 分數＝{ destiny: { id, text, done, points }, assets: { pounds, influence, points }, achievements: ['parliament' | 'gear'], sin, sinPenalty,
 //        total, rank }：destiny.points 是這張天命值幾分（done 是 true 才算進 total），done 是 true／false／null（待主持人判定）；
-//        沒有天命的人 id、text 是 null、done 是 false。assets.points、sinPenalty 是換算出來的分數。英鎊、影響力、罪孽讀座位的現值
+//        沒有天命的人 id、text 是 null、done 是 false；發出去的天命在卡牌資料裡找不到時（例如中途重新匯入），text 寫「找不到」、
+//        done 是 false、points 是 0（終局照樣寫得進去，不會卡住那一桌）。assets.points、sinPenalty 是換算出來的分數。英鎊、影響力、罪孽讀座位的現值
 //        （黑夜的變化與分贓的罪孽已經加進座位）。
 
 export const END_PHASE = 'end';
@@ -1338,6 +1339,7 @@ function seatValue(seat, what) {
 
 // 天命的判定（check 的寫法見 data.js）對 uid 在終局時成不成立：true／false；check 是 null（「判定」空白）時是 null，待主持人判定。
 // state 要有 seats、fog（該桌終局時的迷霧值）、fogMax（本場最高）、bills（每張法案最後一次的結果；沒被表決的沒有，算沒通過）。
+// 「多於 rN」比的是坐 rN 的其他人（自己就坐 rN 時不跟自己比）；沒有別人坐 rN 算達成。
 export function destinyDone(check, uid, state) {
   if (!check) return null;
   const seats = state.seats ?? {};
@@ -1355,9 +1357,9 @@ export function destinyDone(check, uid, state) {
     }
     case 'moreThan': {
       const mine = seatValue(seats[uid], check.what);
-      return Object.values(seats)
-        .filter((seat) => seat.role === check.role)
-        .every((seat) => mine > seatValue(seat, check.what));
+      return Object.entries(seats)
+        .filter(([other, seat]) => other !== uid && seat.role === check.role)
+        .every(([, seat]) => mine > seatValue(seat, check.what));
     }
     default:
       throw new RangeError(`這一版不認得這種判定：${check.kind}`);
@@ -1408,7 +1410,9 @@ export function scoreGame(state, data) {
   for (const [uid, seat] of seatsInOrder(state.seats)) {
     const id = state.destinies?.[uid] ?? null;
     const card = id === null ? null : ((data.destinies ?? []).find((destiny) => destiny.id === id) ?? null);
-    const destiny = { id, text: card?.text ?? null, done: card ? destinyDone(card.check ?? null, uid, state) : false, points: card?.score?.points ?? 0 };
+    const destiny = card
+      ? { id, text: card.text, done: destinyDone(card.check ?? null, uid, state), points: card.score?.points ?? 0 }
+      : { id, text: id === null ? null : missingDestinyText(id), done: false, points: 0 };
     const pounds = seat.pounds ?? 0;
     const influence = seat.influence ?? 0;
     const assets = { pounds, influence, points: Math.floor(pounds / rules.poundsRate) + Math.floor(influence / rules.influenceRate) };
@@ -1419,6 +1423,11 @@ export function scoreGame(state, data) {
     scores[uid] = { destiny, assets, achievements, sin, sinPenalty, total, rank: 0 };
   }
   return rankScores(scores);
+}
+
+// 發出去的天命在卡牌資料裡找不到時，寫進 final 的天命文字（規則要求有編號就要有文字）。
+export function missingDestinyText(id) {
+  return `（卡牌資料裡找不到天命 ${id}）`;
 }
 
 // 終局那一筆的 final（endedAt 以外）：{ round, reason, scores }。state 是 scoreGame 要的局面加上 round。

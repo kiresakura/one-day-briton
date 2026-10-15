@@ -174,6 +174,9 @@ test('more than the player of a role; nobody in that role counts as done', () =>
   const { c, ...noR5 } = SEATS;
   assert.equal(done(beatR5, 'b', { ...END, seats: noR5 }), true, 'nobody sits r5');
   assert.equal(done({ kind: 'moreThan', what: 'influence', role: 'r1' }, 'b'), false, '2 against 5');
+  // 自己就坐那個階層：不跟自己比，沒有別人坐就算達成。
+  assert.equal(done(beatR5, 'c'), true, 'c sits r5 alone');
+  assert.equal(done({ kind: 'moreThan', what: 'pounds', role: 'r1' }, 'a'), true, 'a sits r1 alone');
 });
 
 test('a destiny with a blank check waits for the host', () => {
@@ -224,6 +227,13 @@ test('assets and sin are rounded down; other rates and achievement points come f
   const scored = one({ pounds: 9, influence: 5, sin: 6, aligned: 1 }, rules);
   assert.deepEqual([scored.assets.points, scored.sinPenalty, scored.achievements, scored.total], [4, 2, ['parliament'], 4 - 2 + 5]);
   assert.deepEqual(one({ pounds: 3, influence: 1 }).destiny, { id: null, text: null, done: false, points: 0 }, 'no destiny dealt');
+});
+
+test('a destiny no longer in the card data scores 0 with a placeholder text, so the end can still be written', () => {
+  const scores = scoreGame({ ...GAME, destinies: { ...GAME.destinies, a: 'gone' } }, data);
+  assert.deepEqual(scores.a.destiny, { id: 'gone', text: '（卡牌資料裡找不到天命 gone）', done: false, points: 0 });
+  assert.equal(scores.a.total, 6 + 3 - 1, 'assets, parliament and sin still count');
+  assert.deepEqual(scores.b.destiny.id, 'd08', 'the others are scored as usual');
 });
 
 test('parliament goes to everyone with the most aligned votes, and to nobody when the most is 0', () => {

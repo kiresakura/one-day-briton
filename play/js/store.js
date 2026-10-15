@@ -1324,6 +1324,7 @@ export async function setStartOrder(session, code, table, order) {
   const room = await readRoom(session, code);
   const game = room.games?.[table];
   if (!game) throw new StoreError('invalid-table', `第 ${table} 桌還沒開局`);
+  if (room.tables?.[table]?.phase === END_PHASE) throw new StoreError('game-over', '這一桌已經算分了');
   if (room.tables?.[table]?.round !== 1 || game.turn || game.pending) {
     throw new StoreError('cannot-set-start', '已經有人出過牌，不能再指定起始玩家');
   }
