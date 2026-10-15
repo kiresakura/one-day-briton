@@ -1,4 +1,7 @@
-// 畫面與事件：首頁、等待核准、主持端、玩家端幾個畫面切換。資料一律從 store.js 的訂閱來。
+// 畫面與事件：首頁、等待核准、主持端、玩家端幾個畫面切換。資料一律從 store.js 的訂閱來，
+// 牌名與牌面文字從卡牌資料檔（gamedata.js）來。
+import { checkSeating, seatsInOrder } from './game.js';
+import { indexGameData, loadGameData } from './gamedata.js';
 import { MAX_TABLES, PHASE_LABELS, confirmCode, hostUids, isHostOf, isRoomCode } from './rules.js';
 import {
   StoreError,
@@ -10,9 +13,12 @@ import {
   enterAsHost,
   joinRoom,
   leaveRoom,
+  processSunrise,
   rejectHost,
+  startTable,
   trackPresence,
   watchConnection,
+  watchPrivate,
   watchRoom,
 } from './store.js';
 
@@ -30,6 +36,14 @@ let stopWatching = null;
 let stopPresence = null;
 let offlineTimer = null;
 let requested = false; // 這台裝置送過主持端申請、還在等核准
+let latestRoom = null; // 最近一次收到的房間資料，私密資料或卡牌資料晚到時拿來重畫
+let stopPrivate = null;
+let mine = null; // 自己的私密資料 { table, hand, destiny }；還沒收到或沒有入座時是 null
+let cardData = null; // 卡牌資料 { data, index }：讀到而且檢查沒有錯誤才有
+let cardsFailed = false; // 卡牌資料讀不到或有錯誤
+const dealing = new Set(); // 這台主持端正在發牌的桌號
+
+const KIND_LABELS = { play: '一般', response: '響應' };
 
 function show(screen) {
   for (const name of ['loading', 'home', 'pending', 'host', 'player']) $(`screen-${name}`).hidden = name !== screen;
@@ -86,6 +100,11 @@ function goHome(message = '') {
   stopWatching = null;
   stopPresence?.().catch(() => {});
   stopPresence = null;
+  stopPrivate?.();
+  stopPrivate = null;
+  mine = null;
+  latestRoom = null;
+  dealing.clear();
   code = null;
   requested = false;
   localStorage.removeItem(savedRoomKey);
@@ -104,6 +123,7 @@ function enterRoom(roomCode) {
 
 function render(room) {
   if (!room?.meta) return goHome('房間不存在或已關閉');
+  latestRoom = room;
   if (isHostOf(room, session.uid)) return renderHost(room);
   if (room.hostRequests?.[session.uid]) return renderPending();
   if (requested) return goHome('主持端沒有核准這次申請');
@@ -148,6 +168,77 @@ function requestItems(room, roomCode) {
     });
 }
 
+function rerender() {
+  if (latestRoom) render(latestRoom);
+}
+
+function roleName(roleId) {
+  return cardData?.index.roles.get(roleId)?.name ?? roleId;
+}
+
+// 名字排成一行，用「、」隔開。
+function nameLine(room, entries, prefix) {
+  const line = element('p', 'table-players', prefix);
+  entries.forEach(([uid, player], index) => line.append(index ? '、' : '', nameTag(room, uid, player, 'span')));
+  return line;
+}
+
+// 發這一桌這一回合的日出；送出到寫完之間，畫面顯示「發牌中…」。
+async function deal(roomCode, table) {
+  dealing.add(table);
+  rerender();
+  try {
+    await processSunrise(session, roomCode, table, cardData.data);
+  } finally {
+    dealing.delete(table);
+    rerender();
+  }
+}
+
+// 開局前：入座候選與人數、「開始」鈕；不能開時寫原因（沒有玩家也是），人少時寫提醒。
+function startControls(room, table, roomCode) {
+  const players = playersAt(room, table);
+  const { error, warning } = checkSeating(players.length, cardData?.data.roles.length);
+  const reason = cardsFailed ? '卡牌資料有問題，請找工作人員' : cardData ? error : '卡牌資料讀取中…';
+  const start = element('button', 'table-start', '開始');
+  start.type = 'button';
+  start.disabled = Boolean(reason);
+  start.addEventListener('click', () => run(start, () => startTable(session, roomCode, table, cardData.data)));
+  const nodes = players.length ? [nameLine(room, players, `入座候選 ${players.length} 人：`)] : [];
+  const note = reason || warning || (players.length ? '' : '還沒有玩家');
+  if (note) nodes.push(element('p', reason ? 'table-note problem' : 'table-note', note));
+  return [...nodes, start];
+}
+
+// 開局後：座位（暱稱、階層、英鎊、影響力、手牌張數）、未入座的人、牌庫與棄牌堆，日出還沒發牌時的「補發」。
+function gameControls(room, table, game, pending, roomCode) {
+  const seats = element('ol', 'seats');
+  for (const [uid, seat] of seatsInOrder(game.seats)) {
+    const player = room.players?.[uid];
+    const item = element('li', 'seat');
+    item.append(
+      player ? nameTag(room, uid, player, 'strong') : element('strong', 'offline', '（已離開房間）'),
+      element('span', 'seat-role', roleName(seat.role)),
+      element('span', 'seat-stats', `英鎊 ${seat.pounds}・影響力 ${seat.influence}・手牌 ${seat.handCount}`),
+    );
+    seats.append(item);
+  }
+  const nodes = [seats];
+  const unseated = playersAt(room, table).filter(([uid]) => !game.seats[uid]);
+  if (unseated.length) nodes.push(nameLine(room, unseated, '未入座：'));
+  nodes.push(element('p', 'table-pile', `牌庫 ${game.deckCount} 張・棄牌堆 ${game.discardCount} 張`));
+  if (pending && dealing.has(table)) {
+    nodes.push(element('p', 'table-note', '發牌中…'));
+  } else if (pending) {
+    const redeal = element('button', 'table-deal', '補發');
+    redeal.type = 'button';
+    redeal.disabled = !cardData;
+    redeal.addEventListener('click', () => run(redeal, () => deal(roomCode, table)));
+    nodes.push(element('p', 'table-note problem', '日出還沒發牌'), redeal);
+  }
+  return nodes;
+}
+
 function renderHost(room) {
   requested = false;
   markPresent();
@@ -156,10 +247,9 @@ function renderHost(room) {
   for (let table = 1; table <= room.meta.tableCount; table += 1) {
     const state = room.tables?.[table];
     if (!state) continue;
-    const names = element('p', 'table-players');
-    const players = playersAt(room, table);
-    if (!players.length) names.textContent = '還沒有玩家';
-    players.forEach(([uid, player], index) => names.append(index ? '、' : '', nameTag(room, uid, player, 'span')));
+    const game = room.games?.[table];
+    // 已開局、在日出、這一回合還沒發牌（主持機在推進與發牌之間掛掉時，任何主持端都可以補發）。
+    const pending = Boolean(game) && state.phase === 'sunrise' && (room.deals?.[table] ?? 0) < state.round;
 
     const card = element('article', 'card table');
     card.dataset.table = table;
@@ -171,14 +261,19 @@ function renderHost(room) {
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
+    next.disabled = !game || pending; // 開局前、日出還沒發牌時不能推進
     // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
+    // 是自己這一筆把桌子推進到新回合的日出，就接著發牌。
     next.addEventListener('click', () =>
-      run(next, () => advanceTable(session, roomCode, table, { round: state.round, phase: state.phase })),
+      run(next, async () => {
+        const result = await advanceTable(session, roomCode, table, { round: state.round, phase: state.phase });
+        if (result.advanced && result.table.phase === 'sunrise' && cardData) await deal(roomCode, table);
+      }),
     );
     card.append(
       element('h2', '', `第 ${table} 桌`),
       status,
-      names,
+      ...(game ? gameControls(room, table, game, pending, roomCode) : startControls(room, table, roomCode)),
       next,
     );
     cards.push(card);
@@ -194,18 +289,105 @@ function renderHost(room) {
   show('host');
 }
 
+// 一張手牌：牌名、類型、成本、牌面文字。資料檔裡找不到的牌只顯示編號。
+function handItem(id) {
+  const action = cardData.index.actions.get(id);
+  const item = element('li', 'hand-card');
+  if (!action) {
+    item.append(element('strong', 'hand-name', id));
+    return item;
+  }
+  const { pounds, influence } = action.cost;
+  const cost = [pounds && `${pounds} 英鎊`, influence && `${influence} 影響力`].filter(Boolean).join('＋');
+  const head = element('p', 'hand-head');
+  head.append(
+    element('strong', 'hand-name', action.name),
+    element('span', `hand-kind ${action.kind}`, KIND_LABELS[action.kind] ?? action.kind),
+    element('span', 'hand-cost', cost ? `成本 ${cost}` : '不用成本'),
+  );
+  item.append(head, element('p', 'hand-text', action.text));
+  return item;
+}
+
+// 自己的階層、資源、天命與手牌。還沒開局、沒有入座或資料還沒到時，只顯示一句說明。
+function renderMyGame(game) {
+  const seat = game?.seats?.[session.uid];
+  let wait = '';
+  if (!game) wait = '等待主持端開局';
+  else if (!seat) wait = '本桌已開局，這一局沒有你的座位，請找工作人員';
+  else if (cardsFailed) wait = '卡牌資料有問題，請找工作人員';
+  else if (!cardData || !mine) wait = '讀取手牌中…';
+  $('player-wait').textContent = wait;
+  $('player-wait').hidden = !wait;
+  $('player-game').hidden = Boolean(wait);
+  if (wait) return;
+
+  const role = cardData.index.roles.get(seat.role);
+  $('player-role').textContent = role?.name ?? seat.role;
+  $('player-pounds').textContent = seat.pounds;
+  $('player-influence').textContent = seat.influence;
+  $('player-missions').replaceChildren(...(role?.missions ?? []).map((text) => element('li', '', text)));
+  $('player-privileges').replaceChildren(...(role?.privileges ?? []).map((text) => element('li', '', text)));
+  const destiny = cardData.index.destinies.get(mine.destiny);
+  $('player-destiny').textContent = destiny?.text ?? '這一局沒有天命';
+  $('player-destiny-score').textContent = destiny ? `達成條件：${destiny.score.text}` : '';
+  const hand = mine.hand ?? [];
+  $('player-hand-count').textContent = hand.length;
+  $('player-hand').replaceChildren(...hand.map(handItem));
+}
+
+// 同桌玩家。開局後照座位排，附階層、英鎊、影響力、手牌張數；沒入座的排在最後。
+function mateItems(room, table, game) {
+  const players = playersAt(room, table);
+  if (!game) return players.map(([uid, player]) => nameTag(room, uid, player, 'li'));
+  const withNote = (item, note) => {
+    item.append(element('span', 'mate-stats', note));
+    return item;
+  };
+  const seated = seatsInOrder(game.seats).map(([uid, seat]) => {
+    const player = room.players?.[uid];
+    const item = player ? nameTag(room, uid, player, 'li') : element('li', 'offline', '（已離開房間）');
+    return withNote(item, `${roleName(seat.role)}・英鎊 ${seat.pounds}・影響力 ${seat.influence}・手牌 ${seat.handCount}`);
+  });
+  const unseated = players.filter(([uid]) => !game.seats[uid]).map(([uid, player]) => withNote(nameTag(room, uid, player, 'li'), '未入座'));
+  return [...seated, ...unseated];
+}
+
+// 訂閱自己的私密資料，一有變動就重畫。快取裡已經有資料時，回呼會在訂閱的當下就跑（會再進到這裡），
+// 所以先把 stopPrivate 設好再訂閱。
+function watchMine() {
+  if (stopPrivate) return;
+  let stopped = false;
+  let stop = null;
+  stopPrivate = () => {
+    stopped = true;
+    stop?.();
+  };
+  stop = watchPrivate(
+    session,
+    code,
+    (value) => {
+      mine = value;
+      rerender();
+    },
+    () => {},
+  );
+  if (stopped) stop();
+}
+
 function renderPlayer(room, me) {
   markPresent();
+  watchMine();
   const state = room.tables[me.table];
+  const game = room.games?.[me.table];
   $('player-stage').dataset.phase = state.phase;
   $('player-table').textContent = `第 ${me.table} 桌`;
   $('player-round').textContent = `第 ${state.round} 回合`;
   $('player-phase').textContent = PHASE_LABELS[state.phase];
   $('player-fog').textContent = state.fog;
   $('player-fog-meter').value = state.fog;
-  $('player-mates').replaceChildren(
-    ...playersAt(room, me.table).map(([uid, player]) => nameTag(room, uid, player, 'li')),
-  );
+  renderMyGame(game);
+  $('player-mates').replaceChildren(...mateItems(room, me.table, game));
   $('player-host-offline').hidden = hostUids(room).some((uid) => isOnline(room, uid));
   $('player-code').textContent = code;
   show('player');
@@ -252,6 +434,19 @@ for (let table = 1; table <= MAX_TABLES; table += 1) {
   option.value = table;
   $('join-table').append(option);
 }
+
+// 卡牌資料與連線同時開始讀。讀不到或檢查有錯誤時，畫面頂端一直顯示提醒，開局與發牌都停用。
+loadGameData()
+  .then(({ data, errors }) => {
+    if (errors.length) throw new Error(errors.join('\n'));
+    cardData = { data, index: indexGameData(data) };
+  })
+  .catch((error) => {
+    cardsFailed = true;
+    $('data-problem').hidden = false;
+    console.error(`卡牌資料有問題：\n${error.message}`);
+  })
+  .finally(rerender);
 
 try {
   session = await connect(slot);

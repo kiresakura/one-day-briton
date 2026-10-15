@@ -195,6 +195,121 @@ button.quiet {
   color: var(--muted);
 }
 
+.table-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.table-note.problem {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.seats {
+  margin: 8px 0 0;
+  padding-left: 1.4em;
+}
+
+.seat span,
+.mate-stats {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.table-pile {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.waiting {
+  color: var(--muted);
+  text-align: center;
+}
+
+.caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.role-name {
+  font-size: 1.4rem;
+}
+
+.money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0;
+}
+
+.money strong {
+  font-size: 1.6rem;
+}
+
+h3 {
+  margin: 12px 0 4px;
+  font-size: 1rem;
+}
+
+.role-list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.destiny {
+  border-color: var(--accent);
+}
+
+.destiny p {
+  margin: 0 0 8px;
+}
+
+.hand {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hand-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.hand-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+}
+
+.hand-kind {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--paper);
+  font-size: 0.8rem;
+}
+
+.hand-kind.response {
+  background: var(--accent);
+  color: #fff;
+}
+
+.hand-cost {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hand-text {
+  margin: 4px 0 0;
+}
+
 .stage {
   text-align: center;
 }

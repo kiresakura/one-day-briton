@@ -27,6 +27,7 @@
 
   <main>
     <p id="notice" class="notice" role="status" hidden></p>
+    <p id="data-problem" class="notice" role="alert" hidden>卡牌資料有問題，請找工作人員</p>
 
     <section id="screen-loading">
       <p class="loading">連線中…</p>
@@ -90,6 +91,31 @@
           <meter id="player-fog-meter" min="0" max="100" value="0"></meter>
           <span id="player-fog"></span>
         </p>
+      </div>
+      <p id="player-wait" class="card waiting" hidden></p>
+      <div id="player-game" hidden>
+        <div class="card">
+          <p class="caption">你的階層</p>
+          <h2 id="player-role" class="role-name"></h2>
+          <p class="money">
+            <span>英鎊 <strong id="player-pounds"></strong></span>
+            <span>影響力 <strong id="player-influence"></strong></span>
+          </p>
+          <h3>使命</h3>
+          <ul id="player-missions" class="role-list"></ul>
+          <h3>特權</h3>
+          <ul id="player-privileges" class="role-list"></ul>
+        </div>
+        <div class="card destiny">
+          <h2>隱藏天命</h2>
+          <p id="player-destiny"></p>
+          <p id="player-destiny-score" class="caption"></p>
+          <p class="caption">只有你看得到，不要給別人看。</p>
+        </div>
+        <div class="card">
+          <h2>手牌 <span id="player-hand-count"></span> 張</h2>
+          <ul id="player-hand" class="hand"></ul>
+        </div>
       </div>
       <div class="card">
         <h2>同桌玩家</h2>
