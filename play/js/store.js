@@ -1,5 +1,5 @@
 // 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌、白晝出牌與響應卡的
-// 請求與結算、伺服器時間。
+// 請求與結算、黃昏的投票與揭曉、伺服器時間。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -24,7 +24,18 @@ import {
   update,
 } from 'firebase/database';
 import { config } from './config.js';
-import { checkSeating, processRequest, responseSettleAt, settlePending, startGame, sunrise } from './game.js';
+import {
+  checkSeating,
+  duskSettleAt,
+  duskStage,
+  duskStep,
+  processRequest,
+  responseSettleAt,
+  settlePending,
+  startGame,
+  submittedCount,
+  sunrise,
+} from './game.js';
 import {
   MAX_TABLES,
   NAME_MAX_LENGTH,
@@ -313,6 +324,11 @@ async function readRoom(session, code) {
   return room;
 }
 
+// 牌庫與棄牌堆分開寫（hostOnly/{code}/{n}/deck、discard），同一層的法案牌堆（billDeck）才不會被蓋掉。空陣列＝刪掉。
+function pileWrites(code, table, { deck, discard }) {
+  return { [`hostOnly/${code}/${table}/deck`]: deck, [`hostOnly/${code}/${table}/discard`]: discard };
+}
+
 // 牌庫只有主持端讀得到，順便用來確認這台裝置是主持端。
 async function readPile(session, code, table, deniedMessage) {
   try {
@@ -388,7 +404,7 @@ export async function processSunrise(session, code, table, data, random) {
     [`rooms/${code}/games/${table}/discardCount`]: next.discard.length,
     [`rooms/${code}/games/${table}/version`]: (game.version ?? 0) + 1,
     [`rooms/${code}/deals/${table}`]: state.round,
-    [`hostOnly/${code}/${table}`]: { deck: next.deck, discard: next.discard },
+    ...pileWrites(code, table, next),
   };
   for (const uid of Object.keys(game.seats)) writes[`private/${code}/${uid}/hand`] = next.hands[uid];
   const settled = { path: `rooms/${code}/deals/${table}`, done: (value) => (value ?? 0) >= state.round };
@@ -529,7 +545,7 @@ function settleWrites(session, code, table, before, result, version, data) {
     if (next[key] !== before[key]) writes[`${game}/${key}`] = next[key];
   }
   if (next.fog !== before.fog) writes[`rooms/${code}/tables/${table}/fog`] = next.fog;
-  writes[`hostOnly/${code}/${table}`] = { deck: next.deck, discard: next.discard };
+  Object.assign(writes, pileWrites(code, table, next));
   for (const [seatUid, hand] of Object.entries(next.hands)) {
     if (hand.join() !== before.hands[seatUid].join()) writes[`private/${code}/${seatUid}/hand`] = hand;
   }
@@ -614,25 +630,205 @@ export async function settleWindow(session, code, table, data, random) {
   }
 }
 
+// ---- 黃昏：法案暗標投票（M6） ----
+// 玩家把票寫進自己的 votes/{code}/{uid}（本人與主持端讀得到）：{ table, round, side, bid, seq, at }，at 由伺服器填，揭曉前可以
+// 重送（蓋掉上一張）。主持端進黃昏時翻法案、盯著已送出的人數、全員送出後寫截止時間（revealAt）、到了截止＋緩衝從伺服器重讀
+// 整房的票再揭曉（game.js 的 duskStep），每一筆都帶 version＋1。
+
+// 送出（或改）自己的票：table 是桌號，round 是這一回合；side 是 yes、no 或 abstain，bid 是影響力出價（棄權一律是 0）。
+// 序號是自己上一張＋1，at 是伺服器時間（規則都要求），用交易讀寫，同 sendRequest。回傳這一張的序號。
+export async function requestVote(session, code, { table, round, side, bid }) {
+  let result;
+  try {
+    result = await runTransaction(ref(session.db, `votes/${code}/${session.uid}`), (current) => ({
+      table: String(table),
+      round,
+      side,
+      bid: side === 'abstain' ? 0 : bid,
+      seq: (current?.seq ?? 0) + 1,
+      at: serverTimestamp(),
+    }));
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '這張票沒有送出（可能已經截止，或出價超過影響力），請重新整理後再試一次');
+    throw error;
+  }
+  return result.snapshot.val().seq;
+}
+
+// 自己的票一有變動就呼叫 onVote(票或 null)。回傳取消訂閱的函式。
+export function watchVote(session, code, onVote, onError) {
+  return onValue(ref(session.db, `votes/${code}/${session.uid}`), (snapshot) => onVote(snapshot.val()), onError);
+}
+
+// 整房的票，一定從伺服器讀：同 readRequests，這個模組不在 votes/{code} 整房掛訂閱（自動化是逐人訂閱），
+// 截止前已經送到伺服器的票一定讀得到；斷線時會等連回來才讀到。
+async function readVotes(session, code) {
+  try {
+    return (await get(ref(session.db, `votes/${code}`))).val() ?? {};
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '只有主持端可以揭曉法案');
+    throw error;
+  }
+}
+
+// 主持端讀成的一桌黃昏局面（game.js 的 state，多了桌號、黃昏、法案結果與法案牌堆）。
+function duskStateOf(number, table, game, hands, pile) {
+  return {
+    ...tableStateOf(table, game, hands, pile),
+    table: number,
+    dusk: game.dusk ?? null,
+    bills: game.bills ?? {},
+    billDeck: pile.billDeck ?? [],
+  };
+}
+
+// 黃昏的一筆寫入（duskStep 的結果）。局面一律 version＋1。
+//   opened     dusk（伺服器時間 openedAt；休會沒有 bill）與剩下的法案牌堆
+//   counted    已送出人數；全員送出時加上截止時間（倒數 0 秒時直接用伺服器時間）
+//   revealed   結果、黃昏紀錄、法案結果、座位（出價、效果、aligned）、有變的張數與手牌、牌庫與棄牌堆、迷霧的紀錄與該桌的迷霧值
+function duskWrites(code, table, before, result, version, data) {
+  const game = `rooms/${code}/games/${table}`;
+  const writes = { [`${game}/version`]: version + 1 };
+  if (result.kind === 'opened') {
+    writes[`${game}/dusk`] = { ...withoutNulls(result.dusk), openedAt: serverTimestamp() };
+    writes[`hostOnly/${code}/${table}/billDeck`] = result.billDeck;
+    return writes;
+  }
+  if (result.kind === 'counted') {
+    writes[`${game}/dusk/submitted`] = result.submitted;
+    if (result.revealAt !== null) {
+      writes[`${game}/dusk/revealAt`] = data.settings.duskRevealSeconds > 0 ? Math.round(result.revealAt) : serverTimestamp();
+    }
+    return writes;
+  }
+  const next = result.state;
+  writes[`${game}/dusk/result`] = result.result;
+  writes[`${game}/duskLog/${before.round}`] = result.log;
+  writes[`${game}/bills/${result.log.bill}`] = next.bills[result.log.bill];
+  writes[`${game}/seats`] = next.seats;
+  for (const key of ['fogMax', 'fogFired', 'fogPending']) {
+    if (next[key] !== before[key]) writes[`${game}/${key}`] = next[key];
+  }
+  if (next.fog !== before.fog) writes[`rooms/${code}/tables/${table}/fog`] = next.fog;
+  if (next.deck !== before.deck || next.discard !== before.discard) {
+    writes[`${game}/deckCount`] = next.deck.length;
+    writes[`${game}/discardCount`] = next.discard.length;
+    Object.assign(writes, pileWrites(code, table, next));
+  }
+  for (const [uid, hand] of Object.entries(next.hands)) {
+    if (hand !== before.hands[uid]) writes[`private/${code}/${uid}/hand`] = hand;
+  }
+  return writes;
+}
+
+// 主持端處理第 table 桌的黃昏，該做什麼由 duskStep 決定：進黃昏了還沒翻法案就翻（opened；牌堆抽完、全都通過時休會）、
+// 已送出人數變了就更新（counted；全員送出時寫截止時間）、到了截止＋緩衝就揭曉（revealed）。每次都先記下伺服器時間、
+// 再從伺服器重讀整房的票。回傳 { outcome, result }：outcome 是 opened、counted、revealed（result 是 { yes, no, passed, votes }）、
+// waiting（投票中沒有新的變化，或還沒到揭曉的時間）或 none（不是黃昏、休會、已揭曉，或另一台主持端先做了）。
+// 多台主持端同時做時靠 version 只成一筆。被拒的一方等局面變了再重讀重算；局面沒變（例如主持端估的伺服器時間比實際早，
+// 揭曉被規則擋在截止之前）就等一下再試，最多 3 次。
+export async function settleDusk(session, code, table, data, random) {
+  const clock = serverClock(session);
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const tableState = room.tables?.[table];
+    const game = room.games?.[table];
+    if (!tableState || !game?.seats) return { outcome: 'none', result: null };
+    const stage = duskStage(game.dusk, tableState.round);
+    if (stage === 'adjourned' || stage === 'revealed' || (stage === 'none' && tableState.phase !== 'dusk')) return { outcome: 'none', result: null };
+    const now = clock();
+    const revealing = stage === 'closing' && now >= duskSettleAt(game.dusk);
+    const votes = stage === 'none' ? {} : await readVotes(session, code);
+    const pile = await readPile(session, code, table, '只有主持端可以處理黃昏');
+    const hands = revealing ? (await readPrivates(session, code, Object.keys(game.seats))).hands : {};
+    const state = duskStateOf(table, tableState, game, hands, pile);
+    const result = duskStep(state, votes, data, { now, random });
+    if (result.kind === 'none' || result.kind === 'waiting') return { outcome: result.kind, result: null };
+    const version = game.version ?? 0;
+    try {
+      await update(ref(session.db), duskWrites(code, table, state, result, version, data));
+      return { outcome: result.kind, result: result.result ?? null };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      await waitFor(session, `rooms/${code}/games/${table}`, (value) => (value?.version ?? 0) !== version);
+      if (attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '黃昏沒有結算成功，請找工作人員');
+    }
+  }
+}
+
+// 倒數只剩這麼一點（毫秒）時，提前揭曉不再改截止時間：快到了，也免得跟估計的伺服器時間差撞在一起被規則拒絕。
+const EARLY_REVEAL_MARGIN_MS = 500;
+
+// 提前揭曉：把第 table 桌的截止時間改成現在（伺服器時間），沒送出的人算棄權；主持端的自動化在截止＋緩衝後揭曉。
+// 只在黃昏、投票中或倒數還沒到時有用。回傳 { closed }：false 表示這次沒有寫入（已經截止、已揭曉、休會或不是黃昏）。
+export async function revealDusk(session, code, table) {
+  const clock = serverClock(session);
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const tableState = room.tables?.[table];
+    const game = room.games?.[table];
+    const stage = duskStage(game?.dusk, tableState?.round);
+    const open = stage === 'voting' || (stage === 'closing' && game.dusk.revealAt > clock() + EARLY_REVEAL_MARGIN_MS);
+    if (tableState?.phase !== 'dusk' || !open) return { closed: false };
+    const version = game.version ?? 0;
+    try {
+      await update(ref(session.db), {
+        [`rooms/${code}/games/${table}/version`]: version + 1,
+        [`rooms/${code}/games/${table}/dusk/revealAt`]: serverTimestamp(),
+      });
+      return { closed: true };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const seen = await waitFor(session, `rooms/${code}/games/${table}`, (value) => (value?.version ?? 0) !== version);
+      if (seen === undefined || attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '提前揭曉沒有成功，請再按一次');
+    }
+  }
+}
+
 // 主持端自動結算：盯著房間與入座玩家的請求，有還沒處理的請求就交給 settleRequest；有牌在等響應的桌，看到新的響應或
 // 到了 responseSettleAt（伺服器時間，本機計時器叫醒）就整桌交給 settleWindow，那一桌的出牌與結束這一輪先等著。
-// 畫面不用按。多台主持端可以同時開著，同一筆請求只會套用一次。請求是逐人訂閱（requests/{code}/{uid}），
-// settleWindow 讀整房時才會真的問伺服器。onError(error) 在結算失敗時呼叫。回傳停止的函式。
+// 黃昏（M6）：進黃昏還沒翻法案、看到已送出的人數變了、或到了截止＋緩衝（本機計時器叫醒），就整桌交給 settleDusk。
+// 畫面不用按。多台主持端可以同時開著，同一筆請求只會套用一次。請求與票都是逐人訂閱（requests/{code}/{uid}、
+// votes/{code}/{uid}），settleWindow 與 settleDusk 讀整房時才會真的問伺服器。onError(error) 在結算失敗時呼叫。回傳停止的函式。
 export function startSettling(session, code, data, { random, onError = () => {} } = {}) {
   const clock = serverClock(session);
   let room = null;
   const requests = {};
-  const listening = new Map(); // uid → 取消訂閱
+  const votes = {};
+  const listening = new Map(); // uid → 取消訂閱（請求）
+  const listeningVotes = new Map(); // uid → 取消訂閱（票）
   let running = false;
   let stopped = false;
   let timer = null;
-  // 「桌:uid」或「桌:window」→ 這台沒寫入或失敗時的狀況：同樣的狀況不再自動重試，請求、局面或到期與否變了再看。
+  // 「桌:uid」「桌:window」或「桌:dusk」→ 這台沒寫入或失敗時的狀況：同樣的狀況不再自動重試，請求、票、局面或到期與否變了再看。
   const skipped = new Map();
+  // 這一桌的黃昏有沒有事要做：開黃昏、更新已送出人數（用逐人訂閱看到的票先算，settleDusk 再從伺服器重讀）、揭曉。
+  const duskWork = (table, game) => {
+    const tableState = room.tables?.[table];
+    if (!tableState) return null;
+    const stage = duskStage(game.dusk, tableState.round);
+    const version = game.version ?? 0;
+    let mark = null;
+    if (stage === 'none' && tableState.phase === 'dusk') {
+      mark = `${version}@open`;
+    } else if (stage === 'closing' && clock() >= duskSettleAt(game.dusk)) {
+      mark = `${version}@reveal`;
+    } else if ((stage === 'voting' || stage === 'closing') && tableState.phase === 'dusk') {
+      const view = { table, round: tableState.round, phase: tableState.phase, seats: game.seats, dusk: game.dusk };
+      const count = submittedCount(view, votes);
+      const everyone = count === Object.keys(game.seats).length;
+      if (count !== (game.dusk.submitted ?? 0) || (everyone && stage === 'voting')) mark = `${version}@count@${count}`;
+    }
+    const key = `${table}:dusk`;
+    return mark !== null && skipped.get(key) !== mark ? { table, key, mark, dusk: true } : null;
+  };
   const waiting = () => {
     const work = [];
     for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
       const game = room.games?.[table];
       if (!game?.seats) continue;
+      const dusk = duskWork(table, game);
+      if (dusk) work.push(dusk);
       const fresh = Object.keys(game.seats).filter((uid) => requests[uid]?.seq > (game.lastSeq?.[uid] ?? 0));
       if (game.pending) {
         const responses = fresh.filter((uid) => requests[uid].type === 'respond');
@@ -651,26 +847,32 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     }
     return work;
   };
-  // 下一張還沒到期的待響應牌到期時叫醒自己（伺服器時間換算成本機的計時器）。沒有待響應的牌就不設計時器。
+  // 下一張還沒到期的待響應牌、下一個還沒到揭曉時間的黃昏到期時叫醒自己（伺服器時間換算成本機的計時器）。都沒有就不設計時器。
   const arm = () => {
     clearTimeout(timer);
     timer = null;
     if (stopped) return;
     const now = clock();
-    const due = Object.values(room?.games ?? {})
-      .filter((game) => game?.pending)
-      .map((game) => responseSettleAt(game.pending))
-      .filter((at) => Number.isFinite(at) && at > now);
-    if (due.length) timer = setTimeout(pump, Math.min(...due) - now + 20);
+    const due = [];
+    for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
+      const game = room.games?.[table];
+      if (game?.pending) due.push(responseSettleAt(game.pending));
+      if (game?.seats && duskStage(game.dusk, room.tables?.[table]?.round) === 'closing') due.push(duskSettleAt(game.dusk));
+    }
+    const later = due.filter((at) => Number.isFinite(at) && at > now);
+    if (later.length) timer = setTimeout(pump, Math.min(...later) - now + 20);
   };
   const pump = async () => {
     if (running || stopped) return;
     running = true;
     try {
       for (let work = waiting(); work.length > 0 && !stopped; work = waiting()) {
-        const { table, uid, key, mark, window } = work[0];
+        const { table, uid, key, mark, window, dusk } = work[0];
         try {
-          const result = window ? await settleWindow(session, code, table, data, random) : await settleRequest(session, code, table, uid, data, random);
+          let result;
+          if (dusk) result = await settleDusk(session, code, table, data, random);
+          else if (window) result = await settleWindow(session, code, table, data, random);
+          else result = await settleRequest(session, code, table, uid, data, random);
           if (['none', 'waiting', 'deferred'].includes(result.outcome)) skipped.set(key, mark);
         } catch (error) {
           skipped.set(key, mark);
@@ -682,20 +884,24 @@ export function startSettling(session, code, data, { random, onError = () => {} 
       arm();
     }
   };
-  // 每個入座的人訂閱一次自己那一筆請求。
+  // 每個入座的人訂閱一次自己那一筆請求、一次自己的票。
+  const subscribe = (map, path, store, uid) => {
+    if (map.has(uid) || stopped) return;
+    const stop = onValue(
+      ref(session.db, `${path}/${code}/${uid}`),
+      (snapshot) => {
+        store[uid] = snapshot.val();
+        pump();
+      },
+      onError,
+    );
+    map.set(uid, stop);
+  };
   const listen = () => {
     for (const game of Object.values(room?.games ?? {})) {
       for (const uid of Object.keys(game?.seats ?? {})) {
-        if (listening.has(uid) || stopped) continue;
-        const stop = onValue(
-          ref(session.db, `requests/${code}/${uid}`),
-          (snapshot) => {
-            requests[uid] = snapshot.val();
-            pump();
-          },
-          onError,
-        );
-        listening.set(uid, stop);
+        subscribe(listening, 'requests', requests, uid);
+        subscribe(listeningVotes, 'votes', votes, uid);
       }
     }
   };
@@ -712,7 +918,7 @@ export function startSettling(session, code, data, { random, onError = () => {} 
     stopped = true;
     clearTimeout(timer);
     stopRoom();
-    for (const stop of listening.values()) stop();
+    for (const stop of [...listening.values(), ...listeningVotes.values()]) stop();
   };
 }
 
