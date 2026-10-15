@@ -134,7 +134,7 @@ test('the four spreadsheet forms become steal effects', () => {
 const ACTION_HEADER = '編號,名稱,類型,分類,可回應,所屬階層,張數,英鎊成本,影響力成本,齒輪,效果,牌面文字\n';
 const issuesOf = (kind, csv) => checkData({ roles: data.roles, [kind]: convertSheet(kind, csv).data }).errors.map((issue) => formatIssue(issue));
 
-test('the check takes steal only on action cards, only from @指定 or @出牌者, and only positive whole amounts', () => {
+test('the check takes steal only on action cards, from @指定 on normal cards and @出牌者 on response cards, and only positive whole amounts', () => {
   const rows = [
     'a01,甲,一般,,,,1,,,,偷英鎊3@指定,牌面',
     'a02,乙,響應,,,,1,,,,偷影響力2@出牌者,牌面',
@@ -146,15 +146,18 @@ test('the check takes steal only on action cards, only from @指定 or @出牌�
     'a08,辛,一般,,,,1,,,,偷英鎊1.5@指定,牌面',
     'a09,壬,一般,,,,1,,,,偷英鎊2,牌面',
     'a10,癸,一般,,,,1,,,,偷英鎊2@全體,牌面',
+    'a11,子,響應,,,,1,,,,偷影響力1,牌面',
   ];
   assert.deepEqual(issuesOf('actions', `${ACTION_HEADER}${rows.join('\n')}\n`), [
-    '錯誤｜actions.json｜a04｜effects（效果）｜第 1 個效果：偷只能對 @指定（一般牌）或 @出牌者（響應卡），現在是「self」',
+    '錯誤｜actions.json｜a03｜effects（效果）｜第 1 個效果：響應卡的偷只能對 @出牌者（originalPlayer），現在是「chosen」',
+    '錯誤｜actions.json｜a04｜effects（效果）｜第 1 個效果：一般牌的偷只能對 @指定（chosen），現在是「self」',
     '錯誤｜actions.json｜a05｜effects（效果）｜第 1 個效果：@出牌者（originalPlayer）只能用在響應卡',
     '錯誤｜actions.json｜a06｜effects（效果）｜第 1 個效果：偷的 amount 要是 1 以上的整數，現在是 0',
     '錯誤｜actions.json｜a07｜effects（效果）｜第 1 個效果：偷的 amount 要是 1 以上的整數，現在是 -2',
     '錯誤｜actions.json｜a08｜effects（效果）｜第 1 個效果：偷的 amount 要是 1 以上的整數，現在是 1.5',
-    '錯誤｜actions.json｜a09｜effects（效果）｜第 1 個效果：偷只能對 @指定（一般牌）或 @出牌者（響應卡），現在是「self」',
-    '錯誤｜actions.json｜a10｜effects（效果）｜第 1 個效果：偷只能對 @指定（一般牌）或 @出牌者（響應卡），現在是「all」',
+    '錯誤｜actions.json｜a09｜effects（效果）｜第 1 個效果：一般牌的偷只能對 @指定（chosen），現在是「self」',
+    '錯誤｜actions.json｜a10｜effects（效果）｜第 1 個效果：一般牌的偷只能對 @指定（chosen），現在是「all」',
+    '錯誤｜actions.json｜a11｜effects（效果）｜第 1 個效果：響應卡的偷只能對 @出牌者（originalPlayer），現在是「self」',
   ]);
   assert.deepEqual(issuesOf('bills', '編號,名稱,年代,通過時效果,不通過時效果,牌面文字\nb01,甲,,偷英鎊2@指定,,牌面\n'), [
     '錯誤｜bills.json｜b01｜onPass（通過時效果）｜第 1 個效果：偷（steal）只能用在行動牌',

@@ -286,6 +286,10 @@ test('rules: only hosts write the event log, entries are checked as a whole, and
 test('a day card that pushes the fog over 30 settles the fog event in the same write and clears fogPending', TIMEOUT, async (t) => {
   const { code, watchers, first, second, third } = await dayRoom(t, instant, { fog: 28 });
   const seen = watchers.p2.history;
+  const empty = await read(host, `rooms/${code}/games/2`);
+  assert.equal(empty.eventLog, undefined);
+  const junk = { [`rooms/${code}/games/2/version`]: empty.version + 1, [`rooms/${code}/games/2/eventLog`]: 'junk' };
+  await assert.rejects(update(ref(host.db), junk), denied, 'an empty log cannot become a plain value');
   await arrange(code, { [first.uid]: ['a01'], [second.uid]: [], [third.uid]: [] }, instant);
   const before = await read(host, `rooms/${code}/games/2`);
   // a01：成本 2 英鎊，自己英鎊 +5、迷霧 +3（28 → 31，越過 30）。
@@ -332,7 +336,7 @@ test('a bill that pushes the fog over 30 settles the fog event in the same revea
   }
 });
 
-test('two hosts dealing the same sunrise at once deal it once and flip one event', TIMEOUT, async (t) => {
+test('two hosts dealing the same sunrise at once deal it once and flip one event; a threshold left by an older version is settled with it', TIMEOUT, async (t) => {
   const { code } = await openRoom(t);
   const seenByBackup = watch(backup, code);
   t.after(() => seenByBackup.stop());
@@ -340,22 +344,28 @@ test('two hosts dealing the same sunrise at once deal it once and flip one event
   await approveHost(host, code, backup.uid);
   assert.deepEqual(await startTable(host, code, 2, data, seededRandom(1)), { started: true });
   await advance(code, 4);
-  await seenByBackup.until((room) => room.hosts?.[backup.uid] === true && room.tables[2].round === 2 && room.deals[2] === 1, 'backup sees the second sunrise');
+  // 舊版（M5a–M6 只記不處理）留下的門檻：迷霧曾越過 30，事件還沒結算。
+  const old = await read(host, `rooms/${code}/games/2`);
+  const leftover = { version: old.version + 1, fogPending: [30], fogFired: [30], fogMax: 35 };
+  await update(ref(host.db), Object.fromEntries(Object.entries(leftover).map(([key, value]) => [`rooms/${code}/games/2/${key}`, value])));
+  await seenByBackup.until((room) => room.hosts?.[backup.uid] === true && room.tables[2].round === 2 && room.deals[2] === 1 && room.games[2].fogPending, 'backup sees the second sunrise');
   const before = await read(host, `rooms/${code}/games/2`);
   const pile = await read(host, `hostOnly/${code}/2`);
   const results = await Promise.all([processSunrise(host, code, 2, data, seededRandom(2)), processSunrise(backup, code, 2, data, seededRandom(3))]);
   assert.deepEqual(results.map((result) => result.dealt).sort(), [false, true]);
   const game = await read(host, `rooms/${code}/games/2`);
   const entries = eventLogList(game.eventLog);
-  assert.deepEqual(entries.map((entry) => [entry.round, entry.phase, entry.kind]), [[1, 'sunrise', 'deck'], [2, 'sunrise', 'deck']]);
+  assert.deepEqual(entries.map((entry) => [entry.round, entry.phase, entry.kind]), [[1, 'sunrise', 'deck'], [2, 'sunrise', 'deck'], [2, 'sunrise', 'fog']]);
   assert.equal(entries[1].event, pile.eventDeck[0]);
+  assert.deepEqual(entries[2], { round: 2, phase: 'sunrise', event: 't30', kind: 'fog', threshold: 30 }, 'the leftover threshold is settled at this sunrise');
+  assert.deepEqual([game.fogPending, game.fogFired], [undefined, [30]]);
   assert.equal(game.version, before.version + 1);
   assert.deepEqual((await read(host, `hostOnly/${code}/2`)).eventDeck, pile.eventDeck.slice(1));
-  assert.ok(allSame(game, 'pounds', 15 + GAIN[entries[0].event] + 5 + GAIN[entries[1].event]), 'paid and flipped once');
+  assert.ok(allSame(game, 'pounds', 15 + GAIN[entries[0].event] + 5 + GAIN[entries[1].event] - 1), 'paid, flipped and the fog event (−1) once');
 });
 
-test('stealing through the real play flow: a card from @指定 and a response from @出牌者 keep the total', TIMEOUT, async (t) => {
-  const { code, first, second, third } = await dayRoom(t, quick);
+test('stealing through the real play flow: a card from @指定 and a response from @出牌者 keep the total; the window settles the fog event too', TIMEOUT, async (t) => {
+  const { code, first, second, third } = await dayRoom(t, quick, { fog: 29 });
   await arrange(code, { [first.uid]: ['a15', 'a03'], [second.uid]: ['a25'], [third.uid]: [] }, quick);
   const game = `rooms/${code}/games/2`;
   const start = await read(host, game);
@@ -379,7 +389,10 @@ test('stealing through the real play flow: a card from @指定 and a response fr
   await requestRespond(second, code, { card: 'a25', pending: id });
   assert.deepEqual(await settleWindow(host, code, 2, quick), { outcome: 'resolved', response: { by: second.uid, card: 'a25' } });
   now = await read(host, game);
-  assert.deepEqual(stats(now, 'pounds'), { [first.uid]: 18 - 4 + 7 - 2, [second.uid]: 14, [third.uid]: 15 });
-  assert.equal(sum(now, 'pounds'), sum(start, 'pounds') - 4 + 7, 'only the a03 cost and gain change the total');
+  // a03 的迷霧 +2 讓 29 → 31：同一筆裡結算迷霧事件（全體英鎊 −1、r2 影響力 +1）。
+  assert.deepEqual(eventLogList(now.eventLog), [{ round: 1, phase: 'day', event: 't30', kind: 'fog', threshold: 30 }]);
+  assert.deepEqual([await read(host, `rooms/${code}/tables/2/fog`), now.fogPending, now.seats[second.uid].influence], [31, undefined, 4]);
+  assert.deepEqual(stats(now, 'pounds'), { [first.uid]: 18 - 4 + 7 - 2 - 1, [second.uid]: 14 - 1, [third.uid]: 15 - 1 });
+  assert.equal(sum(now, 'pounds'), sum(start, 'pounds') - 4 + 7 - 3, 'the a03 cost and gain and the fog event change the total, the steals do not');
   assert.deepEqual(stats(now, 'sin'), { [first.uid]: 1, [second.uid]: 1, [third.uid]: undefined }, 'a15 and a25 are crimes');
 });

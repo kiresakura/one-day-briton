@@ -19,9 +19,8 @@ export const ROLE_COUNT = 6;
 export const EFFECT_OPS = ['pounds', 'influence', 'fog', 'draw', 'discard', 'cancel', 'steal'];
 // role＝某個階層的玩家（另寫 role 欄）；originalPlayer＝被回應的那張牌是誰出的。
 export const EFFECT_TARGETS = ['self', 'all', 'others', 'chosen', 'role', 'originalPlayer'];
-// 偷（steal）：只能用在行動牌，從 @指定（一般牌）或 @出牌者（響應卡）那裡拿走英鎊或影響力（企劃 10/15）。
+// 偷（steal）：只能用在行動牌，一般牌從 @指定、響應卡從 @出牌者 那裡拿走英鎊或影響力（企劃 10/15）。
 export const STEAL_RESOURCES = ['pounds', 'influence'];
-export const STEAL_TARGETS = ['chosen', 'originalPlayer'];
 // 法案與事件沒有「出牌的人」，自己、其他人都沒有對象。
 export const TABLE_TARGETS = ['all', 'chosen', 'role'];
 // 一般牌輪到自己時出；響應卡在別人出牌後插話打出。
@@ -196,10 +195,10 @@ function checkEffects(record, field, { targets, action = false, response = false
       allowed = [...allowed, 'resource'];
       if (!action) {
         error(field, `${where}：偷（steal）只能用在行動牌`);
-      } else if (!STEAL_TARGETS.includes(target)) {
-        error(field, `${where}：偷只能對 @指定（一般牌）或 @出牌者（響應卡），${now(target)}`);
       } else if (target === 'originalPlayer' && !response) {
         error(field, `${where}：@出牌者（originalPlayer）只能用在響應卡`);
+      } else if (target !== (response ? 'originalPlayer' : 'chosen')) {
+        error(field, `${where}：${response ? '響應卡的偷只能對 @出牌者（originalPlayer）' : '一般牌的偷只能對 @指定（chosen）'}，${now(target)}`);
       }
       if (!STEAL_RESOURCES.includes(effect.resource)) {
         error(field, `${where}：偷的 resource 只能是 ${STEAL_RESOURCES.join('／')}（英鎊／影響力），${now(effect.resource)}`);

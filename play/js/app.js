@@ -351,7 +351,7 @@ function rerenderAt(at) {
 // ---- 事件（M7） ----
 
 function eventOf(id) {
-  return cardData?.index.events.get(id) ?? null;
+  return cardData?.index.events?.get(id) ?? null;
 }
 
 const TARGET_TEXT = { all: '全體', chosen: '指定一人' };
@@ -373,13 +373,17 @@ function eventTitle(entry) {
   return entry.kind === 'fog' ? `迷霧越過 ${entry.threshold}：${name}` : name;
 }
 
-// 一張事件：標題、牌面文字、效果（含數字），以及沒結算的部分。
+// 一張事件：標題、牌面文字、效果（含數字），以及沒結算的部分。有沒有結算看紀錄的 skipped（結算當時的結果），
+// 不看現在的卡牌資料：資料之後改了也不會寫錯。
 function eventLines(entry) {
   const event = eventOf(entry.event);
   const nodes = [element('p', `event-title${entry.kind === 'fog' ? ' fog-event' : ''}`, eventTitle(entry))];
-  if (!event) return entry.event ? [...nodes, element('p', 'table-note problem', '卡牌資料裡找不到這張事件，效果沒有結算')] : nodes;
-  nodes.push(element('p', 'event-text', event.text));
-  if (event.todo === true) return [...nodes, element('p', 'table-note problem', '這張事件的效果還沒做好（todo），沒有結算')];
+  if (event) nodes.push(element('p', 'event-text', event.text));
+  if (entry.skipped) {
+    const why = entry.event ? '這張事件的效果還沒做好（todo），沒有結算' : '沒有效果';
+    return [...nodes, element('p', 'table-note problem', why)];
+  }
+  if (!event) return [...nodes, element('p', 'table-note problem', '卡牌資料裡找不到這張事件的內容')];
   if (event.effects.length) nodes.push(element('p', 'event-effects', `效果：${event.effects.map(effectText).join('、')}`));
   const skipped = skippedEventEffects(event);
   if (skipped.length) nodes.push(element('p', 'table-note problem', `有 ${skipped.length} 個效果要指定一人，這一版不結算，已略過`));
@@ -394,6 +398,7 @@ function todaysEvents(game, state) {
 }
 
 function eventsBlock(game, state) {
+  if (!cardData) return []; // 卡牌資料還沒讀到時不顯示，免得寫成「找不到這張事件」
   const entries = todaysEvents(game, state);
   if (entries.length === 0) return [];
   const deck = entries.filter((entry) => entry.kind === 'deck');
