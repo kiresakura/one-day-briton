@@ -362,7 +362,7 @@ test('everyone votes, the deadline is 1 second away, and the dusk reveals by its
   assert.deepEqual([opened.games[2].dusk.bill, opened.games[2].dusk.submitted], ['b01', 0]);
 
   await vote(first, code, 'yes', 2);
-  await watchers.p3.until((room) => room.games[2].dusk.submitted === 1, 'one vote sent');
+  await watchers.p3.until((room) => room.games[2].dusk?.submitted === 1, 'one vote sent');
   await vote(second, code, 'no', 1);
   await vote(first, code, 'yes', 3); // 改票：以最後一次為準
   await vote(third, code, 'abstain');
