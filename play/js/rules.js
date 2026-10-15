@@ -45,6 +45,20 @@ export function applyFog(current, delta) {
   return { fog, crossed };
 }
 
+// 一場裡的迷霧變動（企劃 10/15 回覆）：state＝{ fog, fogMax, fired }，fired 是本場已觸發過的門檻；
+// 缺的欄位當 0、0、[]。每個門檻每場只在第一次超過時觸發，降回再升上來不再觸發；fogMax 記本場最高值。
+// crossed 是這次新觸發的門檻，由小到大，依序處理。
+export function advanceFog(state, delta, thresholds = FOG_THRESHOLDS) {
+  const before = clampFog(state?.fog ?? FOG_MIN);
+  const fog = clampFog(before + delta);
+  const fogMax = Math.max(clampFog(state?.fogMax ?? FOG_MIN), before, fog);
+  const fired = Array.isArray(state?.fired) ? state.fired : [];
+  const crossed = [...thresholds]
+    .sort((a, b) => a - b)
+    .filter((threshold) => !fired.includes(threshold) && fog > threshold);
+  return { fog, fogMax, fired: [...fired, ...crossed], crossed };
+}
+
 function randomBytes(count) {
   return globalThis.crypto.getRandomValues(new Uint8Array(count));
 }

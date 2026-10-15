@@ -5,6 +5,7 @@ import {
   PHASES,
   PHASE_LABELS,
   ROOM_CODE_ALPHABET,
+  advanceFog,
   applyFog,
   clampFog,
   confirmCode,
@@ -78,6 +79,52 @@ test('falling fog reports no thresholds', () => {
   assert.deepEqual(applyFog(95, -70), { fog: 25, crossed: [] });
   assert.deepEqual(applyFog(61, -1), { fog: 60, crossed: [] });
   assert.deepEqual(applyFog(50, 0), { fog: 50, crossed: [] });
+});
+
+test('advanceFog: landing exactly on a threshold does not fire it', () => {
+  assert.deepEqual(advanceFog({ fog: 25, fogMax: 25, fired: [] }, 5), { fog: 30, fogMax: 30, fired: [], crossed: [] });
+  assert.deepEqual(advanceFog({ fog: 30, fogMax: 30, fired: [] }, 1), { fog: 31, fogMax: 31, fired: [30], crossed: [30] });
+});
+
+test('advanceFog: crossing several thresholds at once fires them from low to high', () => {
+  assert.deepEqual(advanceFog({ fog: 25, fogMax: 25, fired: [] }, 70), { fog: 95, fogMax: 95, fired: [30, 60, 90], crossed: [30, 60, 90] });
+  assert.deepEqual(advanceFog({ fog: 0, fogMax: 0, fired: [] }, 50, [40, 20, 80]).crossed, [20, 40]);
+});
+
+test('advanceFog: each threshold fires once per game, even after fog falls and rises again', () => {
+  let state = { fog: 25, fogMax: 25, fired: [] };
+  const steps = [10, -10, 10, 40, -60, 80];
+  const crossed = steps.map((delta) => {
+    state = advanceFog(state, delta);
+    return state.crossed;
+  });
+  assert.deepEqual(crossed, [[30], [], [], [60], [], [90]]);
+  assert.deepEqual(state, { fog: 95, fogMax: 95, fired: [30, 60, 90], crossed: [90] });
+});
+
+test('advanceFog keeps the highest fog of the game', () => {
+  const high = advanceFog({ fog: 50, fogMax: 50, fired: [30] }, 45);
+  assert.equal(high.fogMax, 95);
+  const low = advanceFog(high, -80);
+  assert.deepEqual(low, { fog: 15, fogMax: 95, fired: [30, 60, 90], crossed: [] });
+  assert.equal(advanceFog(low, 10).fogMax, 95);
+});
+
+test('advanceFog clamps fog to 0–100', () => {
+  assert.deepEqual(advanceFog({ fog: 61, fogMax: 61, fired: [30, 60] }, 500), { fog: 100, fogMax: 100, fired: [30, 60, 90], crossed: [90] });
+  assert.deepEqual(advanceFog({ fog: 10, fogMax: 40, fired: [30] }, -500), { fog: 0, fogMax: 40, fired: [30], crossed: [] });
+  assert.equal(advanceFog({ fog: 10, fogMax: 10, fired: [] }, Number.NaN).fog, 0);
+});
+
+test('advanceFog accepts older states that miss fogMax or fired', () => {
+  assert.deepEqual(advanceFog(initialTable(), 31), { fog: 31, fogMax: 31, fired: [30], crossed: [30] });
+  assert.deepEqual(advanceFog({ fog: 10 }, 5), { fog: 15, fogMax: 15, fired: [], crossed: [] });
+  assert.deepEqual(advanceFog({}, 65), { fog: 65, fogMax: 65, fired: [30, 60], crossed: [30, 60] });
+  assert.deepEqual(advanceFog(undefined, 0), { fog: 0, fogMax: 0, fired: [], crossed: [] });
+  // 傳進來的狀態不會被改到。
+  const state = { fog: 25, fogMax: 25, fired: [] };
+  advanceFog(state, 70);
+  assert.deepEqual(state, { fog: 25, fogMax: 25, fired: [] });
 });
 
 test('room codes are 6 characters from the unambiguous alphabet', () => {
