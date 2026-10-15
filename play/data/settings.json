@@ -38,5 +38,12 @@
   ],
   "gambleMedicalFee": 2,
   "splitPounds": 6,
-  "splitSin": 1
+  "splitSin": 1,
+  "maxRounds": 12,
+  "scoreRates": {
+    "pounds": 5,
+    "influence": 3
+  },
+  "achievementPoints": 3,
+  "sinPerPenalty": 2
 }

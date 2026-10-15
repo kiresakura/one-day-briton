@@ -6,6 +6,14 @@
     "score": {
       "text": "終局時《遺產稅法案》沒有通過（沒被表決也算）",
       "points": 10
+    },
+    "check": {
+      "kind": "bills",
+      "passed": false,
+      "bills": [
+        "b05"
+      ],
+      "atLeast": 1
     }
   },
   {
@@ -15,6 +23,12 @@
     "score": {
       "text": "終局時迷霧值低於 60",
       "points": 10
+    },
+    "check": {
+      "kind": "compare",
+      "what": "fog",
+      "op": "<",
+      "value": 60
     }
   },
   {
@@ -24,6 +38,10 @@
     "score": {
       "text": "終局時英鎊是全桌最多（同分都算）",
       "points": 10
+    },
+    "check": {
+      "kind": "most",
+      "what": "pounds"
     }
   },
   {
@@ -33,6 +51,15 @@
     "score": {
       "text": "終局時《十小時工作法案》與《八小時工作法》都沒有通過",
       "points": 10
+    },
+    "check": {
+      "kind": "bills",
+      "passed": false,
+      "bills": [
+        "b01",
+        "b06"
+      ],
+      "atLeast": 2
     }
   },
   {
@@ -42,6 +69,14 @@
     "score": {
       "text": "終局時《八小時工作法》已通過",
       "points": 10
+    },
+    "check": {
+      "kind": "bills",
+      "passed": true,
+      "bills": [
+        "b06"
+      ],
+      "atLeast": 1
     }
   },
   {
@@ -51,6 +86,17 @@
     "score": {
       "text": "終局時下列法案至少通過 2 張：十小時工作法案、八小時工作法、第二次改革法案、礦場法",
       "points": 10
+    },
+    "check": {
+      "kind": "bills",
+      "passed": true,
+      "bills": [
+        "b01",
+        "b06",
+        "b02",
+        "b03"
+      ],
+      "atLeast": 2
     }
   },
   {
@@ -60,6 +106,10 @@
     "score": {
       "text": "終局時影響力是全桌最多（同分都算）",
       "points": 10
+    },
+    "check": {
+      "kind": "most",
+      "what": "influence"
     }
   },
   {
@@ -69,6 +119,11 @@
     "score": {
       "text": "終局時你的英鎊比東區黑幫多",
       "points": 10
+    },
+    "check": {
+      "kind": "moreThan",
+      "what": "pounds",
+      "role": "r5"
     }
   },
   {
@@ -78,6 +133,12 @@
     "score": {
       "text": "終局時英鎊 40 以上",
       "points": 10
+    },
+    "check": {
+      "kind": "compare",
+      "what": "pounds",
+      "op": ">=",
+      "value": 40
     }
   },
   {
@@ -87,6 +148,12 @@
     "score": {
       "text": "終局時迷霧值 60 以上",
       "points": 10
+    },
+    "check": {
+      "kind": "compare",
+      "what": "fog",
+      "op": ">=",
+      "value": 60
     }
   },
   {
@@ -96,6 +163,12 @@
     "score": {
       "text": "這場遊戲中迷霧值曾經超過 90",
       "points": 10
+    },
+    "check": {
+      "kind": "compare",
+      "what": "fogMax",
+      "op": ">",
+      "value": 90
     }
   },
   {
@@ -105,6 +178,10 @@
     "score": {
       "text": "終局時手牌是全桌最多（同數都算）",
       "points": 10
+    },
+    "check": {
+      "kind": "most",
+      "what": "hand"
     }
   }
 ]
