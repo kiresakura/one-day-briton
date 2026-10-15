@@ -116,6 +116,13 @@ test('advanceFog clamps fog to 0–100', () => {
   assert.equal(advanceFog({ fog: 10, fogMax: 10, fired: [] }, Number.NaN).fog, 0);
 });
 
+test('advanceFog fires a threshold only when the fog rises past it', () => {
+  // 舊狀態沒有 fired、迷霧本來就在 30 之上：往下或沒升過下一個門檻都不觸發。
+  assert.deepEqual(advanceFog({ fog: 50 }, -5), { fog: 45, fogMax: 50, fired: [], crossed: [] });
+  assert.deepEqual(advanceFog({ fog: 50 }, 5), { fog: 55, fogMax: 55, fired: [], crossed: [] });
+  assert.deepEqual(advanceFog({ fog: 50 }, 15), { fog: 65, fogMax: 65, fired: [60], crossed: [60] });
+});
+
 test('advanceFog accepts older states that miss fogMax or fired', () => {
   assert.deepEqual(advanceFog(initialTable(), 31), { fog: 31, fogMax: 31, fired: [30], crossed: [30] });
   assert.deepEqual(advanceFog({ fog: 10 }, 5), { fog: 15, fogMax: 15, fired: [], crossed: [] });
