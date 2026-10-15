@@ -1,4 +1,4 @@
-// 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），以及白晝的輪流出牌與結算。
+// 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），以及白晝的輪流出牌、響應卡與結算。
 // 不碰網路、不碰畫面，瀏覽器與 Node 測試共用同一份。輸入資料檔的內容與目前的局面，輸出要寫入的新局面。
 // 亂數一律從注入的來源拿（預設是 crypto.getRandomValues），測試用固定種子。
 //
@@ -159,8 +159,9 @@ export function startGame(data, uids, { random = cryptoRandom, firstSunrise = FI
 //                       上一張的齒輪與級數；round 不是目前的回合＝這一回合的白晝還沒開始
 //   fogMax、fogFired、fogPending   本場迷霧最高值、已觸發的門檻、新越過還沒處理的門檻（事件留給 M7）
 //   lastSeq             { uid: 已處理過的請求序號 }
+//   pending             等著響應的那張一般牌（見下方「響應卡」），沒有是 null
 // 一張一般牌分兩步：acceptPlay（檢查、付成本、牌離開手牌、算級數）與 resolvePlay（套效果、牌進棄牌堆、記罪孽與紀錄、
-// 更新輪次）。M5a 兩步在同一筆寫入完成；M5b 會在兩步之間插入響應窗口，所以兩步之間的 state 與 pending 都是純資料，可以單獨存。
+// 更新輪次）。兩步之間是響應窗口（M5b），兩步之間的 state 與 pending 都是純資料，可以單獨存。
 
 // 罪孽：出了這兩類的牌，出牌者記 1 點（企劃 10/15 回覆第 9 題，M9 計分用）。
 export const SIN_CATEGORIES = ['犯罪', '破壞'];
@@ -185,6 +186,15 @@ export const REJECT_REASONS = {
   'need-chain-target': '3 級連鎖要指定同桌的一個人棄牌',
   'bad-chain-target': '連鎖棄牌只能指定同桌的另一位玩家',
   'bad-request': '看不懂這次的請求',
+  // 響應卡（M5b）
+  'no-pending': '現在沒有等著響應的牌',
+  'wrong-pending': '要響應的那張牌已經結算了',
+  'too-late': '響應的時間已經過了',
+  'own-card': '不能響應自己出的牌',
+  'not-response-card': '只有響應卡可以響應別人出的牌',
+  'wrong-category': '這張響應卡不能回應這一類的牌',
+  'response-needs-target': '要指定對象的響應卡這一版還不能打',
+  beaten: '別人先響應了這張牌',
 };
 
 const TURN_START = { index: 0, plays: 0, gear: null, level: 0 };
@@ -280,43 +290,51 @@ export function acceptPlay(state, uid, request, data) {
   const check = checkPlay(state, uid, request, data);
   if (check.reason) return { ok: false, reason: check.reason };
   const { action, level, target, chainTarget } = check;
-  const seat = state.seats[uid];
-  const hand = [...state.hands[uid]];
-  hand.splice(hand.indexOf(action.id), 1);
   return {
     ok: true,
-    state: {
-      ...state,
-      seats: {
-        ...state.seats,
-        [uid]: {
-          ...seat,
-          pounds: seat.pounds - action.cost.pounds,
-          influence: seat.influence - action.cost.influence,
-          handCount: hand.length,
-        },
-      },
-      hands: { ...state.hands, [uid]: hand },
-      lastSeq: { ...state.lastSeq, [uid]: request.seq },
-    },
+    state: payAndTake(state, uid, action, request.seq),
     pending: { by: uid, seq: request.seq, card: action.id, level, target, chainTarget },
   };
 }
 
-// 效果打到誰（照座位順序）。originalPlayer 只有響應卡會用，響應卡這一版不能當一般牌出，走不到這裡。
-function recipients(state, effect, pending) {
+// 付這張牌的成本、從手牌拿掉（第一張相同編號），記下處理過的序號。出牌與響應共用。
+function payAndTake(state, uid, action, seq) {
+  const seat = state.seats[uid];
+  const hand = [...state.hands[uid]];
+  hand.splice(hand.indexOf(action.id), 1);
+  return {
+    ...state,
+    seats: {
+      ...state.seats,
+      [uid]: {
+        ...seat,
+        pounds: seat.pounds - action.cost.pounds,
+        influence: seat.influence - action.cost.influence,
+        handCount: hand.length,
+      },
+    },
+    hands: { ...state.hands, [uid]: hand },
+    lastSeq: { ...state.lastSeq, [uid]: seq },
+  };
+}
+
+// 效果打到誰（照座位順序）。source 是打出這張牌的情況 { by, level, target, originalPlayer }：一般牌就是 pending；
+// 響應卡的 by 是響應者、originalPlayer 是被響應的那張牌的出牌者。
+function recipients(state, effect, source) {
   const seated = seatsInOrder(state.seats).map(([uid]) => uid);
   switch (effect.target) {
     case 'self':
-      return [pending.by];
+      return [source.by];
     case 'all':
       return seated;
     case 'others':
-      return seated.filter((uid) => uid !== pending.by);
+      return seated.filter((uid) => uid !== source.by);
     case 'chosen':
-      return pending.target ? [pending.target] : [];
+      return source.target ? [source.target] : [];
     case 'role':
       return seated.filter((uid) => state.seats[uid].role === effect.role); // 沒人坐這個階層就打空
+    case 'originalPlayer':
+      return source.originalPlayer ? [source.originalPlayer] : [];
     default:
       throw new RangeError(`這一版不結算這種對象：${effect.target}`);
   }
@@ -324,10 +342,11 @@ function recipients(state, effect, pending) {
 
 // 齒輪級數的加成。2 級：給出牌者自己的英鎊、影響力（正數）加倍，@全體 裡自己那一份也算；
 // 4 級（含以上）：英鎊、影響力、抽牌、棄牌的數量都加倍，對別人的扣減也加倍。成本與迷霧不受影響。
-function scaledAmount(effect, uid, pending) {
-  if (pending.level >= 4) return effect.amount * 2;
+// 響應卡的 source.level 是 1，不吃加成。
+function scaledAmount(effect, uid, source) {
+  if (source.level >= 4) return effect.amount * 2;
   const money = effect.op === 'pounds' || effect.op === 'influence';
-  if (pending.level === 2 && money && uid === pending.by && effect.amount > 0) return effect.amount * 2;
+  if (source.level === 2 && money && uid === source.by && effect.amount > 0) return effect.amount * 2;
   return effect.amount;
 }
 
@@ -358,15 +377,15 @@ function discardFor(state, uid, count, random) {
 }
 
 // 一個效果。英鎊與影響力夾在 0 以上（資料庫規則要求不小於 0）。迷霧用 settings.fogThresholds 的門檻，
-// 新越過的門檻依序放進 fogPending，事件本身留給 M7。
-function applyEffect(state, effect, pending, settings, random) {
+// 新越過的門檻依序放進 fogPending，事件本身留給 M7。source 見 recipients。
+function applyEffect(state, effect, source, settings, random) {
   if (effect.op === 'fog') {
     const fog = advanceFog({ fog: state.fog, fogMax: state.fogMax, fired: state.fogFired }, effect.amount, settings.fogThresholds);
     return { ...state, fog: fog.fog, fogMax: fog.fogMax, fogFired: fog.fired, fogPending: [...(state.fogPending ?? []), ...fog.crossed] };
   }
   let next = state;
-  for (const uid of recipients(state, effect, pending)) {
-    const amount = scaledAmount(effect, uid, pending);
+  for (const uid of recipients(state, effect, source)) {
+    const amount = scaledAmount(effect, uid, source);
     if (effect.op === 'pounds' || effect.op === 'influence') {
       const seat = next.seats[uid];
       next = { ...next, seats: { ...next.seats, [uid]: { ...seat, [effect.op]: Math.max(0, seat[effect.op] + amount) } } };
@@ -383,30 +402,176 @@ function applyEffect(state, effect, pending, settings, random) {
 
 // 出牌第二步：依序套用效果（含齒輪級數的加成；3 級另外抽 2 張、指定的人隨機棄 1 張）、牌進棄牌堆、記罪孽、
 // 更新輪次（出滿 maxPlaysPerTurn 張自動換下一位）。回傳 { state, log }；log 是公開的出牌紀錄
-// { round, by, card, level, target }（target 只有要指定對象的牌才有；時間由寫入的那一端補上伺服器時間）。
+// { round, by, card, level, target, chainTarget }（target 只有要指定對象的牌才有、chainTarget 只有 3 級連鎖才有；
+// 時間由寫入的那一端補上伺服器時間）。
 export function resolvePlay(state, pending, data, random = cryptoRandom) {
-  const action = findAction(data, pending.card);
-  if (!action) throw new RangeError(`找不到行動牌 ${pending.card}`);
+  const action = actionOf(data, pending.card);
   let next = state;
   for (const effect of action.effects) next = applyEffect(next, effect, pending, data.settings, random);
   if (pending.level === 3) {
     next = drawFor(next, pending.by, CHAIN_DRAW, random);
     next = discardFor(next, pending.chainTarget, CHAIN_DISCARD, random);
   }
-  next = { ...next, discard: [...next.discard, pending.card] };
-  if (SIN_CATEGORIES.includes(action.category)) {
-    const seat = next.seats[pending.by];
-    next = { ...next, seats: { ...next.seats, [pending.by]: { ...seat, sin: (seat.sin ?? 0) + 1 } } };
-  }
+  next = addSin({ ...next, discard: [...next.discard, pending.card] }, pending.by, action);
+  next.turn = nextTurn(state, data, action.gear ?? null, pending.level);
+  return { state: next, log: playLog(state, pending) };
+}
+
+function actionOf(data, id) {
+  const action = findAction(data, id);
+  if (!action) throw new RangeError(`找不到行動牌 ${id}`);
+  return action;
+}
+
+// 罪孽：分類是「犯罪」或「破壞」的牌（一般牌與響應卡都算），打出的人記 1 點。
+function addSin(state, uid, action) {
+  if (!SIN_CATEGORIES.includes(action.category)) return state;
+  const seat = state.seats[uid];
+  return { ...state, seats: { ...state.seats, [uid]: { ...seat, sin: (seat.sin ?? 0) + 1 } } };
+}
+
+// 出了一張之後的輪次：這一輪多一張、記下這張的齒輪與級數；出滿 maxPlaysPerTurn 張就換下一位。
+function nextTurn(state, data, gear, level) {
   const turn = currentTurn(state.turn, state.round);
   const plays = turn.plays + 1;
-  next.turn =
-    plays >= data.settings.maxPlaysPerTurn
-      ? { round: state.round, ...TURN_START, index: turn.index + 1 }
-      : { round: state.round, index: turn.index, plays, gear: action.gear ?? null, level: pending.level };
+  return plays >= data.settings.maxPlaysPerTurn
+    ? { round: state.round, ...TURN_START, index: turn.index + 1 }
+    : { round: state.round, index: turn.index, plays, gear, level };
+}
+
+function playLog(state, pending) {
   const log = { round: state.round, by: pending.by, card: pending.card, level: pending.level };
   if (pending.target) log.target = pending.target;
+  if (pending.chainTarget) log.chainTarget = pending.chainTarget;
+  return log;
+}
+
+// ---- 響應卡（M5b） ----
+// 別人每打出一張一般牌，同桌其他入座的人有 settings.responseSeconds 秒可以打出一張響應卡：先到先算（以伺服器收到的時間
+// 為準），一張牌最多被響應一次，時間到沒人響應就照常結算。responseSeconds 是 0＝不開窗口，出牌當下就結算。
+// 窗口開著時，那張牌在局面的 pending：{ id, by, seq, card, level, target, chainTarget, openedAt, seconds }
+// （acceptPlay 的 pending 加上主持端產生的 id、伺服器時間 openedAt、當下的 responseSeconds）。窗口一律開，
+// 不看有沒有人拿著用得上的響應卡（看了等於洩漏「沒人有」）。
+
+// 截止之後主持端再等多久才當作沒人響應（毫秒）：截止前送出、還在路上的響應趕得上。
+export const RESPONSE_GRACE_MS = 1000;
+
+// 響應的截止時間（伺服器時間，毫秒）：請求的 at 不大於這個值才算數。
+export function responseDeadline(pending) {
+  return pending.openedAt + pending.seconds * 1000;
+}
+
+// 主持端從這個時間（伺服器時間）起可以當作沒人響應，照常結算。
+export function responseSettleAt(pending) {
+  return responseDeadline(pending) + RESPONSE_GRACE_MS;
+}
+
+// 響應前的檢查，照順序：有待響應的牌、是同一張、截止前送出（at 是伺服器時間）、有座位、不是自己出的、牌在手上、
+// 是響應卡、不是 todo、分類對得上（respondsTo 是 null＝任何一般牌）、不用指定對象（這一版請求不帶對象）、付得起成本。
+// 回傳 { reason }（不合法）或 { reason: null, action }。
+function checkResponse(state, uid, request, data) {
+  const { pending } = state;
+  if (!pending) return { reason: 'no-pending' };
+  if (request.pending !== pending.id) return { reason: 'wrong-pending' };
+  if (!(request.at <= responseDeadline(pending))) return { reason: 'too-late' };
+  if (!state.seats?.[uid]) return { reason: 'not-seated' };
+  if (uid === pending.by) return { reason: 'own-card' };
+  if (typeof request.card !== 'string' || !(state.hands?.[uid] ?? []).includes(request.card)) return { reason: 'not-in-hand' };
+  const action = findAction(data, request.card);
+  if (!action) return { reason: 'unknown-card' };
+  if (action.kind !== 'response') return { reason: 'not-response-card' };
+  if (action.todo === true) return { reason: 'todo-card' };
+  const answers = action.respondsTo ?? null;
+  if (answers !== null && !answers.includes(findAction(data, pending.card)?.category)) return { reason: 'wrong-category' };
+  if (needsTarget(action)) return { reason: 'response-needs-target' };
+  const seat = state.seats[uid];
+  if (seat.pounds < action.cost.pounds || seat.influence < action.cost.influence) return { reason: 'cannot-afford' };
+  return { reason: null, action };
+}
+
+// 畫面送出前先查一次：這張響應卡現在打得出去嗎。state 要有 seats、pending 與自己的手牌；request 是
+// { card, pending: pending.id, at: 估計的伺服器時間 }。回傳退回原因（REJECT_REASONS 的鍵），打得出去是 null。
+export function responseProblem(state, uid, request, data) {
+  return checkResponse(state, uid, request, data).reason;
+}
+
+// 接下一張響應：檢查、付成本、牌離開手牌、記下處理過的序號。合法回傳 { ok: true, state, response }，
+// response＝{ by, seq, card, at }；不合法回傳 { ok: false, reason }，state 不動。
+export function acceptResponse(state, uid, request, data) {
+  const check = checkResponse(state, uid, request, data);
+  if (check.reason) return { ok: false, reason: check.reason };
+  return {
+    ok: true,
+    state: payAndTake(state, uid, check.action, request.seq),
+    response: { by: uid, seq: request.seq, card: check.action.id, at: request.at },
+  };
+}
+
+// 被抵銷的牌（工程暫定）：效果與級數加成（含 3 級的抽 2、指定棄 1）都不結算；成本已在 acceptPlay 付過、
+// 照樣算出了一張、犯罪或破壞照記罪孽、進棄牌堆；連鎖斷在這裡（turn 不留齒輪、級數 0，下一張從 1 級重算）。
+function cancelPlay(state, pending, data) {
+  const action = actionOf(data, pending.card);
+  const next = addSin({ ...state, discard: [...state.discard, pending.card] }, pending.by, action);
+  next.turn = nextTurn(state, data, null, 0);
+  return { state: next, log: playLog(state, pending) };
+}
+
+// 結算待響應的牌。response 是 null（沒人響應，等於 resolvePlay）或 acceptResponse 接下的 { by, seq, card }
+// （成本已付、牌已離開手牌）。響應卡有「抵銷」就走 cancelPlay，否則原牌照常結算（含級數加成）；之後才結算響應卡
+// 其餘的效果：@出牌者＝原出牌者、@自己＝響應者，不吃級數加成（工程暫定的結算順序）。響應卡最後進棄牌堆，
+// 分類是犯罪或破壞時響應者記罪孽；響應卡不算出牌數，也不碰輪次與連鎖。回傳 { state, log }，
+// log 另外記 response { by, card }，抵銷時記 canceled: true。
+export function resolveResponse(state, pending, response, data, random = cryptoRandom) {
+  if (!response) return resolvePlay(state, pending, data, random);
+  const answer = actionOf(data, response.card);
+  const canceled = answer.effects.some((effect) => effect.op === 'cancel');
+  const resolved = canceled ? cancelPlay(state, pending, data) : resolvePlay(state, pending, data, random);
+  let next = resolved.state;
+  const source = { by: response.by, level: 1, target: null, originalPlayer: pending.by };
+  for (const effect of answer.effects) {
+    if (effect.op !== 'cancel') next = applyEffect(next, effect, source, data.settings, random);
+  }
+  next = addSin({ ...next, discard: [...next.discard, answer.id] }, response.by, answer);
+  const log = { ...resolved.log, response: { by: response.by, card: answer.id } };
+  if (canceled) log.canceled = true;
   return { state: next, log };
+}
+
+const withSeq = (state, uid, seq) => ({ ...state, lastSeq: { ...state.lastSeq, [uid]: seq } });
+
+// 主持端處理一桌待響應的牌（state.pending）。requests 是 { uid: 最新一筆請求 }（剛從伺服器讀到的請求），
+// now 是伺服器時間。只看入座的人還沒處理過的響應；窗口中的出牌與結束這一輪先不處理，等這張牌結算完。回傳：
+//   { kind: 'waiting' }                                還沒到 responseSettleAt，也沒有新的響應
+//   { kind: 'rejected', state, notices }               只有不合法的響應：寫他們的 lastSeq 與 notice，pending 不動
+//   { kind: 'resolved', state, log, response, notices }
+//       有合法的響應（伺服器時間 at 最早的那筆，同時間比 uid），或到了 responseSettleAt 還沒人響應（response 是 null）；
+//       state.pending 是 null。同一批裡其他的響應一起退回：合法但晚一步的原因是 beaten
+// notices 是 [{ uid, seq, reason }]。
+export function settlePending(state, requests, data, { now, random = cryptoRandom } = {}) {
+  if (!state.pending) throw new RangeError('這一桌沒有待響應的牌');
+  const fresh = Object.entries(requests ?? {})
+    .filter(([uid, request]) => state.seats?.[uid] && request?.type === 'respond' && Number.isInteger(request.seq))
+    .filter(([uid, request]) => request.seq > (state.lastSeq?.[uid] ?? 0))
+    .sort(([a, x], [b, y]) => (x.at ?? Infinity) - (y.at ?? Infinity) || (a < b ? -1 : a > b ? 1 : 0));
+  let next = state;
+  let response = null;
+  const notices = [];
+  for (const [uid, request] of fresh) {
+    const accepted = response ? null : acceptResponse(next, uid, request, data);
+    if (accepted?.ok) {
+      next = accepted.state;
+      response = accepted.response;
+      continue;
+    }
+    const reason = accepted ? accepted.reason : (checkResponse(state, uid, request, data).reason ?? 'beaten');
+    notices.push({ uid, seq: request.seq, reason });
+    next = withSeq(next, uid, request.seq);
+  }
+  if (response || now >= responseSettleAt(state.pending)) {
+    const resolved = resolveResponse(next, state.pending, response, data, random);
+    return { kind: 'resolved', state: { ...resolved.state, pending: null }, log: resolved.log, response, notices };
+  }
+  return notices.length ? { kind: 'rejected', state: next, notices } : { kind: 'waiting' };
 }
 
 // 結束這一輪：輪到的人不出（或不再出）牌，換下一位。回傳 { ok: true, state } 或 { ok: false, reason }。
@@ -420,14 +585,19 @@ export function pass(state, uid, request) {
   };
 }
 
-// 主持端處理 uid 的一筆請求 { seq, type, card, target, chainTarget }。回傳：
+// 主持端處理 uid 的一筆請求 { seq, type, card, target, chainTarget, pending, at }。回傳：
 //   { kind: 'ignored' }                           已經處理過（seq 不大於 lastSeq）或沒有序號，什麼都不寫
-//   { kind: 'rejected', reason, state }           不合法：只有 lastSeq 往前，要另外告訴本人原因
+//   { kind: 'deferred' }                          這一桌有待響應的牌：先不處理（響應交給 settlePending，出牌與結束這一輪
+//                                                 等那張牌結算完再來），什麼都不寫
+//   { kind: 'rejected', reason, state }           不合法：只有 lastSeq 往前，要另外告訴本人原因（沒有待響應的牌時的響應也是）
 //   { kind: 'passed', state }                     結束這一輪
-//   { kind: 'played', state, log, pending }       出牌，acceptPlay 與 resolvePlay 一起做完
+//   { kind: 'opened', state, pending }            出牌、開響應窗口：只做 acceptPlay（成本已付、牌離開手牌），等 settlePending
+//   { kind: 'played', state, log, pending }       出牌、不開窗口（responseSeconds 是 0）：acceptPlay 與 resolvePlay 一起做完
 export function processRequest(state, uid, request, data, random = cryptoRandom) {
   if (!Number.isInteger(request?.seq) || request.seq <= (state.lastSeq?.[uid] ?? 0)) return { kind: 'ignored' };
-  const reject = (reason) => ({ kind: 'rejected', reason, state: { ...state, lastSeq: { ...state.lastSeq, [uid]: request.seq } } });
+  if (state.pending) return { kind: 'deferred' };
+  const reject = (reason) => ({ kind: 'rejected', reason, state: withSeq(state, uid, request.seq) });
+  if (request.type === 'respond') return reject('no-pending');
   if (request.type === 'pass') {
     const result = pass(state, uid, request);
     return result.ok ? { kind: 'passed', state: result.state } : reject(result.reason);
@@ -435,6 +605,7 @@ export function processRequest(state, uid, request, data, random = cryptoRandom)
   if (request.type !== 'play') return reject('bad-request');
   const accepted = acceptPlay(state, uid, request, data);
   if (!accepted.ok) return reject(accepted.reason);
+  if ((data.settings.responseSeconds ?? 0) > 0) return { kind: 'opened', state: accepted.state, pending: accepted.pending };
   const { state: next, log } = resolvePlay(accepted.state, accepted.pending, data, random);
   return { kind: 'played', state: next, log, pending: accepted.pending };
 }

@@ -26,9 +26,11 @@ import {
 import { loadGameData } from '../../play/js/gamedata.js';
 
 const cardDir = new URL('../../play/data/', import.meta.url);
-const { data } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+const { data: fileData } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
+// 這裡測的是出牌本身，不開響應窗口（responseSeconds 0＝出牌當下就結算）；響應卡在 respond.test.js。
+const data = { ...fileData, settings: { ...fileData.settings, responseSeconds: 0 } };
 
-// 測試用的牌：每張只做一件事，結果好算。設定沿用資料檔（每輪最多 4 張、迷霧門檻 30／60／90）。
+// 測試用的牌：每張只做一件事，結果好算。設定沿用資料檔（每輪最多 4 張、迷霧門檻 30／60／90），只有響應秒數改成 0。
 const card = (id, fields = {}) => ({
   id,
   name: id,

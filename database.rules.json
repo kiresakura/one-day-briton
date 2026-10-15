@@ -87,7 +87,26 @@
             "discardCount": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
             "version": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
             "startOrder": {
-              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 5 && (newData.val() === data.val() || !data.parent().child('turn').exists())"
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 5 && (newData.val() === data.val() || (!data.parent().child('turn').exists() && !data.parent().child('pending').exists()))"
+            },
+            "pending": {
+              ".validate": "newData.hasChildren(['id', 'by', 'seq', 'card', 'level', 'openedAt', 'seconds']) && (!data.exists() || newData.child('id').val() === data.child('id').val())",
+              "id": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,40}$/)" },
+              "by": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().child('seats').child(newData.val()).exists()"
+              },
+              "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+              "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+              "level": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+              "target": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().child('seats').child(newData.val()).exists()"
+              },
+              "chainTarget": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().child('seats').child(newData.val()).exists()"
+              },
+              "openedAt": { ".validate": "newData.isNumber() && newData.val() === now" },
+              "seconds": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 60" },
+              "$other": { ".validate": false }
             },
             "turn": {
               ".validate": "newData.hasChildren(['round', 'index', 'plays', 'level'])",
@@ -118,7 +137,7 @@
             },
             "log": {
               "$id": {
-                ".validate": "$id.matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.hasChildren(['round', 'by', 'card', 'level', 'at'])",
+                ".validate": "$id.matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.hasChildren(['round', 'by', 'card', 'level', 'at']) && (!newData.hasChild('canceled') || newData.hasChild('response'))",
                 "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
                 "by": {
                   ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().parent().child('seats').child(newData.val()).exists()"
@@ -128,6 +147,18 @@
                 "target": {
                   ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().parent().child('seats').child(newData.val()).exists()"
                 },
+                "chainTarget": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.parent().parent().parent().child('seats').child(newData.val()).exists()"
+                },
+                "response": {
+                  ".validate": "newData.hasChildren(['by', 'card'])",
+                  "by": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/) && newData.val() !== newData.parent().parent().child('by').val() && newData.parent().parent().parent().parent().child('seats').child(newData.val()).exists()"
+                  },
+                  "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
+                  "$other": { ".validate": false }
+                },
+                "canceled": { ".validate": "newData.val() === true" },
                 "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
                 "$other": { ".validate": false }
               }
@@ -177,13 +208,16 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('rooms').child($code).child('meta').exists()",
-          ".validate": "newData.hasChildren(['seq', 'type', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && (newData.child('type').val() === 'pass' || newData.hasChild('card'))",
+          ".validate": "newData.hasChildren(['seq', 'type', 'at']) && (!data.exists() || newData.child('seq').val() > data.child('seq').val()) && (newData.child('type').val() === 'pass' || newData.hasChild('card')) && (newData.child('type').val() !== 'respond' || newData.hasChild('pending'))",
           "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
-          "type": { ".validate": "newData.isString() && newData.val().matches(/^(play|pass)$/)" },
+          "type": { ".validate": "newData.isString() && newData.val().matches(/^(play|pass|respond)$/)" },
           "card": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)" },
           "target": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
           "chainTarget": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
-          "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "pending": {
+            ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.parent().child('type').val() === 'respond'"
+          },
+          "at": { ".validate": "newData.isNumber() && newData.val() <= now && newData.val() === now" },
           "$other": { ".validate": false }
         }
       }

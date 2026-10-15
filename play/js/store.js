@@ -1,4 +1,5 @@
-// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌、白晝出牌的請求與結算。
+// 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌、白晝出牌與響應卡的
+// 請求與結算、伺服器時間。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -23,7 +24,7 @@ import {
   update,
 } from 'firebase/database';
 import { config } from './config.js';
-import { checkSeating, processRequest, startGame, sunrise } from './game.js';
+import { checkSeating, processRequest, responseSettleAt, settlePending, startGame, sunrise } from './game.js';
 import {
   MAX_TABLES,
   NAME_MAX_LENGTH,
@@ -40,7 +41,7 @@ import {
 
 // code：invalid-code、invalid-name、invalid-table、room-not-found、permission-denied、
 // cannot-start（人數不對或這一桌已經推進過）、broken-game（局面缺資料）、
-// cannot-set-start（已經有人出過牌，不能再指定起始玩家）
+// cannot-set-start（已經有人出過牌，或第一張牌正在等響應，不能再指定起始玩家）
 export class StoreError extends Error {
   constructor(code, message) {
     super(message);
@@ -162,6 +163,27 @@ export function watchRoom(session, code, onRoom, onError) {
 // 這台裝置與資料庫的連線一有變化就呼叫 onChange(連上了沒)。回傳取消訂閱的函式。
 export function watchConnection(session, onChange) {
   return onValue(ref(session.db, '.info/connected'), (snapshot) => onChange(snapshot.val() === true));
+}
+
+// 伺服器時間的估計：本機時間＋.info/serverTimeOffset（連上時量到的差，本機不連線時沿用上次的值）。每個連線只訂閱一次，
+// 跟著 disconnect 一起結束。
+const offsets = new WeakMap();
+
+function serverClock(session) {
+  let holder = offsets.get(session.db);
+  if (!holder) {
+    holder = { offset: 0 };
+    offsets.set(session.db, holder);
+    onValue(ref(session.db, '.info/serverTimeOffset'), (snapshot) => {
+      holder.offset = snapshot.val() ?? 0;
+    });
+  }
+  return () => Date.now() + holder.offset;
+}
+
+// 現在的伺服器時間（毫秒，估計值）。畫面的響應倒數用它換算 pending 的 openedAt。
+export function serverTime(session) {
+  return serverClock(session)();
 }
 
 // 在房間裡標示「這台裝置在線上」。每次連上（包含斷線後重連）都先請伺服器在斷線時代為移除，再寫入；
@@ -379,11 +401,14 @@ export function watchPrivate(session, code, onPrivate, onError) {
   return onValue(ref(session.db, `private/${code}/${session.uid}`), (snapshot) => onPrivate(snapshot.val()), onError);
 }
 
-// ---- 白晝出牌（M5a） ----
-// 玩家把「我要出這張牌」或「結束這一輪」寫進自己的 requests/{code}/{uid}（本人與主持端讀得到），主持端讀到後
-// 檢查、結算、一次寫回（game.js 的 processRequest）；玩家的裝置不算任何結果。不合法的請求只寫 lastSeq 與本人的 notice。
+// ---- 白晝出牌（M5a）與響應卡（M5b） ----
+// 玩家把「我要出這張牌」「結束這一輪」「我要響應」寫進自己的 requests/{code}/{uid}（本人與主持端讀得到），主持端讀到後
+// 檢查、結算、一次寫回（game.js 的 processRequest、settlePending）；玩家的裝置不算任何結果。不合法的請求只寫 lastSeq 與本人的
+// notice。一張一般牌先「接下」（付成本、牌離開手牌、寫 games/{n}/pending），響應窗口結束才「結算」（刪 pending、套效果）；
+// responseSeconds 是 0 時兩步在同一筆寫入做完。
 
-// 送出請求：序號是自己上一筆＋1（規則只收往上加的）。用交易讀寫，重新整理或換分頁後也接得上。回傳這一筆的序號。
+// 送出請求：序號是自己上一筆＋1（規則只收往上加的），at 是伺服器時間（規則要求剛好等於伺服器收到的時間）。
+// 用交易讀寫，重新整理或換分頁後也接得上。回傳這一筆的序號。
 async function sendRequest(session, code, fields) {
   let result;
   try {
@@ -412,6 +437,11 @@ export function requestPass(session, code) {
   return sendRequest(session, code, { type: 'pass' });
 }
 
+// 響應：card 是手上的響應卡，pending 是要響應的那張牌（該桌 games/{n}/pending 的 id）。
+export function requestRespond(session, code, { card, pending }) {
+  return sendRequest(session, code, { type: 'respond', card, pending });
+}
+
 // 自己最新的一筆請求一有變動就呼叫 onRequest(請求或 null)。回傳取消訂閱的函式。
 export function watchRequest(session, code, onRequest, onError) {
   return onValue(ref(session.db, `requests/${code}/${session.uid}`), (snapshot) => onRequest(snapshot.val()), onError);
@@ -426,22 +456,75 @@ async function readRequest(session, code, uid) {
   }
 }
 
-// 一筆結算要寫的所有路徑：局面（version、lastSeq、輪次、座位、張數、出牌紀錄、迷霧的紀錄）、該桌的迷霧值、
-// 有變的手牌、牌庫與棄牌堆一起寫。不合法的請求只寫 version、lastSeq 與本人的 notice。
-function settleWrites(session, code, table, before, result, uid, seq, version) {
+// 整房的請求，一定從伺服器讀：get 遇到涵蓋這個路徑的訂閱會直接回快取，所以這個模組不在 requests/{code} 整房掛訂閱
+// （自動結算是逐人訂閱 requests/{code}/{uid}），截止前已經送到伺服器的響應一定讀得到。
+async function readRequests(session, code) {
+  try {
+    return (await get(ref(session.db, `requests/${code}`))).val() ?? {};
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new StoreError('permission-denied', '只有主持端可以結算響應');
+    throw error;
+  }
+}
+
+// 主持端讀成的一桌局面（game.js 的 state）。
+function tableStateOf(table, game, hands, pile) {
+  return {
+    round: table.round,
+    phase: table.phase,
+    fog: table.fog,
+    seats: game.seats,
+    startOrder: game.startOrder ?? 0,
+    turn: game.turn ?? null,
+    fogMax: game.fogMax,
+    fogFired: game.fogFired ?? [],
+    fogPending: game.fogPending ?? [],
+    lastSeq: game.lastSeq ?? {},
+    pending: game.pending ?? null,
+    hands,
+    deck: pile.deck ?? [],
+    discard: pile.discard ?? [],
+  };
+}
+
+const withoutNulls = (record) => Object.fromEntries(Object.entries(record).filter(([, value]) => value !== null && value !== undefined));
+
+// 一筆結算要寫的所有路徑。局面一律 version＋1；lastSeq 寫有變的；被退回的人寫 notice（{ seq, reason }）。
+//   rejected   只有上面這些
+//   opened     接下一般牌、開響應窗口：出牌者的座位與手牌、pending（主持端產生的 id、伺服器時間 openedAt、當下的秒數）；
+//              輪次與棄牌堆不動
+//   passed     輪次
+//   played、resolved   結算一張牌：輪次、座位、張數、出牌紀錄、迷霧的紀錄、該桌的迷霧值、有變的手牌、牌庫與棄牌堆；
+//              resolved 另外刪掉 pending，出牌紀錄用 pending 的 id 當編號
+function settleWrites(session, code, table, before, result, version, data) {
   const game = `rooms/${code}/games/${table}`;
   const next = result.state;
-  const writes = { [`${game}/version`]: version + 1, [`${game}/lastSeq/${uid}`]: seq };
-  if (result.kind === 'rejected') {
-    writes[`private/${code}/${uid}/notice`] = { seq, reason: result.reason };
+  const writes = { [`${game}/version`]: version + 1 };
+  for (const [uid, seq] of Object.entries(next.lastSeq ?? {})) {
+    if (seq !== before.lastSeq?.[uid]) writes[`${game}/lastSeq/${uid}`] = seq;
+  }
+  for (const { uid, seq, reason } of result.notices ?? []) writes[`private/${code}/${uid}/notice`] = { seq, reason };
+  if (result.kind === 'rejected') return writes;
+  if (result.kind === 'opened') {
+    const { by } = result.pending;
+    writes[`${game}/seats/${by}`] = next.seats[by];
+    writes[`private/${code}/${by}/hand`] = next.hands[by];
+    writes[`${game}/pending`] = {
+      ...withoutNulls(result.pending),
+      id: push(ref(session.db, `${game}/log`)).key,
+      openedAt: serverTimestamp(),
+      seconds: data.settings.responseSeconds,
+    };
     return writes;
   }
   writes[`${game}/turn`] = next.turn;
   if (result.kind === 'passed') return writes;
+  if (result.kind === 'resolved') writes[`${game}/pending`] = null;
   writes[`${game}/seats`] = next.seats;
   writes[`${game}/deckCount`] = next.deck.length;
   writes[`${game}/discardCount`] = next.discard.length;
-  writes[`${game}/log/${push(ref(session.db, `${game}/log`)).key}`] = { ...result.log, at: serverTimestamp() };
+  const logId = before.pending?.id ?? push(ref(session.db, `${game}/log`)).key;
+  writes[`${game}/log/${logId}`] = { ...result.log, at: serverTimestamp() };
   for (const key of ['fogMax', 'fogFired', 'fogPending']) {
     if (next[key] !== before[key]) writes[`${game}/${key}`] = next[key];
   }
@@ -456,8 +539,9 @@ function settleWrites(session, code, table, before, result, uid, seq, version) {
 // 結算的寫入被拒、但局面被別的寫入改過時，最多重讀重算幾次。
 const SETTLE_ATTEMPTS = 3;
 
-// 主持端結算 uid 在第 table 桌的最新一筆請求。回傳 { outcome, reason }：outcome 是 played（出牌）、
-// passed（結束這一輪）、rejected（不合法，寫了 lastSeq 與本人的 notice；reason 是原因），或 none（這次沒寫入：
+// 主持端結算 uid 在第 table 桌的最新一筆請求。回傳 { outcome, reason }：outcome 是 played（出牌，不開窗口）、
+// opened（接下出牌、開了響應窗口）、passed（結束這一輪）、rejected（不合法，寫了 lastSeq 與本人的 notice；reason 是原因）、
+// deferred（這一桌有牌在等響應：出牌與結束這一輪等它結算完，響應交給 settleWindow），或 none（這次沒寫入：
 // 沒有新請求、已經處理過、另一台主持端先處理了，或這個人的牌在別桌）。
 // 每筆寫入帶 version＝讀到的＋1，規則只收剛好＋1 的：兩台主持端同時結算同一筆，後到的整筆被拒。被拒的一方等
 // 伺服器的現況，看到這一筆已經處理過（lastSeq 到了）就放手；局面被別的寫入改過就重讀重算；都不是就報錯。
@@ -470,31 +554,20 @@ export async function settleRequest(session, code, table, uid, data, random) {
     const tableState = room.tables?.[table];
     const game = room.games?.[table];
     if (!tableState || !game?.seats?.[uid]) return none;
+    if (game.pending) return { outcome: 'deferred', reason: null };
     const request = await readRequest(session, code, uid);
     if (!(request?.seq > (game.lastSeq?.[uid] ?? 0))) return none;
     const pile = await readPile(session, code, table, '只有主持端可以結算出牌');
     const { records, hands } = await readPrivates(session, code, Object.keys(game.seats));
     if (records[uid].table !== table) return none;
-    const state = {
-      round: tableState.round,
-      phase: tableState.phase,
-      fog: tableState.fog,
-      seats: game.seats,
-      startOrder: game.startOrder ?? 0,
-      turn: game.turn ?? null,
-      fogMax: game.fogMax,
-      fogFired: game.fogFired ?? [],
-      fogPending: game.fogPending ?? [],
-      lastSeq: game.lastSeq ?? {},
-      hands,
-      deck: pile.deck ?? [],
-      discard: pile.discard ?? [],
-    };
+    const state = tableStateOf(tableState, game, hands, pile);
     const result = processRequest(state, uid, request, data, random);
     if (result.kind === 'ignored') return none;
+    if (result.kind === 'deferred') return { outcome: 'deferred', reason: null };
+    if (result.kind === 'rejected') result.notices = [{ uid, seq: request.seq, reason: result.reason }];
     const version = game.version ?? 0;
     try {
-      await update(ref(session.db), settleWrites(session, code, table, state, result, uid, request.seq, version));
+      await update(ref(session.db), settleWrites(session, code, table, state, result, version, data));
       return { outcome: result.kind, reason: result.reason ?? null };
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;
@@ -506,36 +579,99 @@ export async function settleRequest(session, code, table, uid, data, random) {
   }
 }
 
-// 主持端自動結算：盯著房間與出牌請求，有還沒處理的請求就一筆一筆交給 settleRequest，畫面不用按。多台主持端可以
-// 同時開著，同一筆請求只會套用一次。onError(error) 在結算失敗時呼叫。回傳停止的函式。
+// 主持端處理第 table 桌等著響應的那張牌（games/{n}/pending）：有合法的響應就照響應結算（伺服器時間最早的那筆），
+// 只有不合法的響應就退回他們（pending 不動），過了截止＋緩衝（responseSettleAt）還沒人響應就照常結算。
+// 每次都先記下伺服器時間、再從伺服器重讀整房的請求，所以「時間到」時讀到的一定包含截止前送到伺服器的響應。
+// 回傳 { outcome, response }：outcome 是 resolved（結算了，response 是 { by, card } 或 null）、rejected、
+// waiting（還沒到時間，也沒有新的響應）或 none（沒有待響應的牌，或另一台主持端先結算了）。
+// 多台主持端同時做時靠 version 只成一筆，被拒的一方等局面變了再重讀重算（同 settleRequest）。
+export async function settleWindow(session, code, table, data, random) {
+  const none = { outcome: 'none', response: null };
+  const clock = serverClock(session);
+  for (let attempt = 1; ; attempt += 1) {
+    const room = await readRoom(session, code);
+    const tableState = room.tables?.[table];
+    const game = room.games?.[table];
+    if (!tableState || !game?.pending) return none;
+    const now = clock();
+    const requests = await readRequests(session, code);
+    const pile = await readPile(session, code, table, '只有主持端可以結算響應');
+    const { records, hands } = await readPrivates(session, code, Object.keys(game.seats));
+    const here = Object.fromEntries(Object.entries(requests).filter(([uid]) => records[uid]?.table === table));
+    const state = tableStateOf(tableState, game, hands, pile);
+    const result = settlePending(state, here, data, { now, random });
+    if (result.kind === 'waiting') return { outcome: 'waiting', response: null };
+    const version = game.version ?? 0;
+    try {
+      await update(ref(session.db), settleWrites(session, code, table, state, result, version, data));
+      const response = result.response ? { by: result.response.by, card: result.response.card } : null;
+      return { outcome: result.kind, response };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const seen = await waitFor(session, `rooms/${code}/games/${table}`, (value) => (value?.version ?? 0) !== version);
+      if (seen === undefined || attempt >= SETTLE_ATTEMPTS) throw new StoreError('permission-denied', '響應沒有結算成功，請找工作人員');
+    }
+  }
+}
+
+// 主持端自動結算：盯著房間與入座玩家的請求，有還沒處理的請求就交給 settleRequest；有牌在等響應的桌，看到新的響應或
+// 到了 responseSettleAt（伺服器時間，本機計時器叫醒）就整桌交給 settleWindow，那一桌的出牌與結束這一輪先等著。
+// 畫面不用按。多台主持端可以同時開著，同一筆請求只會套用一次。請求是逐人訂閱（requests/{code}/{uid}），
+// settleWindow 讀整房時才會真的問伺服器。onError(error) 在結算失敗時呼叫。回傳停止的函式。
 export function startSettling(session, code, data, { random, onError = () => {} } = {}) {
+  const clock = serverClock(session);
   let room = null;
-  let requests = null;
+  const requests = {};
+  const listening = new Map(); // uid → 取消訂閱
   let running = false;
   let stopped = false;
-  // 「桌:uid」→ 這台沒寫入或失敗時的「序號@version」：同樣的狀況不再自動重試，請求或局面變了再看。
+  let timer = null;
+  // 「桌:uid」或「桌:window」→ 這台沒寫入或失敗時的狀況：同樣的狀況不再自動重試，請求、局面或到期與否變了再看。
   const skipped = new Map();
   const waiting = () => {
     const work = [];
     for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
       const game = room.games?.[table];
-      for (const [uid, request] of Object.entries(requests ?? {})) {
-        if (!game?.seats?.[uid] || !(request?.seq > (game.lastSeq?.[uid] ?? 0))) continue;
+      if (!game?.seats) continue;
+      const fresh = Object.keys(game.seats).filter((uid) => requests[uid]?.seq > (game.lastSeq?.[uid] ?? 0));
+      if (game.pending) {
+        const responses = fresh.filter((uid) => requests[uid].type === 'respond');
+        const due = clock() >= responseSettleAt(game.pending);
+        if (!due && responses.length === 0) continue;
+        const key = `${table}:window`;
+        const mark = `${game.version ?? 0}@${due}@${responses.map((uid) => `${uid}.${requests[uid].seq}`).join(',')}`;
+        if (skipped.get(key) !== mark) work.push({ table, key, mark, window: true });
+        continue;
+      }
+      for (const uid of fresh) {
         const key = `${table}:${uid}`;
-        const mark = `${request.seq}@${game.version ?? 0}`;
+        const mark = `${requests[uid].seq}@${game.version ?? 0}`;
         if (skipped.get(key) !== mark) work.push({ table, uid, key, mark });
       }
     }
     return work;
+  };
+  // 下一張還沒到期的待響應牌到期時叫醒自己（伺服器時間換算成本機的計時器）。沒有待響應的牌就不設計時器。
+  const arm = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (stopped) return;
+    const now = clock();
+    const due = Object.values(room?.games ?? {})
+      .filter((game) => game?.pending)
+      .map((game) => responseSettleAt(game.pending))
+      .filter((at) => Number.isFinite(at) && at > now);
+    if (due.length) timer = setTimeout(pump, Math.min(...due) - now + 20);
   };
   const pump = async () => {
     if (running || stopped) return;
     running = true;
     try {
       for (let work = waiting(); work.length > 0 && !stopped; work = waiting()) {
-        const { table, uid, key, mark } = work[0];
+        const { table, uid, key, mark, window } = work[0];
         try {
-          if ((await settleRequest(session, code, table, uid, data, random)).outcome === 'none') skipped.set(key, mark);
+          const result = window ? await settleWindow(session, code, table, data, random) : await settleRequest(session, code, table, uid, data, random);
+          if (['none', 'waiting', 'deferred'].includes(result.outcome)) skipped.set(key, mark);
         } catch (error) {
           skipped.set(key, mark);
           onError(error);
@@ -543,38 +679,50 @@ export function startSettling(session, code, data, { random, onError = () => {} 
       }
     } finally {
       running = false;
+      arm();
+    }
+  };
+  // 每個入座的人訂閱一次自己那一筆請求。
+  const listen = () => {
+    for (const game of Object.values(room?.games ?? {})) {
+      for (const uid of Object.keys(game?.seats ?? {})) {
+        if (listening.has(uid) || stopped) continue;
+        const stop = onValue(
+          ref(session.db, `requests/${code}/${uid}`),
+          (snapshot) => {
+            requests[uid] = snapshot.val();
+            pump();
+          },
+          onError,
+        );
+        listening.set(uid, stop);
+      }
     }
   };
   const stopRoom = onValue(
     ref(session.db, `rooms/${code}`),
     (snapshot) => {
       room = snapshot.val();
-      pump();
-    },
-    onError,
-  );
-  const stopRequests = onValue(
-    ref(session.db, `requests/${code}`),
-    (snapshot) => {
-      requests = snapshot.val();
+      listen();
       pump();
     },
     onError,
   );
   return () => {
     stopped = true;
+    clearTimeout(timer);
     stopRoom();
-    stopRequests();
+    for (const stop of listening.values()) stop();
   };
 }
 
-// 指定第 1 回合的起始座位（order＝座位 0–5）：只限第 1 回合、還沒有人出過牌或結束過一輪。帶 version＋1；
-// 跟結算撞在一起時後到的被拒，再按一次就好。
+// 指定第 1 回合的起始座位（order＝座位 0–5）：只限第 1 回合、還沒有人出過牌或結束過一輪、第一張牌也不在等響應。
+// 帶 version＋1；跟結算撞在一起時後到的被拒，再按一次就好。
 export async function setStartOrder(session, code, table, order) {
   const room = await readRoom(session, code);
   const game = room.games?.[table];
   if (!game) throw new StoreError('invalid-table', `第 ${table} 桌還沒開局`);
-  if (room.tables?.[table]?.round !== 1 || game.turn) {
+  if (room.tables?.[table]?.round !== 1 || game.turn || game.pending) {
     throw new StoreError('cannot-set-start', '已經有人出過牌，不能再指定起始玩家');
   }
   try {
