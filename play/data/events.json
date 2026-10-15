@@ -1,7 +1,7 @@
 [
   {
     "id": "e01",
-    "name": "範例事件一",
+    "name": "水晶宮萬國博覽會",
     "year": "1851",
     "kind": "deck",
     "effects": [
@@ -11,26 +11,521 @@
         "amount": 3
       },
       {
-        "op": "draw",
-        "target": "chosen",
-        "amount": 1
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 3
+      },
+      {
+        "op": "fog",
+        "amount": 3
       }
     ],
-    "text": "範例：全體各拿 3 英鎊，指定一人抽 1 張牌。"
+    "text": "工業盛會。全體各拿 3 英鎊，蒸汽工業大亨再拿 3 英鎊；迷霧加 3。"
   },
   {
     "id": "e02",
-    "name": "範例迷霧事件",
+    "name": "泰晤士河大惡臭",
+    "year": "1858",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -3
+      },
+      {
+        "op": "fog",
+        "amount": 5
+      }
+    ],
+    "text": "河水惡臭，全城徵收治污費。全體各付 3 英鎊；迷霧加 5。"
+  },
+  {
+    "id": "e03",
+    "name": "鐵路狂熱泡沫破裂",
+    "year": "1845",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -4
+      }
+    ],
+    "text": "鐵路股泡沫破裂。全體各失去 4 英鎊。"
+  },
+  {
+    "id": "e04",
+    "name": "白教堂開膛手恐慌",
+    "year": "1888",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": -1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r4",
+        "amount": 2
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r5",
+        "amount": 3
+      }
+    ],
+    "text": "全城恐慌。全體各失去 1 影響力；警探拿 2 影響力，東區黑幫拿 3 英鎊。"
+  },
+  {
+    "id": "e05",
+    "name": "倫敦碼頭工人大罷工",
+    "year": "1889",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -3
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      }
+    ],
+    "text": "港口停擺。全體各付 3 英鎊；憲章工聯拿 2 影響力。"
+  },
+  {
+    "id": "e06",
+    "name": "寬街霍亂水井事件",
+    "year": "1854",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "discard",
+        "target": "all",
+        "amount": 1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r6",
+        "amount": 1
+      }
+    ],
+    "text": "霍亂爆發，水井被封。全體各棄 1 張牌；皇家學會拿 1 影響力。"
+  },
+  {
+    "id": "e07",
+    "name": "安多弗濟貧院醜聞",
+    "year": "1845–46",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": -1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r2",
+        "amount": -1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      }
+    ],
+    "text": "濟貧院苛待院民，國會組特別委員會調查。貴族與蒸汽工業大亨各失去 1 影響力；憲章工聯拿 2 影響力。"
+  },
+  {
+    "id": "e08",
+    "name": "克里米亞戰爭軍需動員",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 5
+      },
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -2
+      }
+    ],
+    "text": "戰爭動員。全體各付 2 英鎊戰時稅；蒸汽工業大亨拿 5 英鎊軍需訂單。"
+  },
+  {
+    "id": "e09",
+    "name": "倫敦地下鐵道通車",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "draw",
+        "target": "all",
+        "amount": 1
+      }
+    ],
+    "text": "大都會鐵路啟用，交通加速。全體各抽 1 張牌。"
+  },
+  {
+    "id": "e10",
+    "name": "法拉第聖誕講座〈蠟燭的化學史〉",
+    "year": "1848 首講",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "draw",
+        "target": "all",
+        "amount": 1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r6",
+        "amount": 1
+      }
+    ],
+    "text": "科學走進大眾。全體各抽 1 張牌；皇家學會拿 1 影響力。"
+  },
+  {
+    "id": "e11",
+    "name": "威爾斯親王社交季舞會",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -2
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": 2
+      }
+    ],
+    "text": "社交季開場。全體各付 2 英鎊置裝；貴族拿 2 影響力。"
+  },
+  {
+    "id": "e12",
+    "name": "1873 年 12 月倫敦大霧",
+    "year": "1873",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "fog",
+        "amount": 10
+      },
+      {
+        "op": "discard",
+        "target": "all",
+        "amount": 1
+      }
+    ],
+    "text": "大霧籠罩倫敦，死亡率大增。迷霧加 10；全體各棄 1 張牌。"
+  },
+  {
+    "id": "e13",
+    "name": "火柴女工罷工",
+    "year": "1888",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": -3
+      }
+    ],
+    "text": "Bryant & May 火柴廠女工罷工。憲章工聯拿 2 影響力；蒸汽工業大亨付 3 英鎊。"
+  },
+  {
+    "id": "e14",
+    "name": "達爾文《物種起源》出版",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": -2
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r6",
+        "amount": 2
+      }
+    ],
+    "text": "教會與科學界大論戰。貴族失去 2 影響力；皇家學會拿 2 影響力。"
+  },
+  {
+    "id": "e15",
+    "name": "倫敦警察廳偵探部成立",
+    "year": "1842",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r4",
+        "amount": 2
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r5",
+        "amount": -2
+      }
+    ],
+    "text": "偵探部成立。警探拿 2 影響力；東區黑幫付 2 英鎊。"
+  },
+  {
+    "id": "e16",
+    "name": "黃金黎明密教黑彌撒",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "draw",
+        "target": "role",
+        "role": "r6",
+        "amount": 2
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      }
+    ],
+    "text": "密教聚會。皇家學會抽 2 張牌；迷霧加 3。"
+  },
+  {
+    "id": "e17",
+    "name": "HMS Warrior 下水",
+    "year": "1860",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 4
+      },
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": 1
+      }
+    ],
+    "text": "皇家海軍首艘鐵殼裝甲戰艦下水。蒸汽工業大亨拿 4 英鎊；全體各拿 1 影響力。"
+  },
+  {
+    "id": "e18",
+    "name": "倫敦下水道巴澤爾傑特工程",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "fog",
+        "amount": -10
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 3
+      }
+    ],
+    "text": "下水道工程改善衛生。迷霧減 10；承包工程的蒸汽工業大亨拿 3 英鎊。"
+  },
+  {
+    "id": "e19",
+    "name": "愛爾蘭土豆晚疫病爆發",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 3
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": -1
+      }
+    ],
+    "text": "移民湧入倫敦，勞動力變便宜。蒸汽工業大亨拿 3 英鎊；憲章工聯失去 1 影響力。"
+  },
+  {
+    "id": "e20",
+    "name": "貝塞麥煉鋼法",
+    "year": "1856",
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 4
+      },
+      {
+        "op": "draw",
+        "target": "role",
+        "role": "r6",
+        "amount": 1
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      }
+    ],
+    "text": "廉價大量煉鋼。蒸汽工業大亨拿 4 英鎊，皇家學會抽 1 張牌；迷霧加 3。"
+  },
+  {
+    "id": "e21",
+    "name": "倫敦交易所黑色星期五",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": -4
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r1",
+        "amount": -2
+      }
+    ],
+    "text": "恐慌性拋售。蒸汽工業大亨失去 4 英鎊，貴族失去 2 英鎊。"
+  },
+  {
+    "id": "e22",
+    "name": "維多利亞女王金禧大典",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": 1
+      }
+    ],
+    "text": "全城歡慶。全體各拿 1 影響力。"
+  },
+  {
+    "id": "e23",
+    "name": "帝國日落",
+    "year": null,
+    "kind": "deck",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -3
+      },
+      {
+        "op": "fog",
+        "amount": 5
+      }
+    ],
+    "text": "殖民地烽火四起。全體各付 3 英鎊；迷霧加 5。"
+  },
+  {
+    "id": "e24",
+    "name": "黃霧籠城",
     "year": null,
     "kind": "fog",
     "threshold": 30,
     "effects": [
       {
         "op": "influence",
-        "target": "all",
+        "target": "role",
+        "role": "r4",
         "amount": -1
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r5",
+        "amount": 2
       }
     ],
-    "text": "範例：迷霧超過 30 時觸發，全體各失去 1 影響力。"
+    "text": "豌豆湯濃霧壓進巷弄。警探失去 1 影響力；東區黑幫拿 2 英鎊。"
+  },
+  {
+    "id": "e25",
+    "name": "正午點燈",
+    "year": null,
+    "kind": "fog",
+    "threshold": 60,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -3
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 1
+      }
+    ],
+    "text": "煤煙遮住太陽，大白天也得點燈。全體各付 3 英鎊；憲章工聯拿 1 影響力。"
+  },
+  {
+    "id": "e26",
+    "name": "致命濃霧",
+    "year": null,
+    "kind": "fog",
+    "threshold": 90,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -5
+      },
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": -2
+      },
+      {
+        "op": "discard",
+        "target": "all",
+        "amount": 1
+      }
+    ],
+    "text": "濃霧連日不散，全城停擺。全體各付 5 英鎊、失去 2 影響力、棄 1 張牌。"
   }
 ]

@@ -108,7 +108,7 @@ npm run data:import -- <CSV 資料夾>   # 試算表匯出的 CSV 轉成 play/da
 | `js/app.js` | 畫面與事件 |
 | `js/config.js` | 連線設定：模擬器與正式專案兩組，依網址選一組 |
 | `js/data.js` | 純函式：卡牌資料檔的格式定義與檢查 |
-| `data/` | 卡牌資料檔（目前是範例資料，遊戲還沒讀；格式見 [`docs/DATA-FORMAT.md`](../docs/DATA-FORMAT.md)） |
+| `data/` | 卡牌資料檔（企劃第一版，遊戲還沒讀；格式見 [`docs/DATA-FORMAT.md`](../docs/DATA-FORMAT.md)；範例資料在 `test/fixtures/data-example/`） |
 | `vendor/firebase/` | 自行託管的官方 Firebase JS SDK |
 
 ## 自行託管的 SDK

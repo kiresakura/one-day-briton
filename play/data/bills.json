@@ -1,39 +1,231 @@
 [
   {
     "id": "b01",
-    "name": "範例法案一",
-    "year": "1850",
+    "name": "十小時工作法案",
+    "year": "1847",
     "onPass": [
       {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": -4
+      },
+      {
         "op": "influence",
-        "target": "all",
-        "amount": 1
+        "target": "role",
+        "role": "r3",
+        "amount": 2
       },
       {
         "op": "fog",
-        "amount": -5
+        "amount": -3
       }
     ],
     "onFail": [
       {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": -1
+      },
+      {
         "op": "fog",
-        "amount": 5
+        "amount": 3
       }
     ],
-    "text": "範例：通過時全體各拿 1 影響力、迷霧減 5；不通過時迷霧加 5。"
+    "text": "限制工廠工時。通過：蒸汽工業大亨付 4 英鎊，憲章工聯拿 2 影響力，迷霧減 3。不通過：憲章工聯失去 1 影響力，迷霧加 3。"
   },
   {
     "id": "b02",
-    "name": "範例法案二",
-    "year": null,
+    "name": "第二次改革法案",
+    "year": "1867",
     "onPass": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r4",
+        "amount": 1
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": -2
+      }
+    ],
+    "onFail": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": 1
+      }
+    ],
+    "text": "擴大平民選舉權。通過：憲章工聯拿 2 影響力、警探拿 1 影響力，貴族失去 2 影響力。不通過：貴族拿 1 影響力。"
+  },
+  {
+    "id": "b03",
+    "name": "礦場法",
+    "year": "1842",
+    "onPass": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": -3
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      }
+    ],
+    "onFail": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 2
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": -1
+      }
+    ],
+    "text": "禁止所有女性及未滿 10 歲男童在礦坑地下工作。通過：蒸汽工業大亨付 3 英鎊，憲章工聯拿 2 影響力。不通過：大亨拿 2 英鎊，工聯失去 1 影響力。"
+  },
+  {
+    "id": "b04",
+    "name": "印度政府法",
+    "year": "1858",
+    "onPass": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": 2
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 2
+      }
+    ],
+    "onFail": [
       {
         "op": "pounds",
         "target": "all",
         "amount": -2
       }
     ],
-    "onFail": [],
-    "text": "範例：通過時全體各付 2 英鎊；不通過時沒有變化。"
+    "text": "東印度公司的統治權移交英國王室。通過：貴族拿 2 影響力，蒸汽工業大亨拿 2 英鎊。不通過：局勢動盪，全體各付 2 英鎊。"
+  },
+  {
+    "id": "b05",
+    "name": "遺產稅法案",
+    "year": null,
+    "onPass": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r1",
+        "amount": -6
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 1
+      }
+    ],
+    "onFail": [
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r1",
+        "amount": 1
+      }
+    ],
+    "text": "對大宗遺產課稅。通過：貴族付 6 英鎊，憲章工聯拿 1 影響力。不通過：貴族拿 1 影響力。"
+  },
+  {
+    "id": "b06",
+    "name": "八小時工作法",
+    "year": null,
+    "onPass": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": -5
+      },
+      {
+        "op": "influence",
+        "target": "role",
+        "role": "r3",
+        "amount": 3
+      },
+      {
+        "op": "fog",
+        "amount": -3
+      }
+    ],
+    "onFail": [
+      {
+        "op": "fog",
+        "amount": 3
+      }
+    ],
+    "text": "每日工時以八小時為限。通過：蒸汽工業大亨付 5 英鎊，憲章工聯拿 3 影響力，迷霧減 3。不通過：迷霧加 3。"
+  },
+  {
+    "id": "b07",
+    "name": "穀物法廢除",
+    "year": null,
+    "onPass": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r1",
+        "amount": -4
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r2",
+        "amount": 3
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r3",
+        "amount": 2
+      }
+    ],
+    "onFail": [
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r3",
+        "amount": -2
+      },
+      {
+        "op": "pounds",
+        "target": "role",
+        "role": "r1",
+        "amount": 2
+      }
+    ],
+    "text": "取消穀物進口關稅。通過：貴族付 4 英鎊，蒸汽工業大亨拿 3 英鎊，憲章工聯拿 2 英鎊。不通過：工聯付 2 英鎊，貴族拿 2 英鎊。"
   }
 ]

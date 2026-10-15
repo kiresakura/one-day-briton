@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { DATA_FILES, checkData, formatIssue } from '../../play/js/data.js';
 import { checkDataFolder, loadDataFolder } from '../../scripts/lib/datafiles.mjs';
 
-const sampleDir = fileURLToPath(new URL('../../play/data/', import.meta.url));
+// 範例資料（樣板匯入的結果）是測試用的固定資料；play/data/ 放企劃交的正式資料。
+const sampleDir = fileURLToPath(new URL('../fixtures/data-example/', import.meta.url));
+const cardDir = fileURLToPath(new URL('../../play/data/', import.meta.url));
 const { data: sample } = await loadDataFolder(sampleDir);
 
 // 每個測試拿一份可以隨便改的範例資料。
@@ -22,10 +24,16 @@ function assertError(data, expected) {
   return found;
 }
 
-test('the sample data in play/data has no errors and no warnings', async () => {
+test('the sample data has no errors and no warnings', async () => {
   const result = await checkDataFolder(sampleDir);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.warnings, []);
+  assert.deepEqual(Object.keys(result.data), DATA_FILES);
+});
+
+test('the card data in play/data has every file and no errors (warnings allowed)', async () => {
+  const result = await checkDataFolder(cardDir);
+  assert.deepEqual(result.errors.map((issue) => formatIssue(issue)), []);
   assert.deepEqual(Object.keys(result.data), DATA_FILES);
 });
 

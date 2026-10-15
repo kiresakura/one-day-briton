@@ -1,9 +1,533 @@
 [
   {
     "id": "a01",
-    "name": "範例行動牌一",
+    "name": "紡織廠加班",
     "kind": "play",
-    "category": null,
+    "category": "生產",
+    "role": "r2",
+    "copies": 3,
+    "cost": {
+      "pounds": 2,
+      "influence": 0
+    },
+    "gear": "小",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      }
+    ],
+    "text": "付 2 英鎊：拿 5 英鎊，迷霧加 3。"
+  },
+  {
+    "id": "a02",
+    "name": "蒸汽機擴建",
+    "kind": "play",
+    "category": "生產",
+    "role": "r2",
+    "copies": 2,
+    "cost": {
+      "pounds": 5,
+      "influence": 0
+    },
+    "gear": "重",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 10
+      },
+      {
+        "op": "fog",
+        "amount": 6
+      }
+    ],
+    "text": "付 5 英鎊：拿 10 英鎊，迷霧加 6。"
+  },
+  {
+    "id": "a03",
+    "name": "鐵路股認購",
+    "kind": "play",
+    "category": "交易",
+    "role": null,
+    "copies": 2,
+    "cost": {
+      "pounds": 4,
+      "influence": 0
+    },
+    "gear": "中",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 7
+      },
+      {
+        "op": "fog",
+        "amount": 2
+      }
+    ],
+    "text": "付 4 英鎊：拿 7 英鎊，迷霧加 2。"
+  },
+  {
+    "id": "a04",
+    "name": "血汗工廠",
+    "kind": "play",
+    "category": "生產",
+    "role": "r2",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "小",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      },
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": -1
+      }
+    ],
+    "text": "拿 5 英鎊，失去 1 影響力。"
+  },
+  {
+    "id": "a05",
+    "name": "紳士俱樂部晚宴",
+    "kind": "play",
+    "category": "政治",
+    "role": "r1",
+    "copies": 3,
+    "cost": {
+      "pounds": 3,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 2
+      }
+    ],
+    "text": "付 3 英鎊：拿 2 影響力。"
+  },
+  {
+    "id": "a06",
+    "name": "衰敗選區",
+    "kind": "play",
+    "category": "政治",
+    "role": "r1",
+    "copies": 1,
+    "cost": {
+      "pounds": 5,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 3
+      },
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "付 5 英鎊：拿 3 影響力，抽 1 張牌。"
+  },
+  {
+    "id": "a07",
+    "name": "地租收繳",
+    "kind": "play",
+    "category": "交易",
+    "role": "r1",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "others",
+        "amount": -1
+      },
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      }
+    ],
+    "text": "其他人各付 1 英鎊，你收 5 英鎊。"
+  },
+  {
+    "id": "a08",
+    "name": "工會集會",
+    "kind": "play",
+    "category": "群眾",
+    "role": "r3",
+    "copies": 3,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "小",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 1
+      },
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "拿 1 影響力，抽 1 張牌。"
+  },
+  {
+    "id": "a09",
+    "name": "大罷工",
+    "kind": "play",
+    "category": "破壞",
+    "role": "r3",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 1
+    },
+    "gear": "重",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "others",
+        "amount": -2
+      },
+      {
+        "op": "fog",
+        "amount": -2
+      }
+    ],
+    "text": "付 1 影響力：其他人各失去 2 英鎊；工廠停工，迷霧減 2。"
+  },
+  {
+    "id": "a10",
+    "name": "盧德分子的大鐵鎚",
+    "kind": "play",
+    "category": "破壞",
+    "role": "r3",
+    "copies": 1,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "重",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "chosen",
+        "amount": -6
+      },
+      {
+        "op": "fog",
+        "amount": -2
+      }
+    ],
+    "text": "指定一人失去 6 英鎊；機器被砸，迷霧減 2。"
+  },
+  {
+    "id": "a11",
+    "name": "憲章請願書",
+    "kind": "play",
+    "category": "政治",
+    "role": "r3",
+    "copies": 2,
+    "cost": {
+      "pounds": 1,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": 1
+      },
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "付 1 英鎊：全體各拿 1 影響力，你再多拿 1。"
+  },
+  {
+    "id": "a12",
+    "name": "搜查令",
+    "kind": "play",
+    "category": "查緝",
+    "role": "r4",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 1
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "discard",
+        "target": "chosen",
+        "amount": 1
+      },
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "付 1 影響力：指定一人棄 1 張牌；你抽 1 張牌。"
+  },
+  {
+    "id": "a13",
+    "name": "違警罰金",
+    "kind": "play",
+    "category": "查緝",
+    "role": "r4",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "小",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "chosen",
+        "amount": -3
+      },
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "指定一人付 3 英鎊；你拿 1 影響力。"
+  },
+  {
+    "id": "a14",
+    "name": "線民情報",
+    "kind": "play",
+    "category": "查緝",
+    "role": "r4",
+    "copies": 2,
+    "cost": {
+      "pounds": 1,
+      "influence": 0
+    },
+    "gear": "中",
+    "effects": [
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 2
+      }
+    ],
+    "text": "付 1 英鎊：抽 2 張牌。"
+  },
+  {
+    "id": "a15",
+    "name": "妙手空空",
+    "kind": "play",
+    "category": "犯罪",
+    "role": "r5",
+    "copies": 3,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "小",
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "chosen",
+        "amount": -3
+      },
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 3
+      }
+    ],
+    "text": "從指定一人身上偷 3 英鎊。"
+  },
+  {
+    "id": "a16",
+    "name": "黑市銷贓",
+    "kind": "play",
+    "category": "交易",
+    "role": "r5",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": "中",
+    "effects": [
+      {
+        "op": "discard",
+        "target": "self",
+        "amount": 1
+      },
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      }
+    ],
+    "text": "棄 1 張牌，拿 5 英鎊。"
+  },
+  {
+    "id": "a17",
+    "name": "勒索信",
+    "kind": "play",
+    "category": "犯罪",
+    "role": "r5",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "chosen",
+        "amount": -1
+      },
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "指定一人失去 1 影響力，你拿 1 影響力。"
+  },
+  {
+    "id": "a18",
+    "name": "差分機推演",
+    "kind": "play",
+    "category": "學術",
+    "role": "r6",
+    "copies": 2,
+    "cost": {
+      "pounds": 3,
+      "influence": 0
+    },
+    "gear": "中",
+    "effects": [
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 3
+      },
+      {
+        "op": "discard",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "付 3 英鎊：抽 3 張牌，再棄 1 張。"
+  },
+  {
+    "id": "a19",
+    "name": "空氣淨化實驗",
+    "kind": "play",
+    "category": "學術",
+    "role": "r6",
+    "copies": 2,
+    "cost": {
+      "pounds": 3,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "fog",
+        "amount": -5
+      },
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "付 3 英鎊：迷霧減 5，你拿 1 影響力。"
+  },
+  {
+    "id": "a20",
+    "name": "迷霧降神會",
+    "kind": "play",
+    "category": "神祕",
+    "role": "r6",
+    "copies": 1,
+    "cost": {
+      "pounds": 0,
+      "influence": 2
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "discard",
+        "target": "others",
+        "amount": 1
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      }
+    ],
+    "text": "付 2 影響力：其他人各棄 1 張牌；迷霧加 3。"
+  },
+  {
+    "id": "a21",
+    "name": "泰晤士報頭條醜聞",
+    "kind": "play",
+    "category": "破壞",
+    "role": null,
+    "copies": 2,
+    "cost": {
+      "pounds": 2,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "chosen",
+        "amount": -3
+      }
+    ],
+    "text": "付 2 英鎊：指定一人失去 3 影響力。"
+  },
+  {
+    "id": "a22",
+    "name": "銀行貸款",
+    "kind": "play",
+    "category": "交易",
     "role": null,
     "copies": 2,
     "cost": {
@@ -15,49 +539,125 @@
       {
         "op": "pounds",
         "target": "self",
-        "amount": 5
-      }
-    ],
-    "text": "範例：自己拿 5 英鎊。"
-  },
-  {
-    "id": "a02",
-    "name": "範例行動牌二",
-    "kind": "play",
-    "category": "範例分類甲",
-    "role": "r1",
-    "copies": 1,
-    "cost": {
-      "pounds": 3,
-      "influence": 1
-    },
-    "gear": "範例齒輪",
-    "effects": [
+        "amount": 6
+      },
       {
         "op": "influence",
         "target": "self",
-        "amount": 2
-      },
+        "amount": -2
+      }
+    ],
+    "text": "拿 6 英鎊，失去 2 影響力。"
+  },
+  {
+    "id": "a23",
+    "name": "鐵證如山",
+    "kind": "response",
+    "category": "查緝",
+    "respondsTo": [
+      "犯罪"
+    ],
+    "role": "r4",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
       {
-        "op": "fog",
-        "amount": 3
-      },
-      {
-        "op": "discard",
+        "op": "pounds",
         "target": "chosen",
+        "amount": -4
+      },
+      {
+        "op": "influence",
+        "target": "self",
         "amount": 1
       }
     ],
-    "text": "範例：自己拿 2 影響力，迷霧加 3，指定一人棄 1 張牌。"
+    "text": "別人出「犯罪」牌時打出：出那張牌的人付 4 英鎊，你拿 1 影響力。"
   },
   {
-    "id": "a03",
-    "name": "範例響應卡一",
+    "id": "a24",
+    "name": "巡警吹哨",
     "kind": "response",
-    "category": null,
-    "respondsTo": null,
+    "category": "查緝",
+    "respondsTo": [
+      "犯罪"
+    ],
     "role": null,
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 1
+    },
+    "gear": null,
+    "effects": [],
+    "text": "付 1 影響力；別人出「犯罪」牌時打出：那張牌無效。",
+    "todo": true,
+    "todoText": "抵銷那張牌的效果"
+  },
+  {
+    "id": "a25",
+    "name": "街頭扒手阻截",
+    "kind": "response",
+    "category": "犯罪",
+    "respondsTo": [
+      "交易",
+      "生產"
+    ],
+    "role": "r5",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "chosen",
+        "amount": -2
+      },
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 2
+      }
+    ],
+    "text": "別人出「交易」或「生產」牌時打出：從出那張牌的人身上偷 2 英鎊。"
+  },
+  {
+    "id": "a26",
+    "name": "雇用工賊",
+    "kind": "response",
+    "category": "生產",
+    "respondsTo": [
+      "破壞"
+    ],
+    "role": "r2",
     "copies": 1,
+    "cost": {
+      "pounds": 2,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [],
+    "text": "付 2 英鎊；別人出「破壞」牌時打出：那張牌無效。",
+    "todo": true,
+    "todoText": "抵銷那張牌的效果"
+  },
+  {
+    "id": "a27",
+    "name": "工人糾察隊",
+    "kind": "response",
+    "category": "破壞",
+    "respondsTo": [
+      "生產"
+    ],
+    "role": "r3",
+    "copies": 2,
     "cost": {
       "pounds": 0,
       "influence": 1
@@ -65,22 +665,89 @@
     "gear": null,
     "effects": [
       {
-        "op": "fog",
+        "op": "pounds",
+        "target": "chosen",
+        "amount": -3
+      }
+    ],
+    "text": "付 1 影響力；別人出「生產」牌時打出：出那張牌的人失去 3 英鎊。"
+  },
+  {
+    "id": "a28",
+    "name": "王室召見",
+    "kind": "response",
+    "category": "政治",
+    "respondsTo": [
+      "查緝"
+    ],
+    "role": "r1",
+    "copies": 1,
+    "cost": {
+      "pounds": 0,
+      "influence": 2
+    },
+    "gear": null,
+    "effects": [],
+    "text": "付 2 影響力；別人出「查緝」牌時打出：那張牌無效。",
+    "todo": true,
+    "todoText": "抵銷那張牌的效果"
+  },
+  {
+    "id": "a29",
+    "name": "議事阻撓",
+    "kind": "response",
+    "category": "政治",
+    "respondsTo": [
+      "政治"
+    ],
+    "role": "r1",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 1
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "influence",
+        "target": "chosen",
         "amount": -2
       }
     ],
-    "text": "範例：別人出任何一張牌時都可以打出；迷霧減 2。"
+    "text": "付 1 影響力；別人出「政治」牌時打出：出那張牌的人失去 2 影響力。"
   },
   {
-    "id": "a04",
-    "name": "範例響應卡二",
+    "id": "a30",
+    "name": "水晶球預兆",
     "kind": "response",
-    "category": null,
+    "category": "神祕",
+    "respondsTo": null,
+    "role": "r6",
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "draw",
+        "target": "self",
+        "amount": 1
+      }
+    ],
+    "text": "別人出任何牌時打出：抽 1 張牌。"
+  },
+  {
+    "id": "a31",
+    "name": "跟風投機",
+    "kind": "response",
+    "category": "交易",
     "respondsTo": [
-      "範例分類甲"
+      "交易"
     ],
     "role": null,
-    "copies": 1,
+    "copies": 2,
     "cost": {
       "pounds": 1,
       "influence": 0
@@ -93,6 +760,6 @@
         "amount": 3
       }
     ],
-    "text": "範例：別人出「範例分類甲」的牌時才能打出；自己拿 3 英鎊。"
+    "text": "付 1 英鎊；別人出「交易」牌時打出：拿 3 英鎊。"
   }
 ]

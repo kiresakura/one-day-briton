@@ -1,0 +1,39 @@
+[
+  {
+    "id": "b01",
+    "name": "範例法案一",
+    "year": "1850",
+    "onPass": [
+      {
+        "op": "influence",
+        "target": "all",
+        "amount": 1
+      },
+      {
+        "op": "fog",
+        "amount": -5
+      }
+    ],
+    "onFail": [
+      {
+        "op": "fog",
+        "amount": 5
+      }
+    ],
+    "text": "範例：通過時全體各拿 1 影響力、迷霧減 5；不通過時迷霧加 5。"
+  },
+  {
+    "id": "b02",
+    "name": "範例法案二",
+    "year": null,
+    "onPass": [
+      {
+        "op": "pounds",
+        "target": "all",
+        "amount": -2
+      }
+    ],
+    "onFail": [],
+    "text": "範例：通過時全體各付 2 英鎊；不通過時沒有變化。"
+  }
+]

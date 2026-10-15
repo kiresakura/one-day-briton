@@ -1,0 +1,98 @@
+[
+  {
+    "id": "a01",
+    "name": "範例行動牌一",
+    "kind": "play",
+    "category": null,
+    "role": null,
+    "copies": 2,
+    "cost": {
+      "pounds": 0,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 5
+      }
+    ],
+    "text": "範例：自己拿 5 英鎊。"
+  },
+  {
+    "id": "a02",
+    "name": "範例行動牌二",
+    "kind": "play",
+    "category": "範例分類甲",
+    "role": "r1",
+    "copies": 1,
+    "cost": {
+      "pounds": 3,
+      "influence": 1
+    },
+    "gear": "範例齒輪",
+    "effects": [
+      {
+        "op": "influence",
+        "target": "self",
+        "amount": 2
+      },
+      {
+        "op": "fog",
+        "amount": 3
+      },
+      {
+        "op": "discard",
+        "target": "chosen",
+        "amount": 1
+      }
+    ],
+    "text": "範例：自己拿 2 影響力，迷霧加 3，指定一人棄 1 張牌。"
+  },
+  {
+    "id": "a03",
+    "name": "範例響應卡一",
+    "kind": "response",
+    "category": null,
+    "respondsTo": null,
+    "role": null,
+    "copies": 1,
+    "cost": {
+      "pounds": 0,
+      "influence": 1
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "fog",
+        "amount": -2
+      }
+    ],
+    "text": "範例：別人出任何一張牌時都可以打出；迷霧減 2。"
+  },
+  {
+    "id": "a04",
+    "name": "範例響應卡二",
+    "kind": "response",
+    "category": null,
+    "respondsTo": [
+      "範例分類甲"
+    ],
+    "role": null,
+    "copies": 1,
+    "cost": {
+      "pounds": 1,
+      "influence": 0
+    },
+    "gear": null,
+    "effects": [
+      {
+        "op": "pounds",
+        "target": "self",
+        "amount": 3
+      }
+    ],
+    "text": "範例：別人出「範例分類甲」的牌時才能打出；自己拿 3 英鎊。"
+  }
+]

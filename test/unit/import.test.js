@@ -11,7 +11,8 @@ import { convertSheet, importFolder, parseEffects, sheetKind, sourceOf } from '.
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const templateDir = join(root, 'docs/data-templates');
-const sampleDir = join(root, 'play/data');
+// 樣板匯入的結果要和這份範例資料一模一樣；play/data/ 放的是企劃交的正式資料。
+const sampleDir = join(root, 'test/fixtures/data-example');
 const importScript = join(root, 'scripts/data-import.mjs');
 
 test('effect text becomes structured effects', () => {
