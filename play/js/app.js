@@ -2,14 +2,22 @@
 // 牌名與牌面文字從卡牌資料檔（gamedata.js）來。
 import { seed } from './config.js';
 import {
+  DISCARD_REASONS,
+  NIGHT_CHOICES,
+  NIGHT_REASONS,
   REJECT_REASONS,
   VOTE_REASONS,
   chainLevel,
   checkSeating,
+  choiceProblem,
   dayStatus,
+  discardProblem,
   duskStage,
   eventLogList,
   needsTarget,
+  nightSettings,
+  nightStage,
+  overLimit,
   playProblem,
   responseDeadline,
   responseProblem,
@@ -34,17 +42,22 @@ import {
   leaveRoom,
   processSunrise,
   rejectHost,
+  requestDiscard,
+  requestNight,
   requestPass,
   requestPlay,
   requestRespond,
   requestVote,
   revealDusk,
+  revealNight,
   serverTime,
   setStartOrder,
   startSettling,
   startTable,
   trackPresence,
   watchConnection,
+  watchDiscard,
+  watchNight,
   watchPrivate,
   watchRequest,
   watchRoom,
@@ -83,8 +96,17 @@ let stopVote = null;
 let myVote = null; // 自己最新的一張票 { table, round, side, bid, seq, at }
 let ballot = null; // 玩家：正在選的票 { key: '桌:回合', side, bid, touched }；重畫時留著，換回合就清掉
 let voting = false; // 玩家：票送出中
-const wakeups = new Map(); // 黃昏的截止時間 → 到時重畫一次的計時器（送出鈕、提前揭曉鈕要跟著停用）
+const wakeups = new Map(); // 黃昏與黑夜的截止時間 → 到時重畫一次的計時器（送出鈕、提前揭曉鈕要跟著停用）
 const SIDE_LABELS = { yes: '贊成', no: '反對', abstain: '棄權' };
+let stopNight = null;
+let myNight = null; // 自己最新的黑夜選擇 { table, round, choice, tiers, seq, at }
+let nightPick = null; // 玩家：正在選的 { key: '桌:回合', choice, tiers, touched }；重畫時留著，換回合就清掉
+let nightSending = false; // 玩家：黑夜的選擇送出中
+let stopDiscard = null;
+let myDiscard = null; // 自己最新挑的棄牌 { table, round, cards, seq, at }
+let discardPick = null; // 玩家：正在挑的棄牌 { key: '桌:回合:手牌', indexes: [手牌的第幾張…], touched }
+let discardSending = false;
+const hostDiscards = new Map(); // 主持端：uid → { stop, value }（各入座玩家挑的棄牌，列出還沒挑的人用）
 
 // ?seed=<整數>（只有模擬器認）：主持端洗牌、隨機棄牌用固定種子，畫面測試時手牌每次都一樣。
 const random = seed === null ? undefined : seededRandom(seed);
@@ -160,10 +182,20 @@ function goHome(message = '') {
   stopRequest = null;
   stopVote?.();
   stopVote = null;
+  stopNight?.();
+  stopNight = null;
+  stopDiscard?.();
+  stopDiscard = null;
+  for (const { stop } of hostDiscards.values()) stop();
+  hostDiscards.clear();
   mine = null;
   myRequest = null;
   myVote = null;
   ballot = null;
+  myNight = null;
+  nightPick = null;
+  myDiscard = null;
+  discardPick = null;
   composing = null;
   for (const { timer } of wakeups.values()) clearTimeout(timer);
   wakeups.clear();
@@ -524,6 +556,158 @@ function duskBlock(game, state) {
   return null;
 }
 
+// ---- 黑夜（M8）：豪賭、分贓、睡覺，與手牌上限 ----
+
+const CHOICE_LABELS = { gamble: '豪賭', split: '分贓', sleep: '睡覺' };
+
+// 黑夜的數值（資料檔沒寫時用預設值）。
+function nightRules() {
+  return nightSettings(cardData?.data.settings);
+}
+
+function choiceText(pick) {
+  return pick.choice === 'gamble' ? `豪賭到第 ${pick.tiers} 層` : (CHOICE_LABELS[pick.choice] ?? pick.choice);
+}
+
+const signed = (amount) => (amount > 0 ? `+${amount}` : `${amount}`);
+
+function gains(pounds, influence) {
+  return [pounds && `${pounds} 英鎊`, influence && `${influence} 影響力`].filter(Boolean).join('＋') || '什麼都沒有';
+}
+
+// 豪賭每一層：爆的機率與過關時累積變成多少。
+function tierTexts() {
+  const rules = nightRules();
+  return rules.bust.map((bust, index) => {
+    const odds = bust <= 0 ? '不會爆' : bust >= 6 ? '一定爆' : `擲到 ${bust} 以下就爆（${bust}/6）`;
+    return `第 ${index + 1} 層：${odds}，過關累積變成 ${gains(rules.pounds[index], rules.influence[index])}${index === rules.bust.length - 1 ? '（秘寶）' : ''}`;
+  });
+}
+
+// 一個人的結果：豪賭逐層的點數與過關／爆、拿到多少；分贓拿多少；睡覺。
+function outcomeText(outcome) {
+  if (outcome.choice === 'gamble') {
+    const rolls = outcome.rolls.map((roll, index) => `第 ${index + 1} 層擲 ${roll}${outcome.bust && index === outcome.rolls.length - 1 ? ' 爆了' : ' 過關'}`).join('、');
+    const money = outcome.bust ? (outcome.pounds < 0 ? `付醫藥費 ${-outcome.pounds} 英鎊` : '沒有英鎊付醫藥費') : `拿到 ${gains(outcome.pounds, outcome.influence)}`;
+    return `豪賭到第 ${outcome.tiers} 層——${rolls}——${money}`;
+  }
+  if (outcome.choice === 'split') return `分贓——拿到 ${outcome.pounds} 英鎊、罪孽 +${outcome.sin}`;
+  return '睡覺';
+}
+
+// 黑夜的提醒倒數（只顯示，不會自動揭曉）：從黑夜開始的伺服器時間算起。
+function nightReminderLine(night) {
+  const seconds = cardData?.data.settings.reminderSeconds.night ?? 120;
+  return deadlineLine('countdown night-reminder', night.openedAt + seconds * 1000, seconds, {
+    before: '提醒倒數 ',
+    after: ' 秒',
+    over: `已經超過 ${seconds} 秒（只是提醒，不會自動揭曉）`,
+  });
+}
+
+// 截止時間的倒數：全員送出後是「n 秒後揭曉」，提前揭曉時直接是截止了。
+function nightRevealLine(night) {
+  rerenderAt(night.revealAt);
+  return deadlineLine('night-countdown', night.revealAt, nightRules().revealSeconds, {
+    before: '大家都送出了，',
+    after: ' 秒後揭曉',
+    over: '黑夜截止了，揭曉中…',
+  });
+}
+
+// 揭曉結果：每個人的選擇與結果（沒送出的算睡覺）。uid 是玩家自己時，另外寫自己這一夜的變化與現在的數字。
+function nightResultLines(room, game, result, uid) {
+  const nodes = [element('p', 'night-result', '黑夜揭曉')];
+  const list = element('ul', 'night-players');
+  for (const [seatUid] of seatsInOrder(game.seats)) {
+    const outcome = result.players?.[seatUid];
+    list.append(element('li', seatUid === uid ? 'me' : '', `${nameOf(room, seatUid)}：${outcome ? outcomeText(outcome) : '睡覺'}`));
+  }
+  nodes.push(list);
+  const outcome = uid ? result.players?.[uid] : null;
+  const seat = uid ? game.seats[uid] : null;
+  if (outcome && seat) {
+    const sin = outcome.sin ? `・罪孽 +${outcome.sin}` : '';
+    nodes.push(
+      element('p', 'night-mine', `你這一夜：英鎊 ${signed(outcome.pounds)}・影響力 ${signed(outcome.influence)}${sin}`),
+      element('p', 'night-now', `你現在：英鎊 ${seat.pounds}・影響力 ${seat.influence}${seat.sin ? `・罪孽 ${seat.sin}` : ''}`),
+    );
+  }
+  return nodes;
+}
+
+// 主持端：這一桌入座的人挑的棄牌（逐人訂閱，列出還沒挑的人用）。
+function watchHostDiscards(roomCode, game) {
+  for (const uid of Object.keys(game.seats ?? {})) {
+    if (hostDiscards.has(uid)) continue;
+    const entry = { stop: () => {}, value: null };
+    hostDiscards.set(uid, entry);
+    entry.stop = watchDiscard(
+      session,
+      roomCode,
+      (value) => {
+        entry.value = value;
+        rerender();
+      },
+      () => {},
+      uid,
+    );
+  }
+}
+
+// 主持端：手牌超過上限的人，誰挑好了、誰還沒挑（推進到下一回合日出時會被隨機棄）。主持端沒有訂閱別人的手牌，
+// 這裡只看張數；挑的牌在不在手上，發牌時再查。
+function handLimitLines(room, table, game, state) {
+  const limit = cardData?.data.settings.handLimit;
+  if (!limit) return [];
+  const over = seatsInOrder(game.seats).filter(([, seat]) => seat.handCount > limit);
+  if (over.length === 0) return [];
+  const picked = (uid, seat) => {
+    const value = hostDiscards.get(uid)?.value;
+    const count = Object.keys(value?.cards ?? {}).length;
+    return Boolean(value) && String(value.table) === String(table) && value.round === state.round && count === seat.handCount - limit;
+  };
+  const ready = over.filter(([uid, seat]) => picked(uid, seat));
+  const missing = over.filter(([uid, seat]) => !picked(uid, seat));
+  const nodes = [];
+  if (ready.length) nodes.push(element('p', 'table-note hand-limit-ready', `手牌超過上限、已挑好要棄的牌：${ready.map(([uid]) => nameOf(room, uid)).join('、')}`));
+  if (missing.length) {
+    const names = missing.map(([uid, seat]) => `${nameOf(room, uid)}（${seat.handCount} 張，要棄 ${seat.handCount - limit} 張）`).join('、');
+    nodes.push(element('p', 'table-note problem hand-limit-missing', `手牌超過上限、還沒挑：${names}——推進到下一回合日出時會被隨機棄`));
+  }
+  return nodes;
+}
+
+// 黑夜（主持端）：已送出人數、提醒倒數、提前揭曉、截止倒數、揭曉結果、手牌超過上限的人。開黑夜、計人數、揭曉都是自動的。
+function nightLines(room, table, game, state, roomCode) {
+  if (state.phase !== 'night') return [];
+  const stage = nightStage(game.night, state.round);
+  const nodes = [element('h3', '', '黑夜')];
+  if (stage === 'none') nodes.push(element('p', 'table-note', '黑夜：開始中…'));
+  else if (stage === 'revealed') nodes.push(...nightResultLines(room, game, game.night.result, null));
+  else {
+    const { night } = game;
+    nodes.push(element('p', 'night-submitted', `已送出 ${night.submitted ?? 0}／${Object.keys(game.seats).length} 人`));
+    nodes.push(stage === 'choosing' ? nightReminderLine(night) : nightRevealLine(night));
+    if (stage === 'choosing' || night.revealAt > serverTime(session) + 500) {
+      const early = element('button', 'night-reveal quiet', '提前揭曉');
+      early.type = 'button';
+      early.addEventListener('click', () => run(early, () => revealNight(session, roomCode, table)));
+      nodes.push(early, element('p', 'caption', '沒送出的人算睡覺；截止後約 1 秒揭曉'));
+    }
+  }
+  return [...nodes, ...handLimitLines(room, table, game, state)];
+}
+
+// 黑夜還沒揭曉時，主持端的「下一階段」停用的原因（不用停是 null）。
+function nightBlock(game, state) {
+  if (!game || state.phase !== 'night') return null;
+  const stage = nightStage(game.night, state.round);
+  if (stage === 'none') return '黑夜還沒開始，揭曉後才能進下一階段';
+  if (stage === 'choosing' || stage === 'closing') return '黑夜還沒揭曉，揭曉後才能進下一階段';
+  return null;
+}
+
 // 等著響應的那張牌：「○○ 打出「X」（分類）」。
 function pendingText(room, pending) {
   const action = cardData?.index.actions.get(pending.card);
@@ -626,6 +810,7 @@ function gameControls(room, table, game, state, pending, roomCode) {
   if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
   if (state.phase === 'dusk' || state.phase === 'night') nodes.push(...duskLines(room, table, game, state, roomCode));
+  nodes.push(...nightLines(room, table, game, state, roomCode));
   const log = logList(room, game);
   if (log) nodes.push(element('h3', '', '最近出牌'), log);
   const events = eventLogItems(game);
@@ -672,8 +857,9 @@ function renderHost(room) {
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
-    // 開局前、日出還沒發牌、有牌在等響應、黃昏的法案還沒揭曉時不能推進（畫面擋，規則不擋）。
-    const why = game?.pending ? '有牌在等響應，結算完才能進下一階段' : duskBlock(game, state);
+    if (game) watchHostDiscards(roomCode, game);
+    // 開局前、日出還沒發牌、有牌在等響應、黃昏的法案或黑夜還沒揭曉時不能推進（畫面擋，規則不擋）。
+    const why = game?.pending ? '有牌在等響應，結算完才能進下一階段' : (duskBlock(game, state) ?? nightBlock(game, state));
     next.disabled = !game || pending || Boolean(why);
     const blocked = why ? [element('p', 'table-note problem next-blocked', why)] : [];
     // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。
@@ -993,6 +1179,159 @@ function duskCard(room, me, state, game) {
   return nodes;
 }
 
+// 送出（或改）黑夜的選擇、挑的棄牌；送出到寫完之間，送出鈕停用。
+async function sendNight(action, which) {
+  if (which === 'night') nightSending = true;
+  else discardSending = true;
+  notify();
+  rerender();
+  try {
+    await action();
+  } catch (error) {
+    notify(explain(error));
+  } finally {
+    if (which === 'night') nightSending = false;
+    else discardSending = false;
+    rerender();
+  }
+}
+
+// 三個選項（豪賭附層數與每層的機率、獎勵；分贓；睡覺）與「送出」；選的值記在 nightPick，重畫時留著。送不出去就停用並寫原因。
+function nightBox(me, state, game, sent) {
+  const key = `${me.table}:${state.round}`;
+  // 換了回合，或自己還沒動過時，跟著已送出的選擇（重新整理後自己的選擇可能晚一點才到）。
+  if (nightPick?.key !== key || !nightPick.touched) nightPick = { key, choice: sent?.choice ?? null, tiers: sent?.tiers ?? 1, touched: false };
+  const rules = nightRules();
+  const box = element('div', 'night-box');
+  const choices = element('p', 'night-choices');
+  for (const choice of NIGHT_CHOICES) {
+    const button = element('button', `night-choice${nightPick.choice === choice ? ' chosen' : ' quiet'}`, CHOICE_LABELS[choice]);
+    button.type = 'button';
+    button.dataset.choice = choice;
+    button.setAttribute('aria-pressed', String(nightPick.choice === choice));
+    button.addEventListener('click', () => {
+      nightPick = { ...nightPick, choice, touched: true };
+      rerender();
+    });
+    choices.append(button);
+  }
+  const select = element('select', 'night-tiers');
+  for (let tiers = 1; tiers <= rules.bust.length; tiers += 1) {
+    const option = element('option', '', `第 ${tiers} 層`);
+    option.value = tiers;
+    option.selected = nightPick.tiers === tiers;
+    select.append(option);
+  }
+  select.disabled = nightPick.choice !== 'gamble';
+  select.addEventListener('change', () => {
+    nightPick = { ...nightPick, tiers: Number(select.value), touched: true };
+    rerender();
+  });
+  const label = element('label', 'night-tiers-label', '豪賭最多賭到');
+  label.append(select);
+  const gamble = element('ul', 'night-tier-list');
+  gamble.append(...tierTexts().map((text) => element('li', '', text)));
+  box.append(
+    choices,
+    element('p', 'night-option', '豪賭：從第 1 層開始，每層擲一顆六面骰，過到選的那一層就收手拿走累積'),
+    label,
+    gamble,
+    element('p', 'caption', `爆了累積歸零，另付 ${rules.medicalFee} 英鎊醫藥費（不夠就付到 0）`),
+    element('p', 'night-option', `分贓：選分贓的人平分 ${rules.splitPounds} 英鎊（捨去）、每人記 ${rules.splitSin} 罪孽`),
+    element('p', 'night-option', '睡覺：什麼都不發生'),
+  );
+  const pick = { table: me.table, round: state.round, choice: nightPick.choice, tiers: nightPick.choice === 'gamble' ? nightPick.tiers : null };
+  const view = { table: me.table, round: state.round, phase: state.phase, seats: game.seats, night: game.night };
+  const reason = nightPick.choice ? choiceProblem(view, session.uid, { ...pick, at: serverTime(session) }) : null;
+  const send = element('button', 'night-send', sent ? '改成這個' : '送出');
+  send.type = 'button';
+  send.disabled = !nightPick.choice || Boolean(reason) || nightSending;
+  send.addEventListener('click', () => sendNight(() => requestNight(session, code, pick), 'night'));
+  box.append(send);
+  if (reason) box.append(element('p', 'hand-problem', NIGHT_REASONS[reason] ?? reason));
+  return box;
+}
+
+// 手牌第幾張（同一張牌有好幾張時照順序對）：挑的牌對回手牌的位置。
+function handIndexes(hand, cards) {
+  const used = new Set();
+  return cards.map((card) => {
+    const index = hand.findIndex((id, at) => id === card && !used.has(at));
+    used.add(index);
+    return index;
+  });
+}
+
+// 手牌超過上限時：要棄幾張、點牌挑選、「選好了」；已送出的挑選合法就寫「已選好」。黑夜期間（揭曉前後）都可以改。
+function discardBox(me, state) {
+  const hand = mine.hand ?? [];
+  const { settings } = cardData.data;
+  const over = overLimit(hand, settings);
+  if (over === 0) return [];
+  const where = { table: me.table, round: state.round };
+  const saved = myDiscard && String(myDiscard.table) === String(me.table) && myDiscard.round === state.round ? myDiscard : null;
+  const problem = saved ? discardProblem(hand, saved, where, settings) : 'no-pick';
+  const key = `${me.table}:${state.round}:${hand.join()}`;
+  if (discardPick?.key !== key || !discardPick.touched) {
+    discardPick = { key, indexes: problem === null ? handIndexes(hand, Object.values(saved.cards)) : [], touched: false };
+  }
+  const box = element('div', 'discard-box');
+  box.append(
+    element('h3', '', '手牌上限'),
+    element('p', 'discard-need', `手牌 ${hand.length} 張，黑夜結束要棄到 ${settings.handLimit} 張：選 ${over} 張`),
+  );
+  if (problem === null) box.append(element('p', 'discard-state ready', `已選好：${Object.values(saved.cards).map(cardName).join('、')}（天亮前可以改）`));
+  else if (saved) box.append(element('p', 'discard-state problem', `之前選的不能用（${DISCARD_REASONS[problem] ?? problem}），請重選`));
+  else box.append(element('p', 'discard-state', '還沒選；沒選的話，天亮時隨機棄'));
+  const list = element('ul', 'discard-list');
+  hand.forEach((id, index) => {
+    const chosen = discardPick.indexes.includes(index);
+    const button = element('button', `discard-card${chosen ? ' chosen' : ' quiet'}`, `${chosen ? '✓ ' : ''}${cardName(id)}`);
+    button.type = 'button';
+    button.dataset.index = index;
+    button.setAttribute('aria-pressed', String(chosen));
+    button.addEventListener('click', () => {
+      const indexes = chosen ? discardPick.indexes.filter((at) => at !== index) : [...discardPick.indexes, index];
+      discardPick = { ...discardPick, indexes, touched: true };
+      rerender();
+    });
+    const item = element('li', '');
+    item.append(button);
+    list.append(item);
+  });
+  const cards = [...discardPick.indexes].sort((a, b) => a - b).map((index) => hand[index]);
+  const send = element('button', 'discard-send', `選好了（${cards.length}／${over}）`);
+  send.type = 'button';
+  send.disabled = cards.length !== over || discardSending;
+  send.addEventListener('click', () => sendNight(() => requestDiscard(session, code, { ...where, cards }), 'discard'));
+  box.append(list, send);
+  return [box];
+}
+
+// 黑夜的那張卡：教學提示（第 1 回合）、已送出人數、提醒倒數、自己的選擇與選項、揭曉倒數、揭曉結果；手牌超過上限時的挑牌。
+function nightCard(room, me, state, game) {
+  const nodes = [element('h2', '', '黑夜：豪賭、分贓或睡覺')];
+  if (state.round === 1) {
+    for (const tip of cardData.data.tutorial ?? []) if (tip.phase === 'night') nodes.push(element('p', 'caption night-tip', `提示：${tip.text}`));
+  }
+  const stage = nightStage(game.night, state.round);
+  const sent = myNight && String(myNight.table) === String(me.table) && myNight.round === state.round ? myNight : null;
+  if (stage === 'none') {
+    nodes.push(element('p', 'caption', '等主持端開始黑夜…'));
+  } else if (stage === 'revealed') {
+    nodes.push(...nightResultLines(room, game, game.night.result, session.uid));
+    if (!sent) nodes.push(element('p', 'caption', '你沒有送出，算睡覺'));
+  } else {
+    const { night } = game;
+    nodes.push(element('p', 'night-submitted', `已送出 ${night.submitted ?? 0}／${Object.keys(game.seats).length} 人`));
+    nodes.push(stage === 'choosing' ? nightReminderLine(night) : nightRevealLine(night));
+    if (sent) nodes.push(element('p', 'night-sent', `已送出：${choiceText(sent)}（揭曉前可以改）`));
+    if (stage === 'choosing' || serverTime(session) < night.revealAt) nodes.push(nightBox(me, state, game, sent));
+    else nodes.push(element('p', 'caption', sent ? '黑夜截止了，等揭曉' : '黑夜截止了，你沒有送出，算睡覺'));
+  }
+  return [...nodes, ...discardBox(me, state)];
+}
+
 // 自己的階層、資源、天命與手牌。還沒開局、沒有入座或資料還沒到時，只顯示一句說明。
 function renderMyGame(room, me, state, game) {
   const seat = game?.seats?.[session.uid];
@@ -1024,6 +1363,9 @@ function renderMyGame(room, me, state, game) {
   const dusk = state.phase === 'dusk' || (state.phase === 'night' && duskStage(game.dusk, state.round) !== 'none');
   $('player-dusk').hidden = !dusk;
   $('player-dusk').replaceChildren(...(dusk ? duskCard(room, me, state, game) : []));
+  const night = state.phase === 'night';
+  $('player-night').hidden = !night;
+  $('player-night').replaceChildren(...(night ? nightCard(room, me, state, game) : []));
   $('player-hand-count').textContent = hand.length;
   $('player-hand').replaceChildren(...hand.map((id, index) => handItem(room, day, id, index)));
   const log = logList(room, game);
@@ -1124,11 +1466,54 @@ function watchMyVote() {
   if (stopped) stop();
 }
 
+// 訂閱自己的黑夜選擇與挑的棄牌（送出後顯示「已送出」「已選好」），做法同 watchMine。
+function watchMyNight() {
+  if (stopNight) return;
+  let stopped = false;
+  let stop = null;
+  stopNight = () => {
+    stopped = true;
+    stop?.();
+  };
+  stop = watchNight(
+    session,
+    code,
+    (value) => {
+      myNight = value;
+      rerender();
+    },
+    () => {},
+  );
+  if (stopped) stop();
+}
+
+function watchMyDiscard() {
+  if (stopDiscard) return;
+  let stopped = false;
+  let stop = null;
+  stopDiscard = () => {
+    stopped = true;
+    stop?.();
+  };
+  stop = watchDiscard(
+    session,
+    code,
+    (value) => {
+      myDiscard = value;
+      rerender();
+    },
+    () => {},
+  );
+  if (stopped) stop();
+}
+
 function renderPlayer(room, me) {
   markPresent();
   watchMine();
   watchMyRequest();
   watchMyVote();
+  watchMyNight();
+  watchMyDiscard();
   const state = room.tables[me.table];
   const game = room.games?.[me.table];
   $('player-stage').dataset.phase = state.phase;

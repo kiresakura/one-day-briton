@@ -583,3 +583,79 @@ h3 {
 .fog-fired {
   margin: 4px 0 0;
 }
+
+/* 黑夜：豪賭、分贓、睡覺與手牌上限（M8） */
+.night {
+  border-color: #1f2430;
+}
+
+.night-choices {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.night-choices button {
+  margin-top: 8px;
+}
+
+.night-box,
+.discard-box {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.night-option {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+
+.night-tier-list,
+.night-players {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+.night-submitted,
+.night-sent,
+.night-countdown,
+.discard-need,
+.discard-state {
+  margin: 8px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.night-countdown,
+.discard-state.problem {
+  color: var(--accent);
+}
+
+.night-result {
+  margin: 8px 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.night-players .me {
+  font-weight: 600;
+}
+
+.night-mine,
+.night-now {
+  margin: 4px 0 0;
+}
+
+.discard-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discard-list button {
+  margin: 0;
+}
