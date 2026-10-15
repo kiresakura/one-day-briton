@@ -8,6 +8,7 @@ import {
   checkSeating,
   dayStatus,
   duskStage,
+  eventLogList,
   needsTarget,
   playProblem,
   responseDeadline,
@@ -15,6 +16,8 @@ import {
   seatsInOrder,
   seededRandom,
   skippedEffects,
+  skippedEventEffects,
+  sunriseEventsOf,
   voteProblem,
 } from './game.js';
 import { indexGameData, loadGameData } from './gamedata.js';
@@ -264,6 +267,17 @@ function cardName(id) {
   return cardData?.index.actions.get(id)?.name ?? id;
 }
 
+const RESOURCE_LABELS = { pounds: '英鎊', influence: '影響力' };
+
+// 這張牌的「偷」寫成「從 ○○ 偷走 3 英鎊」；from 是被偷的人。數量是牌上的數量（4 級連鎖加倍）：出牌紀錄沒有記實際拿到多少，
+// 對方不夠時實際拿到的比較少（見座位上的數字）。
+function stealText(room, action, from, level = 1) {
+  const steals = (action?.effects ?? []).filter((effect) => effect.op === 'steal');
+  if (!from || steals.length === 0) return '';
+  const parts = steals.map((effect) => `${effect.amount * (level >= 4 ? 2 : 1)} ${RESOURCE_LABELS[effect.resource] ?? effect.resource}`);
+  return `・從 ${nameOf(room, from)} 偷走 ${parts.join('、')}`;
+}
+
 // 最近幾筆出牌紀錄，新的在上面。響應卡寫在被響應的那張後面。
 function logList(room, game, count = 5) {
   const entries = Object.values(game?.log ?? {})
@@ -276,8 +290,10 @@ function logList(room, game, count = 5) {
     const level = entry.level > 1 ? `（${entry.level} 級連鎖）` : '';
     const target = entry.target ? ` → ${nameOf(room, entry.target)}` : '';
     const chain = entry.chainTarget && !entry.canceled ? `・${nameOf(room, entry.chainTarget)} 隨機棄 1 張` : '';
+    const stolen = entry.canceled ? '' : stealText(room, cardData?.index.actions.get(entry.card), entry.target, entry.level);
     const answer = entry.response ? `・被 ${nameOf(room, entry.response.by)} 以「${cardName(entry.response.card)}」響應${entry.canceled ? '，被抵銷' : ''}` : '';
-    list.append(element('li', '', `第 ${entry.round} 回合・${nameOf(room, entry.by)} 打出「${name}」${level}${target}${chain}${answer}`));
+    const answered = entry.response ? stealText(room, cardData?.index.actions.get(entry.response.card), entry.by) : '';
+    list.append(element('li', '', `第 ${entry.round} 回合・${nameOf(room, entry.by)} 打出「${name}」${level}${target}${stolen}${chain}${answer}${answered}`));
   }
   return entries.length ? list : null;
 }
@@ -330,6 +346,81 @@ function rerenderAt(at) {
   if (wakeups.has(at)) return;
   const left = at - serverTime(session);
   wakeups.set(at, { timer: left > 0 ? setTimeout(rerender, left + 50) : null });
+}
+
+// ---- 事件（M7） ----
+
+function eventOf(id) {
+  return cardData?.index.events.get(id) ?? null;
+}
+
+const TARGET_TEXT = { all: '全體', chosen: '指定一人' };
+
+// 一個效果寫成一句：「全體英鎊 +3」「蒸汽工業大亨抽 1 張」「迷霧 +3」。
+function effectText(effect) {
+  if (effect.op === 'fog') return `迷霧 ${effect.amount > 0 ? '+' : ''}${effect.amount}`;
+  const who = effect.target === 'role' ? roleName(effect.role) : (TARGET_TEXT[effect.target] ?? effect.target);
+  if (effect.op === 'pounds' || effect.op === 'influence') return `${who}${RESOURCE_LABELS[effect.op]} ${effect.amount > 0 ? '+' : ''}${effect.amount}`;
+  if (effect.op === 'draw') return `${who}抽 ${effect.amount} 張`;
+  if (effect.op === 'discard') return `${who}隨機棄 ${effect.amount} 張`;
+  return effect.op;
+}
+
+// 一筆事件紀錄的標題：一般事件是「《名稱》（年代）」，迷霧事件是「迷霧越過 30：《名稱》」。
+function eventTitle(entry) {
+  const event = eventOf(entry.event);
+  const name = event ? `《${event.name}》${event.year ? `（${event.year}）` : ''}` : entry.event ? `事件 ${entry.event}` : '資料裡沒有這個門檻的事件';
+  return entry.kind === 'fog' ? `迷霧越過 ${entry.threshold}：${name}` : name;
+}
+
+// 一張事件：標題、牌面文字、效果（含數字），以及沒結算的部分。
+function eventLines(entry) {
+  const event = eventOf(entry.event);
+  const nodes = [element('p', `event-title${entry.kind === 'fog' ? ' fog-event' : ''}`, eventTitle(entry))];
+  if (!event) return entry.event ? [...nodes, element('p', 'table-note problem', '卡牌資料裡找不到這張事件，效果沒有結算')] : nodes;
+  nodes.push(element('p', 'event-text', event.text));
+  if (event.todo === true) return [...nodes, element('p', 'table-note problem', '這張事件的效果還沒做好（todo），沒有結算')];
+  if (event.effects.length) nodes.push(element('p', 'event-effects', `效果：${event.effects.map(effectText).join('、')}`));
+  const skipped = skippedEventEffects(event);
+  if (skipped.length) nodes.push(element('p', 'table-note problem', `有 ${skipped.length} 個效果要指定一人，這一版不結算，已略過`));
+  return nodes;
+}
+
+// 這一回合要一直顯示的事件：日出到白晝結束顯示今天翻到的一般事件；這一回合觸發過的迷霧事件（任何階段）。
+function todaysEvents(game, state) {
+  const deck = state.phase === 'sunrise' || state.phase === 'day' ? sunriseEventsOf(game.eventLog, state.round) : [];
+  const fog = eventLogList(game.eventLog).filter((entry) => entry.kind === 'fog' && entry.round === state.round);
+  return [...deck, ...fog];
+}
+
+function eventsBlock(game, state) {
+  const entries = todaysEvents(game, state);
+  if (entries.length === 0) return [];
+  const deck = entries.filter((entry) => entry.kind === 'deck');
+  const nodes = [];
+  if (deck.length) nodes.push(element('h3', 'events-heading', '今日事件'));
+  for (const entry of entries) {
+    const block = element('div', `event ${entry.kind === 'fog' ? 'event-fog' : 'event-deck'}`);
+    block.append(...eventLines(entry));
+    nodes.push(block);
+  }
+  return nodes;
+}
+
+// 迷霧值旁邊列已觸發的門檻。
+function firedText(game) {
+  const fired = [...(game?.fogFired ?? [])].sort((a, b) => a - b);
+  return fired.length ? `已觸發：${fired.join('、')}` : '';
+}
+
+const PHASE_SHORT = { sunrise: '日出', day: '白晝', dusk: '黃昏', night: '黑夜' };
+
+// 本場的事件紀錄（翻過的一般事件、觸發過的迷霧事件），照發生順序。
+function eventLogItems(game) {
+  return eventLogList(game?.eventLog).map((entry) => {
+    const kind = entry.kind === 'fog' ? '' : '一般事件';
+    return element('li', entry.kind === 'fog' ? 'fog-event' : '', `第 ${entry.round} 回合${PHASE_SHORT[entry.phase] ?? ''}・${kind}${eventTitle(entry)}`);
+  });
 }
 
 // ---- 黃昏（M6） ----
@@ -526,11 +617,18 @@ function gameControls(room, table, game, state, pending, roomCode) {
   const unseated = playersAt(room, table).filter(([uid]) => !game.seats[uid]);
   if (unseated.length) nodes.push(nameLine(room, unseated, '未入座：'));
   nodes.push(element('p', 'table-pile', `牌庫 ${game.deckCount} 張・棄牌堆 ${game.discardCount} 張`));
+  nodes.push(...eventsBlock(game, state));
   if (state.round === 1 && !game.turn && !game.pending) nodes.push(...startOrderControls(room, table, game, roomCode));
   if (state.phase === 'day') nodes.push(...dayLines(room, table, game, state));
   if (state.phase === 'dusk' || state.phase === 'night') nodes.push(...duskLines(room, table, game, state, roomCode));
   const log = logList(room, game);
   if (log) nodes.push(element('h3', '', '最近出牌'), log);
+  const events = eventLogItems(game);
+  if (events.length) {
+    const list = element('ol', 'log event-log');
+    list.append(...events);
+    nodes.push(element('h3', '', '事件紀錄'), list);
+  }
   if (pending && dealing.has(table)) {
     nodes.push(element('p', 'table-note', '發牌中…'));
   } else if (pending) {
@@ -565,7 +663,7 @@ function renderHost(room) {
     status.append(
       element('span', 'table-round', `第 ${state.round} 回合`),
       element('span', 'table-phase', PHASE_LABELS[state.phase]),
-      element('span', 'table-fog', `迷霧值 ${state.fog}`),
+      element('span', 'table-fog', `迷霧值 ${state.fog}${firedText(game) ? `（${firedText(game)}）` : ''}`),
     );
     const next = element('button', 'table-next', '下一階段');
     next.type = 'button';
@@ -926,6 +1024,18 @@ function renderMyGame(room, me, state, game) {
   const log = logList(room, game);
   $('player-log-card').hidden = !log;
   $('player-log').replaceChildren(...(log ? log.children : []));
+  const events = eventLogItems(game);
+  $('player-event-log-card').hidden = events.length === 0;
+  $('player-event-log').replaceChildren(...events);
+}
+
+// 今日事件（日出到白晝結束）與這一回合觸發的迷霧事件，放在最上面，出牌時也看得到；底下寫自己現在的數字（事件結算後、之後的出牌也算進去）。
+function renderEvents(game, state) {
+  const seat = game?.seats?.[session.uid];
+  const nodes = game && cardData ? eventsBlock(game, state) : [];
+  if (nodes.length && seat) nodes.push(element('p', 'event-now caption', `你現在：英鎊 ${seat.pounds}・影響力 ${seat.influence}・迷霧值 ${state.fog}`));
+  $('player-events').hidden = nodes.length === 0;
+  $('player-events').replaceChildren(...nodes);
 }
 
 // 同桌玩家。開局後照座位排，附階層、英鎊、影響力、手牌張數；沒入座的排在最後。
@@ -1022,6 +1132,8 @@ function renderPlayer(room, me) {
   $('player-phase').textContent = PHASE_LABELS[state.phase];
   $('player-fog').textContent = state.fog;
   $('player-fog-meter').value = state.fog;
+  $('player-fog-fired').textContent = firedText(game);
+  renderEvents(game, state);
   renderMyGame(room, me, state, game);
   $('player-mates').replaceChildren(...mateItems(room, me.table, game));
   $('player-host-offline').hidden = hostUids(room).some((uid) => isOnline(room, uid));

@@ -544,3 +544,42 @@ h3 {
 .dusk-now {
   margin: 4px 0 0;
 }
+
+/* 事件（M7）：今日事件、迷霧事件、事件紀錄 */
+.events {
+  border-color: var(--accent);
+}
+
+.events-heading {
+  margin-top: 0;
+}
+
+.event + .event {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.event-title {
+  margin: 4px 0 0;
+  font-weight: 700;
+}
+
+.event-title.fog-event,
+.event-log .fog-event {
+  color: var(--accent);
+}
+
+.event-text,
+.event-effects {
+  margin: 4px 0 0;
+  font-size: 0.95rem;
+}
+
+.event-effects {
+  font-variant-numeric: tabular-nums;
+}
+
+.fog-fired {
+  margin: 4px 0 0;
+}

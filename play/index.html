@@ -91,7 +91,9 @@
           <meter id="player-fog-meter" min="0" max="100" value="0"></meter>
           <span id="player-fog"></span>
         </p>
+        <p id="player-fog-fired" class="caption fog-fired"></p>
       </div>
+      <div id="player-events" class="card events" hidden></div>
       <p id="player-wait" class="card waiting" hidden></p>
       <div id="player-game" hidden>
         <div class="card">
@@ -115,6 +117,10 @@
         <div id="player-log-card" class="card" hidden>
           <h2>最近出牌</h2>
           <ol id="player-log" class="log"></ol>
+        </div>
+        <div id="player-event-log-card" class="card" hidden>
+          <h2>事件紀錄</h2>
+          <ol id="player-event-log" class="log event-log"></ol>
         </div>
         <div class="card destiny">
           <h2>隱藏天命</h2>
