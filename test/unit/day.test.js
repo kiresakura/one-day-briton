@@ -15,6 +15,7 @@ import {
   discardRandom,
   needsTarget,
   pass,
+  playProblem,
   processRequest,
   resolvePlay,
   seatsInOrder,
@@ -469,4 +470,24 @@ test('a whole day of random legal plays keeps the table consistent', () => {
     }
   }
   assert.ok(plays >= 4, `${plays} cards were played`);
+});
+
+test('the player screen checks a card with only its own hand, the same way the host does', () => {
+  const state = tableState({ hands: { a: ['cost', 'response', 'todo', 'hitChosen', 'gearA', 'plain'], b: ['plain'] }, seats: { a: { pounds: 2 } } });
+  const view = ({ hands, deck, discard, lastSeq, ...rest }) => ({ ...rest, hands: { a: hands.a } });
+  for (const [cardId, extra, reason] of [
+    ['plain', {}, null],
+    ['cost', {}, 'cannot-afford'],
+    ['response', {}, 'response-card'],
+    ['todo', {}, 'todo-card'],
+    ['hitChosen', {}, 'need-target'],
+    ['hitChosen', { target: 'b' }, null],
+    ['drawTwo', {}, 'not-in-hand'],
+  ]) {
+    assert.equal(playProblem(view(state), 'a', { card: cardId, ...extra }, testData), reason, cardId);
+    const result = play(state, 'a', cardId, extra);
+    assert.equal(result.kind === 'played' ? null : result.reason, reason, cardId);
+  }
+  assert.equal(playProblem(view(state), 'b', { card: 'plain' }, testData), 'not-your-turn');
+  assert.equal(playProblem({ ...view(state), phase: 'dusk' }, 'a', { card: 'plain' }, testData), 'not-day');
 });

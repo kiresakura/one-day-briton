@@ -267,6 +267,12 @@ function checkPlay(state, uid, request, data) {
   return { reason: null, action, level, target, chainTarget };
 }
 
+// 畫面送出前先查一次（主持端結算時照樣再查）：這張牌現在出得出去嗎。state 只要有 round、phase、seats、startOrder、
+// turn 與自己的手牌 hands[uid]。回傳退回原因（REJECT_REASONS 的鍵），出得出去是 null。
+export function playProblem(state, uid, request, data) {
+  return checkPlay(state, uid, request, data).reason;
+}
+
 // 出牌第一步：檢查、付成本、牌離開手牌、算級數、記下處理過的序號。
 // 合法回傳 { ok: true, state, pending }：pending＝{ by, seq, card, level, target, chainTarget }，是等著 resolvePlay 結算的那張牌
 // （這時牌不在手上、也還沒進棄牌堆）。不合法回傳 { ok: false, reason }，reason 是 REJECT_REASONS 的鍵，state 不動。

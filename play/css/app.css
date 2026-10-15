@@ -405,3 +405,64 @@ h3 {
     margin: 0;
   }
 }
+
+/* 白晝出牌 */
+.day {
+  border-color: var(--accent);
+}
+
+.day-turn {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.day-turn.mine {
+  color: var(--accent);
+}
+
+.countdown {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.request-state {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.request-state.problem {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hand-gear {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hand-problem {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.composer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.composer-level {
+  margin: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.log {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+  font-size: 0.9rem;
+}
