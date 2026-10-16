@@ -131,11 +131,13 @@ export function markTruncated(root) {
   }
 }
 
+// data-full 有換行時，第一行是標題（例如主持端的名字），其餘每行一段（階層・座位）。
 function openPopover(node) {
   closePopover();
   popover = element('div', 'popover');
   popover.setAttribute('role', 'dialog');
-  popover.append(element('p', 'popover-text', node.dataset.full || node.textContent), element('p', 'popover-hint', '點其他地方關閉'));
+  const [first, ...rest] = (node.dataset.full || node.textContent).split('\n');
+  popover.append(element('p', rest.length ? 'popover-title' : 'popover-text', first), ...rest.map((line) => element('p', 'popover-text', line)), element('p', 'popover-hint', '點其他地方關閉'));
   document.body.append(popover);
   const rect = node.getBoundingClientRect();
   const width = popover.offsetWidth;

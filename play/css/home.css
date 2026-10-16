@@ -191,7 +191,7 @@
   text-align: center;
 }
 
-/* ---- 主持端入口（長相下一段再做；功能照舊） ---- */
+/* ---- 主持端入口：按了到「開房／接手」（host.css） ---- */
 
 .host-entry {
   margin-top: 28px;
@@ -203,6 +203,10 @@
 
 .host-entry h2 {
   font-size: var(--fs-h2);
+}
+
+.host-entry .field-hint {
+  margin-top: 4px;
 }
 
 .host-entry .btn {

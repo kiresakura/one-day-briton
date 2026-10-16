@@ -1,19 +1,21 @@
 // 主持端與玩家端共用：提示訊息、按鈕執行、倒數、事件／法案／黑夜／計分的文字，以及共用元件（狀態條、倒數圈、迷霧值、
 // 齒輪連鎖、連線狀態、羊皮紙卡面）。文字與數字一律從卡牌資料與房間狀態算，不寫死示範內容。
 import {
+  DUSK_GRACE_MS,
+  NIGHT_GRACE_MS,
+  duskSettleAt,
   eventLogList,
   nightSettings,
-  responseDeadline,
+  nightSettleAt,
   scoreSettings,
   shouldEnd,
-  skippedEffects,
   skippedEventEffects,
   sunriseEventsOf,
   seatsInOrder,
 } from '../game.js';
 import { FOG_THRESHOLDS, PHASE_LABELS } from '../rules.js';
 import { StoreError, serverTime, trackPresence } from '../store.js';
-import { $, element, h } from './dom.js';
+import { $, h } from './dom.js';
 import { ctx, rerender } from './state.js';
 
 // 場次標示：兩場制還沒做，先寫死在這一個地方（之後由房間狀態決定）。
@@ -73,12 +75,6 @@ export function playersAt(room, table) {
     .sort(([, a], [, b]) => a.joinedAt - b.joinedAt);
 }
 
-// 玩家的名字；不在線上的變淡並標「離線」。
-export function nameTag(room, uid, player, tag) {
-  if (uid === ctx.session.uid) return element(tag, 'me', `${player.name}（你）`);
-  return isOnline(room, uid) ? element(tag, '', player.name) : element(tag, 'offline', `${player.name}（離線）`);
-}
-
 // 入座的人的暱稱；已經離開房間的人也照樣有座位。
 export function nameOf(room, uid) {
   const name = room?.players?.[uid]?.name ?? '（已離開房間）';
@@ -91,12 +87,6 @@ export function roleName(roleId) {
 
 export function cardName(id) {
   return ctx.cardData?.index.actions.get(id)?.name ?? id;
-}
-
-// 連鎖狀態：這一輪上一張牌的齒輪與級數。
-export function chainText(turn) {
-  if (turn.plays === 0) return '連鎖：這一輪還沒出牌';
-  return turn.gear === null ? '連鎖：上一張沒有齒輪' : `連鎖：齒輪「${turn.gear}」${turn.level} 級`;
 }
 
 // 這張牌的「偷」寫成「從 ○○ 偷走 3 英鎊」；from 是被偷的人。數量是牌上的數量（4 級連鎖加倍）：出牌紀錄沒有記實際拿到多少，
@@ -125,14 +115,6 @@ export function playEntries(game) {
   return Object.values(game?.log ?? {}).sort((a, b) => a.at - b.at);
 }
 
-// 最近幾筆出牌紀錄，新的在上面。響應卡寫在被響應的那張後面。
-export function logList(room, game, count = 5) {
-  const entries = playEntries(game).slice(-count).reverse();
-  const list = element('ol', 'log');
-  for (const entry of entries) list.append(element('li', '', `第 ${entry.round} 回合・${playText(room, entry)}`));
-  return entries.length ? list : null;
-}
-
 // ---- 倒數 ----
 
 const clocks = new Map(); // 桌號 → { key: '回合:第幾位', since }：白晝每人的提醒倒數從這台裝置看到輪到他時算起
@@ -155,33 +137,7 @@ export function turnSince(table, round, index) {
   return clocks.get(table).since;
 }
 
-export function countdown(table, round, index) {
-  const node = element('p', 'countdown');
-  node.dataset.since = turnSince(table, round, index);
-  node.textContent = countdownText(Number(node.dataset.since));
-  return node;
-}
-
-export function countdownText(since) {
-  const total = daySeconds();
-  const left = total - Math.floor((Date.now() - since) / 1000);
-  return left > 0 ? `提醒倒數 ${left} 秒` : `已經超過 ${total} 秒（只是提醒，不會自動換人）`;
-}
-
-// 響應窗口的倒數：照伺服器時間算到截止還有幾秒（主持端判斷用的也是伺服器時間），每 250 毫秒更新一次；
-// 本機估的伺服器時間差個幾毫秒時，顯示的秒數不超過窗口的秒數。before＋秒數＋after 是倒數中的文字，over 是時間到之後的文字。
-export function windowLine(className, pending, texts) {
-  return deadlineLine(`response-window ${className}`, responseDeadline(pending), pending.seconds, texts);
-}
-
-// 照伺服器時間倒數到 deadline 的一行（響應窗口、黃昏的提醒與揭曉倒數共用），顯示的秒數不超過 seconds。
-export function deadlineLine(className, deadline, seconds, { before, after, over }) {
-  const node = element('p', `server-countdown ${className}`);
-  Object.assign(node.dataset, { deadline, seconds, before, after, over });
-  showWindowLine(node);
-  return node;
-}
-
+// 照伺服器時間算到 deadline 還有幾秒（主持端判斷用的也是伺服器時間）；本機估的伺服器時間差個幾毫秒時，顯示的秒數不超過 seconds。
 export function secondsLeft(deadline, seconds) {
   return Math.min(Number(seconds), Math.ceil((Number(deadline) - serverTime(ctx.session)) / 1000));
 }
@@ -193,11 +149,12 @@ function showWindowLine(node) {
 
 // ---- 倒數圈：照伺服器時間（data-deadline）或從這台裝置開始算（data-since）；秒數與圈一起每 250 毫秒更新 ----
 
-// deadline＝伺服器時間的截止；since＝本機開始時間（白晝提醒）。total 是總秒數，label 是圈裡的小字。
-export function ring({ deadline = null, since = null, total, label, overText = '到' }) {
+// deadline＝伺服器時間的截止；since＝本機開始時間（白晝提醒）。total 是總秒數，label 是圈裡的小字。big＝揭曉用的大數字倒數圈
+// （數字每秒輕輕放大回彈一次；系統設了減少動態效果時不動）。
+export function ring({ deadline = null, since = null, total, label, overText = '到', big = false }) {
   const node = h(
     'div',
-    { class: 'ring', attrs: { role: 'img' }, data: { total, label, over: overText, ...(deadline !== null ? { deadline } : { since }) } },
+    { class: `ring${big ? ' is-big' : ''}`, attrs: { role: 'img' }, data: { total, label, over: overText, ...(deadline !== null ? { deadline } : { since }) } },
     svgRing(),
     h('span', { class: 'ring-num' }),
     h('span', { class: 'ring-label', text: label }),
@@ -235,13 +192,16 @@ function showRing(node) {
   const over = left <= 0;
   node.classList.toggle('is-over', over);
   node.style.setProperty('--p', String(over ? 0 : Math.max(0, Math.min(1, left / total))));
-  node.querySelector('.ring-num').textContent = over ? node.dataset.over : String(left);
+  const num = node.querySelector('.ring-num');
+  const text = over ? node.dataset.over : String(left);
+  if (num.textContent !== text && num.textContent !== '' && node.classList.contains('is-big')) {
+    num.classList.remove('is-tick');
+    void num.offsetWidth; // 重新開始放大回彈的動畫
+    num.classList.add('is-tick');
+  }
+  num.textContent = text;
   node.setAttribute('aria-label', over ? `${node.dataset.label}：時間到` : `${node.dataset.label}：剩 ${left} 秒`);
 }
-
-setInterval(() => {
-  for (const node of document.querySelectorAll('.countdown[data-since]')) node.textContent = countdownText(Number(node.dataset.since));
-}, 1000);
 
 setInterval(() => {
   for (const node of document.querySelectorAll('.server-countdown[data-deadline]')) showWindowLine(node);
@@ -292,17 +252,6 @@ export function eventOutcome(entry) {
   return { effects: event.effects.length ? `效果：${event.effects.map(effectText).join('、')}` : '', problems };
 }
 
-// 一張事件：標題、牌面文字、效果（含數字），以及沒結算的部分。
-export function eventLines(entry) {
-  const event = eventOf(entry.event);
-  const nodes = [element('p', `event-title${entry.kind === 'fog' ? ' fog-event' : ''}`, eventTitle(entry))];
-  if (event) nodes.push(element('p', 'event-text', event.text));
-  const { effects, problems } = eventOutcome(entry);
-  if (effects) nodes.push(element('p', 'event-effects', effects));
-  for (const problem of problems) nodes.push(element('p', 'table-note problem', problem));
-  return nodes;
-}
-
 // 這一回合要一直顯示的事件：日出到白晝結束顯示今天翻到的一般事件；這一回合觸發過的迷霧事件（任何階段）。
 export function todaysEvents(game, state) {
   const deck = state.phase === 'sunrise' || state.phase === 'day' ? sunriseEventsOf(game.eventLog, state.round) : [];
@@ -310,48 +259,12 @@ export function todaysEvents(game, state) {
   return [...deck, ...fog];
 }
 
-export function eventsBlock(game, state) {
-  if (!ctx.cardData) return []; // 卡牌資料還沒讀到時不顯示，免得寫成「找不到這張事件」
-  const entries = todaysEvents(game, state);
-  if (entries.length === 0) return [];
-  const deck = entries.filter((entry) => entry.kind === 'deck');
-  const nodes = [];
-  if (deck.length) nodes.push(element('h3', 'events-heading', '今日事件'));
-  for (const entry of entries) {
-    const block = element('div', `event ${entry.kind === 'fog' ? 'event-fog' : 'event-deck'}`);
-    block.append(...eventLines(entry));
-    nodes.push(block);
-  }
-  return nodes;
-}
-
-// 迷霧值旁邊列已觸發的門檻。
-export function firedText(game) {
-  const fired = [...(game?.fogFired ?? [])].sort((a, b) => a - b);
-  return fired.length ? `已觸發：${fired.join('、')}` : '';
-}
-
 export const PHASE_SHORT = { sunrise: '日出', day: '白晝', dusk: '黃昏', night: '黑夜' };
-
-// 本場的事件紀錄（翻過的一般事件、觸發過的迷霧事件），照發生順序。
-export function eventLogItems(game) {
-  return eventLogList(game?.eventLog).map((entry) => {
-    const kind = entry.kind === 'fog' ? '' : '一般事件';
-    return element('li', entry.kind === 'fog' ? 'fog-event' : '', `第 ${entry.round} 回合${PHASE_SHORT[entry.phase] ?? ''}・${kind}${eventTitle(entry)}`);
-  });
-}
 
 // ---- 黃昏（M6） ----
 
 export function billOf(id) {
   return ctx.cardData?.data.bills.find((bill) => bill.id === id) ?? null;
-}
-
-// 法案卡：名稱、年代、說明。資料檔裡找不到時只顯示編號。
-export function billLines(id) {
-  const bill = billOf(id);
-  if (!bill) return [element('p', 'dusk-bill', `法案 ${id}`)];
-  return [element('p', 'dusk-bill', billTitle(id)), element('p', 'dusk-text', bill.text)];
 }
 
 export function billTitle(id) {
@@ -363,53 +276,18 @@ export function sideText(vote) {
   return vote.side === 'abstain' ? '棄權' : `${SIDE_LABELS[vote.side] ?? vote.side} ${vote.bid}`;
 }
 
-// 黃昏的提醒倒數（只顯示，不會自動揭曉）：從翻開法案的伺服器時間算起。
-export function reminderLine(dusk) {
-  const seconds = ctx.cardData?.data.settings.reminderSeconds.dusk ?? 120;
-  return deadlineLine('countdown dusk-reminder', dusk.openedAt + seconds * 1000, seconds, {
-    before: '提醒倒數 ',
-    after: ' 秒',
-    over: `已經超過 ${seconds} 秒（只是提醒，不會自動揭曉）`,
-  });
-}
-
 export function duskRevealSeconds() {
   return ctx.cardData?.data.settings.duskRevealSeconds ?? 3;
 }
 
-// 截止時間（revealAt）的倒數：全員送出後是「n 秒後揭曉」，提前揭曉時直接是截止了。
-export function revealLine(dusk) {
-  rerenderAt(dusk.revealAt);
-  return deadlineLine('dusk-countdown', dusk.revealAt, duskRevealSeconds(), {
-    before: '大家都送出了，',
-    after: ' 秒後揭曉',
-    over: '投票截止了，揭曉中…',
-  });
+// 揭曉倒數照實際：截止時間（revealAt）之後主持端再等緩衝才揭曉（game.js 的 duskSettleAt／nightSettleAt），倒數到那一刻；
+// 全員送出後的總秒數＝設定的揭曉秒數＋緩衝。kind 是 'dusk' 或 'night'；at 是 dusk 或 night（有 revealAt）。
+export function revealDeadline(kind, at) {
+  return kind === 'dusk' ? duskSettleAt(at) : nightSettleAt(at);
 }
 
-// 揭曉結果：通過與否、兩邊總和、每個人的選邊與出價（沒送出的算棄權）。uid 是玩家自己時，另外寫付了多少、現在的數字。
-export function resultLines(room, game, id, result, uid) {
-  const nodes = [
-    element('p', `dusk-result ${result.passed ? 'passed' : 'failed'}`, `揭曉：${result.passed ? '通過' : '沒有通過'}（贊成 ${result.yes}：反對 ${result.no}）`),
-  ];
-  const list = element('ul', 'dusk-votes');
-  for (const [seatUid] of seatsInOrder(game.seats)) {
-    const vote = result.votes?.[seatUid];
-    list.append(element('li', seatUid === uid ? 'me' : '', `${nameOf(room, seatUid)}：${vote ? sideText(vote) : '沒送出（算棄權）'}`));
-  }
-  nodes.push(list);
-  const bill = billOf(id);
-  if (uid && game.seats[uid]) {
-    const mineLines = duskMineTexts(game, result, uid);
-    nodes.push(element('p', 'dusk-paid', mineLines.paid), element('p', 'dusk-now', mineLines.now));
-  } else if (!bill) {
-    nodes.push(element('p', 'table-note problem', '卡牌資料裡找不到這張法案，效果沒有結算'));
-  } else {
-    const skipped = skippedEffects(bill, result.passed);
-    if (bill.todo === true) nodes.push(element('p', 'table-note problem', '這張法案的效果還沒做好（todo），這次沒有結算'));
-    else if (skipped.length) nodes.push(element('p', 'table-note problem', `這張法案有 ${skipped.length} 個效果要指定一人，這一版不結算，已略過`));
-  }
-  return nodes;
+export function revealTotal(kind) {
+  return kind === 'dusk' ? duskRevealSeconds() + DUSK_GRACE_MS / 1000 : nightRules().revealSeconds + NIGHT_GRACE_MS / 1000;
 }
 
 // 揭曉後玩家自己的兩句：付了多少（站在結果這一邊的加註）、照結果結算後現在的數字。
@@ -469,41 +347,21 @@ export function outcomeText(outcome) {
     return `豪賭到第 ${outcome.tiers} 層——${rolls}——${money}`;
   }
   if (outcome.choice === 'split') return `分贓——拿到 ${outcome.pounds} 英鎊、罪孽 +${outcome.sin}`;
-  return '睡覺';
+  return outcome.missed ? MISSED_TEXT : SLEEP_TEXT;
 }
 
-// 黑夜的提醒倒數（只顯示，不會自動揭曉）：從黑夜開始的伺服器時間算起。
-export function nightReminderLine(night) {
-  const seconds = ctx.cardData?.data.settings.reminderSeconds.night ?? 120;
-  return deadlineLine('countdown night-reminder', night.openedAt + seconds * 1000, seconds, {
-    before: '提醒倒數 ',
-    after: ' 秒',
-    over: `已經超過 ${seconds} 秒（只是提醒，不會自動揭曉）`,
-  });
-}
+// 黑夜結果分「選了睡覺」與「沒送出」（M11 起結果多記 missed；舊資料沒有 missed 的照選了睡覺顯示）：文字＋符號，不只靠顏色。
+export const SLEEP_TEXT = '☾ 選了睡覺';
+export const MISSED_TEXT = '— 沒送出（算睡覺）';
 
-// 截止時間的倒數：全員送出後是「n 秒後揭曉」，提前揭曉時直接是截止了。
-export function nightRevealLine(night) {
-  rerenderAt(night.revealAt);
-  return deadlineLine('night-countdown', night.revealAt, nightRules().revealSeconds, {
-    before: '大家都送出了，',
-    after: ' 秒後揭曉',
-    over: '黑夜截止了，揭曉中…',
-  });
-}
-
-// 揭曉結果：每個人的選擇與結果（沒送出的算睡覺）。uid 是玩家自己時，另外寫自己這一夜的變化與現在的數字。
-export function nightResultLines(room, game, result, uid) {
-  const nodes = [element('p', 'night-result', '黑夜揭曉')];
-  const list = element('ul', 'night-players');
-  for (const [seatUid] of seatsInOrder(game.seats)) {
-    const outcome = result.players?.[seatUid];
-    list.append(element('li', seatUid === uid ? 'me' : '', `${nameOf(room, seatUid)}：${outcome ? outcomeText(outcome) : '睡覺'}`));
+// 主持端桌卡的短句：「豪賭 2 層 +20」「豪賭 1 層爆 −2」「分贓 +3・罪 +1」「☾ 選了睡覺」「— 沒送出」。
+export function outcomeShort(outcome) {
+  if (outcome.choice === 'gamble') {
+    if (outcome.bust) return `豪賭 ${outcome.tiers} 層爆${outcome.pounds < 0 ? ` −${-outcome.pounds}` : ''}`;
+    return `豪賭 ${outcome.tiers} 層 ${[outcome.pounds && `+${outcome.pounds}`, outcome.influence && `影 +${outcome.influence}`].filter(Boolean).join('・') || '+0'}`;
   }
-  nodes.push(list);
-  const mineLines = uid ? nightMineTexts(game, result, uid) : null;
-  if (mineLines) nodes.push(element('p', 'night-mine', mineLines.night), element('p', 'night-now', mineLines.now));
-  return nodes;
+  if (outcome.choice === 'split') return `分贓 +${outcome.pounds}${outcome.sin ? `・罪 +${outcome.sin}` : ''}`;
+  return outcome.missed ? '— 沒送出' : SLEEP_TEXT;
 }
 
 // 揭曉後玩家自己的兩句：這一夜的變化、現在的數字。沒有座位或沒有結果是 null。
@@ -516,6 +374,42 @@ export function nightMineTexts(game, result, uid) {
     night: `你這一夜：英鎊 ${signed(outcome.pounds)}・影響力 ${signed(outcome.influence)}${sin}`,
     now: `你現在：英鎊 ${seat.pounds}・影響力 ${seat.influence}${seat.sin ? `・罪孽 ${seat.sin}` : ''}`,
   };
+}
+
+// ---- 紀錄：玩家端的「紀錄」分頁與主持端每桌的「紀錄」抽屜共用 ----
+
+// 一桌的紀錄項目：出牌紀錄（響應寫在同一筆）、事件紀錄、黃昏與黑夜的結果。每項 { round, phase, at, kind, icon, title, detail }，
+// 排序由畫面決定（照回合分段、新的在上）。
+const PHASE_ORDER = { sunrise: 0, day: 1, dusk: 2, night: 3 };
+
+export function logItems(room, game) {
+  const items = [];
+  for (const entry of playEntries(game)) {
+    items.push({ round: entry.round, phase: 'day', at: entry.at ?? 0, kind: 'play', icon: entry.response ? '響' : '牌', title: playText(room, entry), detail: '' });
+  }
+  eventLogList(game.eventLog).forEach((entry, index) => {
+    const { effects, problems } = eventOutcome(entry);
+    items.push({ round: entry.round, phase: entry.phase ?? 'sunrise', at: index, kind: 'event', icon: entry.kind === 'fog' ? '霧' : '✶', title: entry.kind === 'fog' ? eventTitle(entry) : `今日事件${eventTitle(entry)}`, detail: [effects, ...problems].filter(Boolean).join('；') });
+  });
+  for (const [round, log] of Object.entries(game.duskLog ?? {})) {
+    if (!log?.bill) continue;
+    items.push({ round: Number(round), phase: 'dusk', at: 0, kind: 'result', icon: '§', title: `${billTitle(log.bill)}${log.passed ? '通過' : '沒有通過'}`, detail: `贊成 ${log.yes}：反對 ${log.no}` });
+  }
+  for (const [round, log] of Object.entries(game.nightLog ?? {})) {
+    if (!log?.players) continue;
+    const lines = seatsInOrder(game.seats).map(([uid]) => `${nameOf(room, uid)}：${log.players[uid] ? outcomeText(log.players[uid]) : SLEEP_TEXT}`);
+    items.push({ round: Number(round), phase: 'night', at: 0, kind: 'result', icon: '☾', title: '黑夜揭曉', detail: lines.join('；') });
+  }
+  return items;
+}
+
+// 照回合分段（新的回合在上）、同一回合裡照階段與時間倒排。回傳 [{ round, items }]。
+export function logRounds(items) {
+  const rounds = [...new Set(items.map((item) => item.round))].sort((a, b) => b - a);
+  return rounds.map((round) => ({
+    round,
+    items: items.filter((item) => item.round === round).sort((a, b) => (PHASE_ORDER[b.phase] ?? 0) - (PHASE_ORDER[a.phase] ?? 0) || b.at - a.at),
+  }));
 }
 
 // ---- 終局與計分（M9） ----
@@ -535,8 +429,6 @@ export function endReasonNow(game, state) {
 export function wakeAtSunset(game) {
   if (ctx.cardData && typeof game?.startedAt === 'number') rerenderAt(game.startedAt + scoreRules().sunsetMinutes * MINUTE_MS);
 }
-
-export const clockText = (ms) => `${Math.floor(ms / MINUTE_MS)} 分 ${String(Math.floor((ms % MINUTE_MS) / 1000)).padStart(2, '0')} 秒`;
 
 // 天命那一項：內容與是否達成（終局時公開）。
 export function destinyText(destiny) {
@@ -565,10 +457,6 @@ export function scoreRows(score) {
     { label: '罪孽', detail: `${score.sin} 點 ÷ ${rules.sinPerPenalty} → 扣 ${score.sinPenalty} 分（捨去）`, points: `−${score.sinPenalty}` },
     { label: '總分', detail: `${earned}＋${assets.points}＋${bonus}－${score.sinPenalty}＝${score.total}`, points: `${score.total}` },
   ];
-}
-
-export function scoreLines(score) {
-  return scoreRows(score).map((row) => row.line ?? `${row.label}：${row.detail}`);
 }
 
 // 照名次排好的 [uid, 分數]（同名次照座位）。

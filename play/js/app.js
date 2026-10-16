@@ -1,4 +1,4 @@
-// 進入點：連線、房間訂閱、畫面切換（首頁、等待核准、主持端、玩家端）。各畫面的內容在 js/ui/：
+// 進入點：連線、房間訂閱、畫面切換（首頁、主持端的開房／接手、等待核准、主持端、玩家端）。各畫面的內容在 js/ui/：
 // shared.js（共用文字與元件）、home.js（首頁）、host.js（主持端）、player.js（玩家端）。資料一律從 store.js 的訂閱來，
 // 牌名與牌面文字從卡牌資料檔（gamedata.js）來。
 import { indexGameData, loadGameData } from './gamedata.js';
@@ -6,7 +6,7 @@ import { isHostOf, isRoomCode } from './rules.js';
 import { cancelHostRequest, connect, createRoom, enterAsHost, joinRoom, leaveRoom, watchConnection, watchRoom } from './store.js';
 import { $ } from './ui/dom.js';
 import { joinValues, renderPending, setupHome, updateJoin } from './ui/home.js';
-import { renderHost, resetHost } from './ui/host.js';
+import { renderHost, renderHostEntry, resetHost } from './ui/host.js';
 import { renderPlayer, resetPlayer, setConnected } from './ui/player.js';
 import { explain, notify, resetTimers, run } from './ui/shared.js';
 import { ctx, setRerender } from './ui/state.js';
@@ -21,7 +21,7 @@ let stopWatching = null;
 let offlineTimer = null;
 
 function show(screen) {
-  for (const name of ['loading', 'home', 'pending', 'host', 'player']) $(`screen-${name}`).hidden = name !== screen;
+  for (const name of ['loading', 'home', 'host-entry', 'pending', 'host', 'player']) $(`screen-${name}`).hidden = name !== screen;
   // 玩家端照階段換色調；其他畫面用白晝的紙色。
   if (screen !== 'player') document.body.dataset.phase = 'day';
 }
@@ -69,8 +69,8 @@ function render(room) {
   if (!room?.meta) return goHome('房間不存在或已關閉');
   ctx.latestRoom = room;
   if (isHostOf(room, ctx.session.uid)) {
-    renderHost(room);
-    return show('host');
+    show('host'); // 先顯示再畫：被截斷的名字要量得到寬度
+    return renderHost(room);
   }
   if (room.hostRequests?.[ctx.session.uid]) {
     renderPending();
@@ -87,6 +87,17 @@ function render(room) {
 
 setRerender(() => {
   if (ctx.latestRoom) render(ctx.latestRoom);
+});
+
+$('host-entry-open').addEventListener('click', () => {
+  notify();
+  renderHostEntry();
+  show('host-entry');
+});
+
+$('host-entry-back').addEventListener('click', () => {
+  notify();
+  show('home');
 });
 
 $('create-room').addEventListener('click', () => run($('create-room'), async () => enterRoom(await createRoom(ctx.session))));
@@ -114,8 +125,9 @@ $('pending-cancel').addEventListener('click', () => {
   cancelHostRequest(ctx.session, leaving).catch((error) => notify(explain(error)));
 });
 
-$('host-leave').addEventListener('click', () => {
-  if (confirm('離開後房間會保留，這台裝置之後可以在首頁用房號「以主持端進入」回來。確定離開？')) goHome();
+// 主持端的「離開」在主持畫面的頂列裡（重畫時會換），用事件委派。
+document.addEventListener('host-leave', () => {
+  if (confirm('離開後房間會保留，這台裝置之後可以在首頁按「開房／接手房間」，輸入房號回來。確定離開？')) goHome();
 });
 
 // 玩家端的「離開房間」在玩家畫面裡（重畫時會換），用事件委派。
@@ -140,6 +152,7 @@ loadGameData()
   })
   .finally(() => {
     if (ctx.latestRoom) render(ctx.latestRoom);
+    if (!$('screen-host-entry').hidden) renderHostEntry();
   });
 
 try {

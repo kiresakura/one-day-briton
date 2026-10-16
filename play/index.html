@@ -68,13 +68,67 @@
 
     <section class="host-entry" aria-labelledby="host-entry-title">
       <h2 id="host-entry-title">主持端</h2>
-      <button id="create-room" type="button" class="btn">開新房（主持端）</button>
-      <form id="host-form" autocomplete="off">
-        <label class="field" for="host-join-code"><span class="field-label">已經有房間：輸入房號</span></label>
-        <input id="host-join-code" class="input" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
-        <button type="submit" class="btn">以主持端進入</button>
-      </form>
+      <p class="field-hint">工作人員用筆電或平板：開一個新房間，或接手已經開的房間</p>
+      <button id="host-entry-open" type="button" class="btn">開房／接手房間</button>
     </section>
+  </section>
+
+  <section id="screen-host-entry" class="host-entry-screen" hidden>
+    <header class="host-top">
+      <div class="host-brand">
+        <p class="host-brand-title">一日英國人</p>
+        <p class="host-brand-sub">女皇陛下萬歲！・主持端</p>
+      </div>
+      <div class="host-top-right">
+        <span class="host-online">還沒有房間</span>
+        <button id="host-entry-back" type="button" class="btn top-btn">回加入畫面</button>
+      </div>
+    </header>
+    <div class="entry-grid">
+      <section class="entry-panel" aria-labelledby="entry-new-title">
+        <p class="entry-latin" lang="en">NEW SESSION</p>
+        <h2 id="entry-new-title" class="entry-title">開一個新房間</h2>
+        <div class="entry-fields">
+          <div class="entry-field">
+            <span class="entry-label">桌數</span>
+            <p class="entry-value"><span id="entry-tables" class="num"></span><small> 桌</small></p>
+            <span class="entry-hint">目前固定，不能改</span>
+          </div>
+          <div class="entry-field">
+            <span class="entry-label">日落鐘</span>
+            <p id="entry-sunset" class="entry-value"></p>
+            <span class="entry-hint">目前固定（照卡牌資料的設定）；時間到的那一回合結束後算分</span>
+          </div>
+          <div class="entry-field">
+            <span class="entry-label">這是第幾場</span>
+            <div class="entry-match" role="group" aria-label="這是第幾場">
+              <span id="entry-match" class="match-pill" aria-current="true"></span>
+              <button type="button" class="btn match-pill" disabled aria-describedby="entry-match-why">第 2 場</button>
+            </div>
+            <span id="entry-match-why" class="entry-hint">第 2 場：兩場制還沒開放</span>
+          </div>
+          <div class="entry-field">
+            <span class="entry-label">每桌人數</span>
+            <p id="entry-seats" class="entry-value"></p>
+            <span id="entry-seats-hint" class="entry-hint"></span>
+          </div>
+        </div>
+        <p id="entry-fog" class="entry-note"></p>
+        <div class="entry-actions">
+          <button id="create-room" type="button" class="btn btn-primary">建立房間</button>
+        </div>
+      </section>
+      <section class="entry-panel" aria-labelledby="entry-take-title">
+        <p class="entry-latin" lang="en">TAKE OVER</p>
+        <h2 id="entry-take-title" class="entry-title">接手已經開的房間</h2>
+        <p class="entry-hint">主持的電腦當機、換平板時用：輸入房號送出申請，在線的主持端核對確認碼後核准。這台已經是這間房的主持端時，直接回到主持畫面。</p>
+        <form id="host-form" class="entry-form" autocomplete="off">
+          <label class="entry-label" for="host-join-code">房號</label>
+          <input id="host-join-code" class="input entry-code" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="6 碼英數字" required>
+          <button type="submit" class="btn btn-block">送出備援主持申請</button>
+        </form>
+      </section>
+    </div>
   </section>
 
   <section id="screen-pending" class="page" hidden>
@@ -88,17 +142,9 @@
   </section>
 
   <section id="screen-host" class="host-screen" hidden>
-    <div class="card room-code">
-      <span>房號</span>
-      <strong id="host-code"></strong>
-    </div>
-    <div id="host-tables" class="tables"></div>
-    <div class="card">
-      <h2>主持端</h2>
-      <p id="host-count" class="host-count"></p>
-      <ul id="host-requests" class="requests"></ul>
-    </div>
-    <button id="host-leave" type="button" class="quiet">離開</button>
+    <header id="host-top" class="host-top"></header>
+    <main id="host-tables" class="host-grid" aria-label="各桌"></main>
+    <div id="host-layer"></div>
   </section>
 
   <section id="screen-player" class="player" hidden>

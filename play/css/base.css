@@ -884,6 +884,16 @@ button.pcard {
   overflow-wrap: anywhere;
 }
 
+.popover-title {
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+
+.popover-title + .popover-text {
+  color: #d8d2c4;
+  font-size: var(--fs-small);
+}
+
 .popover-hint {
   margin-top: 4px;
   color: #c9c3b6;
