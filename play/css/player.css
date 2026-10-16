@@ -1137,6 +1137,7 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
   color: var(--text-3);
   font-weight: 600;
   text-align: left;
+  white-space: nowrap;
 }
 
 .mates-table th.num,
