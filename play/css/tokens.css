@@ -1,0 +1,118 @@
+/* 畫面規格的變數：照階段換色調，手牌一律羊皮紙卡面。字型自行託管（play/fonts/，產生方式見 scripts/fonts/README.md）。 */
+@font-face {
+  font-family: "Noto Serif TC";
+  src: url("../fonts/NotoSerifTC-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Serif TC";
+  src: url("../fonts/NotoSerifTC-Black.woff2") format("woff2");
+  font-weight: 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cinzel";
+  src: url("../fonts/Cinzel-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("../fonts/CormorantGaramond-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+
+:root {
+  /* 字 */
+  --font-ui: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-title: "Noto Serif TC", serif;
+  --font-latin: "Cinzel", serif;
+  --font-latin-italic: "Cormorant Garamond", serif;
+  --fs-phase: 28px;
+  --fs-h1: 22px;
+  --fs-h2: 18px;
+  --fs-body: 14px;
+  --fs-card: 13.5px;
+  --fs-small: 12.5px;
+  --fs-min: 11px;
+
+  /* 墨與紙 */
+  --ink: #1f2430;
+  --ink-2: #3a3a3a;
+  --ink-3: #6b6558; /* 淺底上最淺的字色 */
+  --paper: #f4efe6;
+  --paper-raised: #fffdf8;
+  --paper-sunk: #efe9de;
+  --rule: #d8cfbf;
+  --rule-strong: #b9ad95;
+  --accent: #7a1f2b;
+  --accent-hover: #8f2a36;
+  --accent-tint: #f8eaea;
+  --gold: #b07d1f;
+  --gold-ink: #5a4314;
+  --gold-tint: #efe3c4;
+
+  /* 羊皮紙卡面（每個階段都一樣） */
+  --card-bg: #e9dfcb;
+  --card-frame: #b89a5e;
+  --card-frame-inner: #d6c59c;
+  --card-ink: #2a2118;
+  --card-ink-2: #5a4a2c;
+  --card-dim-bg: #ddd3bf;
+  --seal: #7b2630;
+  --seal-ring: #a3404a;
+
+  /* 階段：標頭底／標頭字／頁面底／強調色 */
+  --dawn-head: #f2d7c6;
+  --dawn-ink: #5b2a1e;
+  --dawn-page: #fdf7f2;
+  --dawn-accent: #a3503a;
+  --day-head: #ecdfbf;
+  --day-ink: #1f2430;
+  --day-page: #f4efe6;
+  --day-accent: #b07d1f;
+  --dusk-head: #6e2622;
+  --dusk-ink: #f6e1bd;
+  --dusk-page: #fdf6ec;
+  --dusk-accent: #e6a85c;
+  --night-head: #0e1522;
+  --night-ink: #dbe3f0;
+  --night-page: #0e1522;
+  --night-accent: #9fb3d1;
+  --night-raised: #152036;
+  --night-rule: #2a3550;
+  --night-cta: #ecd29a;
+  --night-ink-3: #a7b3c8; /* 深底上最淺的字色 */
+  --end-head: #2a2018;
+  --end-ink: #ecd29a;
+  --end-page: #f4efe6;
+  --end-accent: #c9a35a;
+
+  /* 迷霧值 0–100 */
+  --fog-fill: #5f6878;
+  --fog-track: #d9cba5;
+  --fog-mark-hit: #7a1f2b;
+  --fog-mark: #a8987a;
+
+  /* 狀態條 */
+  --st-ready-bg: #f3e8cc;
+  --st-ready-bd: #b07d1f;
+  --st-ready-ink: #4a3810;
+  --st-wait-bg: #f8eaea;
+  --st-wait-bd: #7a1f2b;
+  --st-wait-ink: #7a1f2b;
+  --st-idle-bg: #f4efe6;
+  --st-idle-bd: #b9ad95;
+
+  /* 形狀 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-card: 12px;
+  --tap: 44px;
+  --tap-primary: 52px;
+  --shadow-card: 0 1px 0 #c8b994, 0 6px 14px rgba(60, 40, 20, 0.15);
+  --shadow-card-selected: 0 0 0 3px var(--accent), 0 10px 18px rgba(60, 40, 20, 0.22);
+}

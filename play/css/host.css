@@ -1,0 +1,237 @@
+/* 主持端：沿用改版前的排版（下一段才照畫面規格重做），只換上新的變數與字型。全部限定在 .host-screen 底下。 */
+
+.host-screen {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 16px calc(24px + env(safe-area-inset-bottom));
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.host-screen .card {
+  margin: 0 0 12px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--paper-raised);
+}
+
+.host-screen h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-h2);
+}
+
+.host-screen h3 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+
+.host-screen label {
+  display: block;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 0.9rem;
+}
+
+.host-screen select,
+.host-screen button {
+  width: 100%;
+  min-height: var(--tap);
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.host-screen button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.host-screen button:disabled {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+.host-screen button.quiet {
+  border-color: var(--rule-strong);
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.host-screen .room-code {
+  text-align: center;
+}
+
+.host-screen .room-code span {
+  display: block;
+  color: var(--ink-3);
+}
+
+.host-screen .room-code strong {
+  font-family: var(--font-latin);
+  font-size: 30px;
+  letter-spacing: 0.2em;
+}
+
+.host-screen .host-count {
+  margin: 0;
+  color: var(--ink-3);
+}
+
+.host-screen .request {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  list-style: none;
+}
+
+.host-screen .request-code {
+  flex: 1;
+  font-family: var(--font-latin);
+  font-size: 1.4rem;
+  letter-spacing: 0.25em;
+}
+
+.host-screen .request button {
+  width: auto;
+  margin-top: 0;
+}
+
+.host-screen .table-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.host-screen .table-phase {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.host-screen .table-players,
+.host-screen .table-note,
+.host-screen .table-pile,
+.host-screen .caption {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+}
+
+.host-screen .table-note.problem,
+.host-screen .last-round {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.host-screen .seats {
+  margin: 8px 0 0;
+  padding-left: 1.4em;
+}
+
+.host-screen .seat span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 0.9rem;
+}
+
+.host-screen .offline {
+  color: var(--ink-3);
+}
+
+.host-screen .me {
+  font-weight: 700;
+}
+
+.host-screen .log,
+.host-screen .dusk-votes,
+.host-screen .night-players {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+  font-size: 0.9rem;
+}
+
+.host-screen .event + .event {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--rule);
+}
+
+.host-screen .event-title,
+.host-screen .dusk-bill,
+.host-screen .day-turn,
+.host-screen .dusk-result,
+.host-screen .night-result,
+.host-screen .final-head {
+  margin: 4px 0 0;
+  font-weight: 700;
+}
+
+.host-screen .event-title.fog-event,
+.host-screen .event-log .fog-event,
+.host-screen .response-window {
+  color: var(--accent);
+}
+
+.host-screen .event-text,
+.host-screen .event-effects,
+.host-screen .dusk-text {
+  margin: 4px 0 0;
+  font-size: 0.95rem;
+}
+
+.host-screen .countdown,
+.host-screen .server-countdown,
+.host-screen .dusk-submitted,
+.host-screen .night-submitted {
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.host-screen .final-scores {
+  padding-left: 0;
+  list-style: none;
+}
+
+.host-screen .final-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.host-screen .final-line {
+  margin: 2px 0 0;
+}
+
+.host-screen .final-judge {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.host-screen .final-judge button {
+  width: auto;
+}
+
+@media (min-width: 720px) {
+  .host-screen .tables {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .host-screen .tables .card {
+    margin: 0;
+  }
+}

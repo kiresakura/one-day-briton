@@ -1,0 +1,1565 @@
+/* 玩家端（手機 390×844 為主、最小 360 寬）：階段標頭 → 主要動作區 → 手牌 → 動作列 → 分頁列。 */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.player {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0 auto;
+}
+
+/* ---- 階段標頭：場景圖上蓋 82–90% 的階段底色 ---- */
+
+.phase-head {
+  --scene: none;
+  flex: none;
+  padding: max(6px, env(safe-area-inset-top)) 16px 10px;
+  border-bottom: 2px solid var(--head-line);
+  background: linear-gradient(var(--head-veil)), var(--scene) center / cover no-repeat, var(--head-bg);
+  color: var(--head-ink);
+}
+
+.phase-head[data-scene='dawn'] {
+  --scene: url('../assets/scenes/dawn.webp');
+}
+.phase-head[data-scene='day'] {
+  --scene: url('../assets/scenes/day.webp');
+}
+.phase-head[data-scene='dusk'] {
+  --scene: url('../assets/scenes/dusk.webp');
+}
+.phase-head[data-scene='night'] {
+  --scene: url('../assets/scenes/night.webp');
+}
+.phase-head[data-scene='finale'] {
+  --scene: url('../assets/scenes/finale.webp');
+}
+
+.head-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.head-top .conn {
+  margin-left: auto;
+}
+
+.tag-match {
+  border-color: currentColor;
+}
+
+.head-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.head-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phase-name {
+  font-family: var(--font-title);
+  font-size: var(--fs-phase);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.phase-latin {
+  align-self: flex-end;
+  margin-bottom: 2px;
+  color: var(--head-sub);
+  font-family: var(--font-latin);
+  font-size: var(--fs-min);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.phase-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--head-sub);
+}
+
+.phase-icon-dawn {
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 16px 16px 0 0;
+  background: currentColor;
+}
+
+.phase-icon-day {
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+.phase-icon-dusk {
+  height: 8px;
+  margin-bottom: 8px;
+  border-radius: 0 0 16px 16px;
+  background: currentColor;
+  box-shadow: 0 -3px 0 -1px currentColor;
+}
+
+.phase-icon-night {
+  border-radius: 50%;
+  box-shadow: inset 5px -1px 0 0 currentColor;
+}
+
+.phase-icon-end {
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+/* ---- 內容 ---- */
+
+.player-view {
+  flex: 1;
+  padding: 10px 16px 18px;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.strip.is-mine {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+body[data-phase='night'] .strip.is-mine {
+  border-color: var(--night-cta);
+  color: var(--night-cta);
+}
+
+.strip-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.panel-card {
+  padding: 12px 14px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.panel-card.is-accent {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.panel-card.is-alert {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+body[data-phase='night'] .panel-card.is-accent {
+  border-color: var(--night-cta);
+  box-shadow: inset 0 0 0 1px var(--night-cta);
+}
+
+.card-title {
+  color: var(--phase-accent);
+  font-family: var(--font-title);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.panel-card.is-plain .card-title,
+.panel-card.list-card .card-title,
+.ballot-card .card-title {
+  color: var(--text);
+}
+
+body[data-phase='day'] .card-title,
+body[data-phase='dusk'] .card-title,
+body[data-phase='end'] .card-title {
+  color: var(--accent);
+}
+
+body[data-phase='night'] .card-title {
+  color: var(--night-cta);
+}
+
+.panel-card p + p {
+  margin-top: 4px;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.hint.center {
+  text-align: center;
+}
+
+.note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.problem-line {
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+body[data-phase='night'] .problem-line {
+  color: #f0b7b7;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--accent);
+  font-size: var(--fs-small);
+}
+
+.eyebrow-latin {
+  font-family: var(--font-latin);
+  font-size: var(--fs-min);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+body[data-phase='night'] .eyebrow {
+  color: var(--night-cta);
+}
+
+.name-list {
+  margin: 8px 0;
+  padding-left: 1.2em;
+}
+
+.me {
+  font-weight: 700;
+}
+
+.offline {
+  color: var(--text-3);
+}
+
+.leave {
+  margin-top: 10px;
+}
+
+.room-foot {
+  margin-top: 6px;
+}
+
+/* ---- 白晝：出牌順序、輪到誰、倒數 ---- */
+
+.turn-strip {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 2px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.turn-chip {
+  flex: 1 0 96px;
+  max-width: 180px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+}
+
+.turn-chip.is-current {
+  border: 1.5px solid var(--accent);
+}
+
+.turn-name {
+  display: block;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.turn-chip.is-current .turn-name {
+  color: var(--accent);
+}
+
+.turn-sub {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.turn-card,
+.respond-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.turn-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.turn-card .turn-sub {
+  font-size: var(--fs-small);
+}
+
+.request-state {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.request-state.problem {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* ---- 手牌：橫向滑動 ---- */
+
+.hand-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.hand-title {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+
+.hand-note {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.hand-row {
+  display: flex;
+  gap: 10px;
+  margin: 4px -16px 0;
+  padding: 10px 16px 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding: 0 16px;
+  scrollbar-width: none;
+}
+
+.hand-row::-webkit-scrollbar {
+  display: none;
+}
+
+.hand-slot {
+  flex: 0 0 auto;
+  width: 200px;
+  max-width: 62vw;
+  scroll-snap-align: start;
+  display: flex;
+}
+
+.hand-slot > .pcard {
+  min-height: 178px;
+}
+
+.hand-fold {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 2px 14px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.hand-fold.is-open {
+  display: block;
+  padding: 10px 14px 0;
+}
+
+.hand-fold-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hand-fold .hand-row {
+  margin: 0 -14px;
+  padding: 10px 14px 14px;
+}
+
+/* ---- 事件卡、法案卡：右側小插圖；沒有圖時是紋飾底＋字形記號 ---- */
+
+.event-card,
+.bill-top {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.event-body,
+.bill-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-name,
+.bill-name {
+  margin-top: 2px;
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.event-text,
+.bill-text {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.event-effects {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.event-now {
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.event-card.is-fog {
+  border-color: var(--fog-fill);
+}
+
+.event-card.is-compact .event-name {
+  font-size: 16px;
+}
+
+.art {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border: 1px solid var(--end-accent);
+  border-radius: 8px;
+  background: radial-gradient(circle at 50% 38%, #f8eedb, #e6cfae 75%);
+}
+
+.art::before {
+  content: attr(data-glyph);
+  color: var(--dawn-accent);
+  font-family: var(--font-latin-italic);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.art-bills {
+  width: 72px;
+  height: 72px;
+}
+
+.art-bills::before {
+  color: var(--dusk-head);
+  font-size: 36px;
+}
+
+.art-img {
+  position: absolute;
+  inset: 0;
+  background: center / cover no-repeat;
+}
+
+.bill-effects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.bill-pass,
+.bill-fail {
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.bill-pass {
+  background: var(--gold-tint);
+}
+
+.bill-fail {
+  background: var(--accent-tint);
+}
+
+.bill-effect-title {
+  font-weight: 800;
+}
+
+/* ---- 揭曉結果 ---- */
+
+.result-head {
+  font-size: 16px;
+}
+
+.result-mark {
+  font-weight: 800;
+}
+
+.result-head.is-pass .result-mark {
+  color: var(--accent);
+}
+
+body[data-phase='night'] .result-head.is-pass .result-mark {
+  color: var(--night-cta);
+}
+
+.result-list {
+  margin: 6px 0;
+  padding-left: 1.2em;
+}
+
+.result-list li + li {
+  margin-top: 2px;
+}
+
+.result-mine {
+  font-weight: 600;
+}
+
+.summary-title {
+  margin-bottom: 4px;
+}
+
+/* ---- 黃昏：表決 ---- */
+
+.ballot-card {
+  border-color: var(--accent);
+}
+
+.ballot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.progress-line {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.progress-line strong {
+  color: var(--text);
+}
+
+.progress-time.is-reveal {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.bid-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.bid-title {
+  font-weight: 700;
+}
+
+.stepper {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+}
+
+.stepper .step {
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 22px;
+}
+
+.stepper .step:disabled {
+  background: none;
+  color: var(--rule-strong);
+}
+
+.step-value {
+  min-width: 36px;
+  font-size: 22px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.sent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sent-choice {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.panel-card.is-sent {
+  border-style: solid;
+}
+
+/* ---- 黑夜：三選一、豪賭三層 ---- */
+
+.night-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  padding: 4px 0;
+  background: none;
+}
+
+.night-card.is-sent {
+  padding: 12px 14px;
+  border: 1px solid var(--surface-line);
+  background: var(--surface);
+}
+
+.night-option {
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.night-option.is-chosen {
+  border: 1.5px solid var(--night-cta);
+}
+
+.night-option-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  width: 100%;
+  min-height: var(--tap-primary);
+  padding: 8px 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.radio {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--night-ink-3);
+  border-radius: 50%;
+}
+
+.night-option.is-chosen .radio {
+  border-color: var(--night-cta);
+  box-shadow: inset 0 0 0 4px var(--night-raised), inset 0 0 0 10px var(--night-cta);
+}
+
+.night-option-title {
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+}
+
+.night-option-desc {
+  flex: 1 1 160px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.gamble-extra {
+  padding: 0 12px 12px;
+}
+
+.tier-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.tier {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: var(--tap);
+  padding: 8px;
+  border: 1px solid var(--night-rule);
+  border-radius: var(--r-md);
+  background: var(--night-head);
+  color: var(--night-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tier[aria-pressed='true'] {
+  border-color: var(--night-cta);
+  background: var(--night-cta);
+  color: #1b1f2a;
+}
+
+.tier-title {
+  font-weight: 800;
+}
+
+.tier-odds,
+.tier-gain {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.tier-gain {
+  font-weight: 700;
+}
+
+.tips-card {
+  border-style: dashed;
+}
+
+/* ---- 手牌上限：選要棄的牌 ---- */
+
+.discard-title {
+  color: var(--night-cta);
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+}
+
+.discard-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.discard-sub strong {
+  color: var(--text);
+}
+
+.discard-state {
+  margin: 4px 0 8px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.discard-state.is-ready {
+  color: var(--night-cta);
+  font-weight: 700;
+}
+
+.discard-state.problem {
+  color: #f0b7b7;
+  font-weight: 700;
+}
+
+.discard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.discard-grid .pcard-name {
+  font-size: 16px;
+}
+
+/* ---- 終局 ---- */
+
+.final-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-color: var(--end-accent);
+}
+
+.rank-medal {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--end-head);
+  color: var(--end-ink);
+  font-size: var(--fs-min);
+  line-height: 1.1;
+}
+
+.rank-medal strong {
+  font-family: var(--font-title);
+  font-size: 30px;
+}
+
+.final-total {
+  font-family: var(--font-title);
+  font-size: var(--fs-h1);
+}
+
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.score-table th,
+.score-table td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.score-table th {
+  width: 4.5em;
+  font-weight: 700;
+}
+
+.score-table td {
+  font-size: var(--fs-small);
+}
+
+.score-table .score-points {
+  width: 3em;
+  font-size: var(--fs-body);
+  font-weight: 800;
+  text-align: right;
+}
+
+.score-table tr.is-total td {
+  border-bottom: 0;
+}
+
+.score-table tr.is-total .score-points {
+  color: var(--accent);
+}
+
+.list-title {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: 800;
+}
+
+.list-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.list-head .list-title {
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+}
+
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  background: var(--paper-raised);
+}
+
+.rank-row.is-me {
+  border-color: var(--end-accent);
+  background: var(--gold-tint);
+}
+
+.rank-no {
+  flex: none;
+  font-weight: 800;
+}
+
+.rank-row.is-me .rank-no {
+  color: var(--accent);
+}
+
+.rank-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.rank-total {
+  flex: none;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.final-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.final-actions .leave {
+  margin-top: 0;
+}
+
+/* ---- 階層 ---- */
+
+.role-card {
+  border-color: var(--card-frame);
+  background: url('../assets/ui/parchment-texture.webp') 0 0 / 320px 320px, var(--card-bg);
+  color: var(--card-ink);
+  box-shadow: inset 0 0 0 4px var(--card-bg), inset 0 0 0 5px var(--card-frame-inner);
+}
+
+.role-card .hint {
+  color: var(--card-ink-2);
+}
+
+.role-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.role-name {
+  font-family: var(--font-title);
+  font-size: var(--fs-h1);
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #5a4a2c 0 46%, var(--card-frame) 47%);
+}
+
+.badge.is-large {
+  width: 56px;
+  height: 56px;
+}
+
+.badge-img {
+  position: absolute;
+  inset: 0;
+  background: center / contain no-repeat;
+}
+
+.badge-mark {
+  position: relative;
+  color: #fff;
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.badge.is-large .badge-mark {
+  font-size: 22px;
+}
+
+.money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 10px 0 0;
+}
+
+.money div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.money dt {
+  color: var(--card-ink-2);
+  font-size: var(--fs-small);
+}
+
+.money dd {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.diamond-list,
+.plain-list {
+  margin-top: 6px;
+  list-style: none;
+}
+
+.diamond-list li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.diamond-list li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 7px;
+  height: 7px;
+  background: var(--gold);
+  transform: rotate(45deg);
+}
+
+.diamond-list li + li,
+.plain-list li + li {
+  margin-top: 6px;
+}
+
+/* ---- 同桌 ---- */
+
+.mates-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 6px;
+  font-size: var(--fs-small);
+}
+
+.mates-table th {
+  padding: 0 4px;
+  color: var(--text-3);
+  font-weight: 600;
+  text-align: left;
+}
+
+.mates-table th.num,
+.mates-table td.num {
+  width: 2.6em;
+  text-align: center;
+}
+
+.mates-table td {
+  padding: 8px 4px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-raised);
+  font-variant-numeric: tabular-nums;
+}
+
+.mates-table td:first-child {
+  border-left: 1px solid var(--rule);
+  border-radius: var(--r-md) 0 0 var(--r-md);
+}
+
+.mates-table td:last-child {
+  border-right: 1px solid var(--rule);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+
+.mates-table tr.is-current td {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.mates-table td.num {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.mates-table td.is-sin {
+  color: var(--accent);
+}
+
+.seat-no {
+  width: 2em;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.turn-mark {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.who-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.who-name {
+  display: block;
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
+.who-role {
+  display: block;
+  color: var(--text-3);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- 紀錄 ---- */
+
+.log-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chip-btn {
+  min-height: var(--tap);
+  padding: 4px 14px;
+  border-radius: 999px;
+}
+
+.log-round {
+  overflow: hidden;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.log-round-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface-sunk);
+  font-size: 16px;
+}
+
+.tag-live {
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+.log-list {
+  list-style: none;
+}
+
+.log-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--surface-line);
+}
+
+.log-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--gold-tint);
+  color: var(--gold-ink);
+  font-family: var(--font-title);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.log-icon.is-play {
+  border-radius: 4px;
+  background: url('../assets/ui/card-back.webp') center / cover, var(--seal);
+  color: #fff;
+}
+
+.log-icon.is-result {
+  background: var(--night-raised);
+  color: var(--night-cta);
+}
+
+.log-body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-title {
+  font-weight: 600;
+}
+
+.log-detail {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.log-phase {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-min);
+}
+
+/* ---- 動作列與分頁列（黏在畫面下方） ---- */
+
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+}
+
+.action-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--surface-line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.bar-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.bar-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bar-note {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.bar-buttons {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+}
+
+.bar-buttons .btn {
+  min-height: var(--tap-primary);
+}
+
+.bar-cancel {
+  align-self: center;
+  min-height: var(--tap);
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.picker-label {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+.tab-bar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+body[data-phase='night'] .tab-bar {
+  border-top-color: var(--night-rule);
+  background: #0b111c;
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 56px;
+  padding: 6px 2px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.2;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body[data-phase='night'] .tab {
+  color: var(--night-ink-3);
+}
+
+.tab[aria-pressed='true'] {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+body[data-phase='night'] .tab[aria-pressed='true'] {
+  color: var(--night-cta);
+}
+
+.tab-icon {
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
+.tab[aria-pressed='true'] .tab-icon {
+  background: currentColor;
+}
+
+.tab-icon-role {
+  width: 17px;
+}
+
+.tab-icon-mates {
+  border-radius: 50%;
+}
+
+.tab-icon-log {
+  height: 14px;
+  border-width: 1.5px 0;
+  border-radius: 0;
+  background: none !important;
+}
+
+.tab-destiny {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+body[data-phase='night'] .tab-destiny {
+  color: #e8a3ab;
+}
+
+.tab-icon-destiny {
+  border: 0;
+  border-radius: 50%;
+  background: var(--seal);
+  box-shadow: inset 0 0 0 2px var(--seal-ring);
+}
+
+.tab-destiny.is-holding {
+  background: var(--accent-tint);
+}
+
+/* ---- 天命：按住才顯示 ---- */
+
+.destiny-sheet {
+  position: fixed;
+  inset: 0 0 calc(56px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 16px;
+  background: rgba(31, 36, 48, 0.62);
+  pointer-events: none;
+}
+
+.destiny-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  max-height: calc(100% - 40px);
+  overflow-y: auto;
+  padding: 16px 18px 20px;
+  border: 1px solid var(--card-frame);
+  border-radius: var(--r-lg);
+  background: url('../assets/ui/parchment-texture.webp') 0 0 / 320px 320px, var(--card-bg);
+  box-shadow: inset 0 0 0 4px var(--card-bg), inset 0 0 0 5px var(--card-frame-inner), 0 12px 30px rgba(0, 0, 0, 0.35);
+  color: var(--card-ink);
+  animation: rise-in 0.2s ease both;
+}
+
+.destiny-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent);
+  font-size: var(--fs-small);
+}
+
+.destiny-text {
+  margin-bottom: 8px;
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.destiny-card p + p {
+  margin-top: 6px;
+}
+
+.destiny-card .pcard-rule {
+  margin: 8px 0;
+}
+
+.destiny-seal {
+  position: absolute;
+  right: 14px;
+  bottom: -16px;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: url('../assets/ui/wax-seal.png') center / cover, var(--seal);
+  color: #fff;
+  font-family: var(--font-title);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.destiny-hint {
+  margin-top: 22px;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* 360 寬：字與間距收一點 */
+@media (max-width: 370px) {
+  .player-view {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .hand-row {
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .fog {
+    width: 128px;
+  }
+
+  .mates-table th.num,
+  .mates-table td.num {
+    width: 2.2em;
+  }
+}

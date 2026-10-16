@@ -1,0 +1,247 @@
+/* 首頁（加入、主持端入口）與備援主持申請的等待畫面。 */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.alerts:empty {
+  display: none;
+}
+
+.alerts .notice {
+  margin: 8px 12px;
+  box-shadow: 0 4px 14px rgba(60, 40, 20, 0.12);
+}
+
+/* ---- 主視覺 ---- */
+
+.hero {
+  position: relative;
+  margin: 0 -16px;
+  aspect-ratio: 3 / 2;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 16px 14px;
+  background: linear-gradient(rgba(244, 239, 230, 0) 45%, var(--paper) 98%), url('../assets/ui/join-hero.webp') center top / cover, linear-gradient(#2a3040, #8a8578 60%, var(--paper));
+  text-align: center;
+}
+
+.hero-latin {
+  color: var(--gold-ink);
+  font-family: var(--font-latin);
+  font-size: var(--fs-min);
+  font-weight: 700;
+  letter-spacing: 0.32em;
+}
+
+.hero-title {
+  margin-top: 4px;
+  font-family: var(--font-title);
+  font-size: 36px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+}
+
+.hero-sub {
+  margin-top: 4px;
+  color: var(--accent);
+  font-family: var(--font-title);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+}
+
+/* ---- 加入 ---- */
+
+.join {
+  padding: 4px 0 8px;
+}
+
+/* 房號：一個輸入框，外觀分成 6 格；貼上整串也可以。 */
+.code-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.code-cell {
+  display: grid;
+  place-items: center;
+  height: 52px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+  font-family: var(--font-latin);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.code-cell.is-next {
+  border: 2px solid var(--accent);
+  color: var(--ink-3);
+}
+
+.code-field:not(:focus-within) .code-cell.is-next {
+  border: 1px solid var(--rule-strong);
+}
+
+.code-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0.01;
+  cursor: text;
+}
+
+.code-input:focus {
+  outline: none;
+}
+
+.code-field:focus-within {
+  outline: 3px solid var(--gold-tint);
+  outline-offset: 3px;
+  border-radius: var(--r-md);
+}
+
+/* 桌號：6 個按鈕（單選） */
+.table-pick {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.table-field {
+  min-width: 0;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.table-field legend {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+}
+
+.table-option {
+  position: relative;
+}
+
+.table-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.table-option span {
+  display: grid;
+  place-items: center;
+  min-height: var(--tap-primary);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+  font-family: var(--font-latin);
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.table-option input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.table-option input:focus-visible + span {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.picked {
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+.join-submit {
+  margin-top: 22px;
+}
+
+.join-foot {
+  margin-top: 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/* ---- 主持端入口（長相下一段再做；功能照舊） ---- */
+
+.host-entry {
+  margin-top: 28px;
+  padding: 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  background: var(--paper-raised);
+}
+
+.host-entry h2 {
+  font-size: var(--fs-h2);
+}
+
+.host-entry .btn {
+  width: 100%;
+  margin-top: 10px;
+}
+
+/* ---- 等待核准 ---- */
+
+.pending {
+  margin-top: 16px;
+  padding: 18px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  background: var(--paper-raised);
+  text-align: center;
+}
+
+.pending-code {
+  display: block;
+  margin: 6px 0 10px;
+  font-family: var(--font-latin);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+}
+
+.pending-note {
+  margin: 12px 0;
+  text-align: left;
+}
+
+.room-line {
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.room-line .num {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
