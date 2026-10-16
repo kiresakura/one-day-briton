@@ -248,6 +248,7 @@
                       }
                     },
                     "bust": { ".validate": "newData.isBoolean()" },
+                    "missed": { ".validate": "newData.val() === true && newData.parent().child('choice').val() === 'sleep'" },
                     "pounds": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
                     "influence": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
                     "sin": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
@@ -273,6 +274,7 @@
                       }
                     },
                     "bust": { ".validate": "newData.isBoolean()" },
+                    "missed": { ".validate": "newData.val() === true && newData.parent().child('choice').val() === 'sleep'" },
                     "pounds": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
                     "influence": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
                     "sin": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
@@ -360,6 +362,17 @@
             ".validate": "newData.hasChildren(['seq', 'reason'])",
             "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
             "reason": { ".validate": "newData.isString() && newData.val().matches(/^[a-z-]{1,40}$/)" },
+            "$other": { ".validate": false }
+          },
+          "randomDiscard": {
+            ".validate": "newData.hasChildren(['round', 'cards'])",
+            "round": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "cards": {
+              ".validate": "newData.hasChildren()",
+              "$index": {
+                ".validate": "$index.matches(/^(0|[1-9][0-9]*)$/) && newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,32}$/)"
+              }
+            },
             "$other": { ".validate": false }
           },
           "$other": { ".validate": false }

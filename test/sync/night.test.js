@@ -151,6 +151,7 @@ async function readTable(code) {
 
 const stats = (game, key) => Object.fromEntries(Object.entries(game.seats).map(([uid, seat]) => [uid, seat[key]]));
 const sleeping = { choice: 'sleep', pounds: 0, influence: 0, sin: 0 };
+const missedSleep = { choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 }; // 沒送出、照睡覺算
 
 test('a night opens at night; before the reveal a player reads only their own pick and discards, the host reads them all', TIMEOUT, async (t) => {
   const { code, watchers, first, second, third } = await dayRoom(t);
@@ -260,7 +261,7 @@ test('the rules turn down bad picks: no seat, not at night, bad tiers, a made-up
   await assert.rejects(set(mine(first), choice({ seq: 7, round: 2 })), denied, 'at sunrise');
   const { result } = await read(host, `rooms/${code}/games/2/night`);
   assert.deepEqual(result.players[first.uid], { choice: 'gamble', tiers: 3, rolls: [6, 6, 6], bust: false, pounds: 30, influence: 1, sin: 0 });
-  assert.deepEqual([result.players[second.uid].choice, result.players[third.uid]], ['split', sleeping]);
+  assert.deepEqual([result.players[second.uid].choice, result.players[third.uid]], ['split', missedSleep], 'third never got a pick in: marked missed');
 });
 
 test('the rules turn down bad discards, also field by field; a pick is fine before and after the reveal, but only at night', TIMEOUT, async (t) => {
@@ -482,10 +483,10 @@ test('the host reveals early: the deadline is now, whoever has not sent sleeps, 
   assert.deepEqual(result.players, {
     [first.uid]: { choice: 'gamble', tiers: 1, rolls: [1], bust: true, pounds: -2, influence: 0, sin: 0 },
     [second.uid]: { choice: 'split', pounds: 6, influence: 0, sin: 1 },
-    [third.uid]: sleeping,
+    [third.uid]: missedSleep,
   });
   const final = await readTable(code);
-  assert.deepEqual(final.game.nightLog[1], result);
+  assert.deepEqual(final.game.nightLog[1], result, 'the log marks the missed one too');
   const was = (uid) => start.game.seats[uid].pounds;
   assert.deepEqual(stats(final.game, 'pounds'), { [first.uid]: was(first.uid) - 2, [second.uid]: was(second.uid) + 6, [third.uid]: was(third.uid) });
   await watchers.p2.until((room) => room.games[2].night.result?.players?.[second.uid]?.pounds === 6, 'second sees the result');
@@ -674,6 +675,20 @@ test('hand limit: the next sunrise discards the picked cards first, discards at 
   const secondLost = lost(hands[second.uid], secondHand.slice(0, 7));
   const thirdLost = lost(hands[third.uid], thirdHand.slice(0, 7));
   assert.deepEqual([secondLost.length, thirdLost.length], [1, 2], 'second down to 7 at random; third’s pick had the wrong count');
+  // 被亂數棄的人：同一筆寫入記下棄了哪幾張（照手牌原本的順序），只有本人（與主持端）讀得到；照挑的棄的人不記。
+  assert.deepEqual(await read(second, `private/${code}/${second.uid}/randomDiscard`), { round: 2, cards: secondLost }, 'second reads the own random discard');
+  assert.deepEqual(await read(third, `private/${code}/${third.uid}/randomDiscard`), { round: 2, cards: thirdLost }, 'third too: the pick had the wrong count');
+  assert.equal(await read(first, `private/${code}/${first.uid}/randomDiscard`), null, 'first discarded as picked: nothing listed');
+  assert.deepEqual((await read(host, `private/${code}/${third.uid}`)).randomDiscard, { round: 2, cards: thirdLost }, 'the host reads it');
+  for (const [session, path] of [
+    [first, `private/${code}/${second.uid}/randomDiscard`],
+    [third, `private/${code}/${second.uid}/randomDiscard`],
+    [second, `private/${code}/${third.uid}/randomDiscard`],
+    [outsider, `private/${code}/${second.uid}/randomDiscard`],
+    [outsider, `private/${code}`],
+  ]) {
+    await assert.rejects(get(ref(session.db, path)), denied, `${path} is not for this player`);
+  }
   assert.deepEqual(after2.pile.discard, [...picked, ...secondLost, ...thirdLost], 'into the discard pile in seat order');
   assert.deepEqual(after2.pile.deck, deck.slice(6));
   assert.deepEqual([after2.game.deckCount, after2.game.discardCount], [deck.length - 6, 5]);
@@ -689,4 +704,87 @@ test('hand limit: the next sunrise discards the picked cards first, discards at 
   const firstHand3 = await handOf(first.uid);
   assert.equal(firstHand3.length, 9);
   assert.ok(firstHand3.slice(0, 7).every((card) => firstHand.includes(card)));
+  assert.deepEqual(await read(first, `private/${code}/${first.uid}/randomDiscard`), { round: 3, cards: lost(firstHand, firstHand3.slice(0, 7)) }, 'first, at random this time');
+  assert.equal((await read(second, `private/${code}/${second.uid}/randomDiscard`)).round, 3, 'a new random discard replaces the old one');
+});
+
+test('the rules: missed is only true and only with a sleep, in the result and in the log; players cannot write it; a one-field update cannot add it', TIMEOUT, async (t) => {
+  const { code, first, second, third } = await nightRoom(t);
+  const game = `rooms/${code}/games/2`;
+  assert.deepEqual(await revealNight(host, code, 2), { closed: true });
+  let version = await read(host, `${game}/version`);
+  const bumped = (session, writes) => update(ref(session.db), { ...writes, [`${game}/version`]: version + 1 });
+  await untilServerTime(host, (await read(host, `${game}/night/revealAt`)) + 50);
+  const players = {
+    [first.uid]: { choice: 'gamble', tiers: 1, rolls: [4], bust: false, pounds: 5, influence: 0, sin: 0 },
+    [second.uid]: { choice: 'sleep', pounds: 0, influence: 0, sin: 0 },
+    [third.uid]: missedSleep,
+  };
+  const reveal = (result, log = result) => ({ [`${game}/night/result`]: result, [`${game}/nightLog/1`]: log });
+  const player = (uid, fields) => ({ players: { ...players, [uid]: fields } });
+  const badResults = [
+    [player(third.uid, { ...missedSleep, missed: false }), 'missed: false'],
+    [player(third.uid, { ...missedSleep, missed: 'true' }), 'missed as text'],
+    [player(third.uid, { ...missedSleep, missed: 1 }), 'missed as a number'],
+    [player(first.uid, { ...players[first.uid], missed: true }), 'missed with a gamble'],
+    [player(second.uid, { choice: 'split', missed: true, pounds: 6, influence: 0, sin: 1 }), 'missed with a split'],
+  ];
+  for (const [result, label] of badResults) {
+    await assert.rejects(bumped(host, reveal(result)), denied, `${label}: result and log`);
+    await assert.rejects(bumped(host, reveal(result, { players })), denied, `${label}: in the result only`);
+    await assert.rejects(bumped(host, reveal({ players }, result)), denied, `${label}: in the log only`);
+  }
+  await assert.rejects(bumped(first, reveal({ players })), denied, 'players cannot write the result');
+  await assert.rejects(bumped(third, reveal({ players })), denied, 'not even the one marked missed');
+  await bumped(host, reveal({ players }));
+  version += 1;
+  const stored = await read(first, game);
+  assert.deepEqual([stored.night.result.players[third.uid], stored.nightLog[1].players[third.uid]], [missedSleep, missedSleep], 'everyone reads the mark');
+  assert.equal(stored.night.result.players[second.uid].missed, undefined, 'a chosen sleep has no mark');
+  // 寫好之後只改一個欄位：加上 missed、把 missed 的人改成分贓、拿掉 missed，都被拒。
+  const oneField = [
+    [{ [`${game}/night/result/players/${second.uid}/missed`]: true }, 'mark a chosen sleep in the result'],
+    [{ [`${game}/nightLog/1/players/${second.uid}/missed`]: true }, 'mark a chosen sleep in the log'],
+    [{ [`${game}/night/result/players/${first.uid}/missed`]: true }, 'mark a gamble'],
+    [{ [`${game}/nightLog/1/players/${third.uid}/choice`]: 'split' }, 'turn the missed one into a split'],
+    [{ [`${game}/night/result/players/${third.uid}/missed`]: null }, 'drop the mark'],
+  ];
+  for (const [writes, label] of oneField) await assert.rejects(bumped(host, writes), denied, label);
+  await assert.rejects(update(ref(host.db, `${game}/nightLog/1/players/${third.uid}`), { missed: false }), denied, 'an update below the version');
+  assert.deepEqual((await read(host, game)).nightLog[1], { players }, 'nothing changed');
+});
+
+test('the rules: a random discard is written by the hosts only and read by the player alone; the round and the card ids are checked, field by field too', TIMEOUT, async (t) => {
+  const { code, first, second } = await dayRoom(t);
+  const mine = `private/${code}/${first.uid}/randomDiscard`;
+  const at = (session, path = mine) => ref(session.db, path);
+  const good = { round: 2, cards: ['a01', 'a03'] };
+  const bad = [
+    [{ round: 0, cards: ['a01'] }, 'round from 1'],
+    [{ round: 1.5, cards: ['a01'] }, 'a whole round'],
+    [{ round: '2', cards: ['a01'] }, 'the round is a number'],
+    [{ round: 2, cards: [] }, 'at least one card'],
+    [{ round: 2, cards: 'a01' }, 'cards are a list'],
+    [{ round: 2, cards: ['a01', 'no good'] }, 'card ids'],
+    [{ round: 2, cards: ['a01', 2] }, 'card ids are text'],
+    [{ round: 2, cards: { x: 'a01' } }, 'list positions only'],
+    [{ round: 2 }, 'no cards'],
+    [{ cards: ['a01'] }, 'no round'],
+    [{ ...good, picked: false }, 'no other fields'],
+  ];
+  for (const [value, label] of bad) await assert.rejects(set(at(host), value), denied, label);
+  await assert.rejects(set(at(first), good), denied, 'the player cannot write it');
+  await assert.rejects(set(at(second), good), denied, 'nor anyone else at the table');
+  await set(at(host), good);
+  assert.deepEqual(await read(first, mine), good);
+  for (const session of [second, outsider]) await assert.rejects(get(at(session)), denied, 'only the player reads it');
+  // 只改一個欄位也要整筆合法。
+  await assert.rejects(update(at(host), { round: 0 }), denied, 'one field: the round');
+  await assert.rejects(update(at(host), { 'cards/1': 'no good' }), denied, 'one card');
+  await assert.rejects(update(at(host), { 'cards/x': 'a05' }), denied, 'one card at a made-up position');
+  await assert.rejects(update(at(host), { extra: 1 }), denied, 'one more field');
+  await assert.rejects(update(at(host, `private/${code}/${first.uid}`), { randomDiscard: { round: 2 } }), denied, 'from the parent');
+  await update(at(host), { round: 3 });
+  assert.deepEqual(await read(first, mine), { ...good, round: 3 });
+  await assert.rejects(update(at(first), { round: 4 }), denied, 'the player cannot change it');
 });

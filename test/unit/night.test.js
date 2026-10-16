@@ -118,7 +118,7 @@ test('split: 1, 2, 4 and 7 people share 6 pounds rounded down, and everyone who 
       assert.equal(state.seats[uid].pounds, 10 + share);
       assert.equal(state.seats[uid].sin, uid === 'a' ? 3 : 1, 'sin adds to the sin from the day');
     }
-    for (const uid of uids.slice(count)) assert.deepEqual(result.players[uid], { choice: 'sleep', pounds: 0, influence: 0, sin: 0 });
+    for (const uid of uids.slice(count)) assert.deepEqual(result.players[uid], { choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 });
   }
   const zeroSin = reveal(nightState(), { a: pick('split') }, seededRandom(1));
   assert.equal(zeroSin.state.seats.a.sin, 1);
@@ -136,7 +136,7 @@ test('sleep does nothing; every choice at once settles each player on their own'
   });
   assert.deepEqual(after.seats.a, state.seats.a);
   const nobody = reveal(state, {});
-  assert.deepEqual(Object.values(nobody.result.players), Array(3).fill({ choice: 'sleep', pounds: 0, influence: 0, sin: 0 }));
+  assert.deepEqual(Object.values(nobody.result.players), Array(3).fill({ choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 }));
   assert.deepEqual(nobody.state.seats, state.seats);
 });
 
@@ -344,4 +344,71 @@ test('a night and a hand limit saved to the database and read back (nulls droppe
   assert.deepEqual(saved, direct);
   assert.deepEqual([direct.counted.submitted, direct.revealed.result.players.b], [3, { choice: 'split', pounds: 6, influence: 0, sin: 1 }]);
   assert.deepEqual([direct.limited.discards.a.picked, direct.limited.discards.b.picked, direct.limited.discards.c], [true, false, undefined]);
+});
+
+// ---- M11：黑夜「沒送出」標記、日出隨機棄牌給本人看 ----
+
+test('missed: only whoever did not send (or sent a pick that does not count) is marked; a chosen sleep is not; every number is what a chosen sleep gives', () => {
+  const uids = ['a', 'b', 'c', 'd', 'e'];
+  const state = nightState({ uids, seats: { d: { sin: 2 } } });
+  const picks = { a: pick('sleep'), b: pick('gamble', 2), c: pick('split', null, { round: 2 }), e: pick('split') };
+  const { result } = reveal(state, picks, dice(6, 6));
+  assert.deepEqual(result.players, {
+    a: { choice: 'sleep', pounds: 0, influence: 0, sin: 0 },
+    b: { choice: 'gamble', tiers: 2, rolls: [6, 6], bust: false, pounds: 20, influence: 1, sin: 0 },
+    c: { choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 },
+    d: { choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 },
+    e: { choice: 'split', pounds: 6, influence: 0, sin: 1 },
+  });
+  // 跟「沒送出的人改成自己選睡覺」逐欄相同（改之前兩者就是同一個結果），只差 missed：座位、黑夜、紀錄、骰子都一樣。
+  const withoutMissed = (players) => Object.fromEntries(Object.entries(players).map(([uid, { missed, ...rest }]) => [uid, rest]));
+  for (let seed = 1; seed <= 30; seed += 1) {
+    const mixed = Object.fromEntries(uids.map((uid, index) => [uid, [pick('gamble', 1 + (seed % 3)), pick('split'), pick('sleep'), null, pick('gamble', 3)][(index + seed) % 5]]));
+    const sent = Object.fromEntries(Object.entries(mixed).filter(([, value]) => value));
+    const asSleep = Object.fromEntries(uids.map((uid) => [uid, mixed[uid] ?? pick('sleep')]));
+    const missing = reveal(state, sent, seededRandom(seed));
+    const chosen = reveal(state, asSleep, seededRandom(seed));
+    assert.deepEqual(missing.state.seats, chosen.state.seats, `seed ${seed}: the seats`);
+    assert.deepEqual(withoutMissed(missing.result.players), chosen.result.players, `seed ${seed}: the result field by field`);
+    assert.deepEqual(missing.log, missing.result, `seed ${seed}: the log is the result`);
+    for (const uid of uids) assert.equal(missing.result.players[uid].missed, mixed[uid] ? undefined : true, `seed ${seed}: ${uid}`);
+    assert.ok(Object.values(chosen.result.players).every((player) => !('missed' in player)), 'nobody who sent is marked');
+  }
+});
+
+test('sunrise returns, for each player discarded at random, the cards taken from the hand in hand order; a used pick is not listed', () => {
+  const state = {
+    ...nightState({ uids: ['a', 'b', 'c', 'd'], phase: 'sunrise', round: 2 }),
+    hands: { a: [...HAND], b: [...HAND], c: [...HAND], d: HAND.slice(0, 7) },
+    deck: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8'],
+    discard: [],
+    fogMax: 0,
+    fogFired: [],
+    fogPending: [],
+    eventDeck: [],
+  };
+  const picks = { a: limitPick(['a08', 'a02']), c: limitPick(['a01']), d: limitPick(['a01']) };
+  const cardData = { ...data, settings: { ...settings, sunriseEvents: 0 } };
+  const lost = (hand, kept) => {
+    const left = [...kept];
+    return hand.filter((card) => (left.includes(card) ? (left.splice(left.indexOf(card), 1), false) : true));
+  };
+  let reordered = 0;
+  for (let seed = 1; seed <= 30; seed += 1) {
+    const { state: after, discards, randomDiscards } = settleSunrise(state, picks, cardData, seededRandom(seed));
+    assert.deepEqual(Object.keys(randomDiscards).sort(), ['b', 'c'], `seed ${seed}: a used the pick, d was at the limit`);
+    for (const uid of ['b', 'c']) {
+      const taken = lost(HAND, after.hands[uid].slice(0, 7)); // 抽的牌接在後面，前 7 張是留下的
+      assert.deepEqual(randomDiscards[uid], taken, `seed ${seed}: ${uid} lists exactly the cards taken, in hand order`);
+      assert.deepEqual([...randomDiscards[uid]].sort(), [...discards[uid].cards].sort(), `seed ${seed}: ${uid} the same cards as the discard`);
+      if (randomDiscards[uid].join() !== discards[uid].cards.join()) reordered += 1;
+    }
+    assert.deepEqual(discards.a, { cards: ['a08', 'a02'], picked: true }, 'the pick itself is not listed');
+    assert.deepEqual(after.discard.slice(0, 2), ['a08', 'a02'], 'the discard pile keeps the old order');
+  }
+  assert.ok(reordered > 0, 'some random draws come out of hand order, so the sort matters');
+  // 第 1 回合的日出算的是第 0 回合的黑夜：挑的回合不對，照亂數棄、要列。沒有人超過時是空的。
+  assert.deepEqual(Object.keys(settleSunrise({ ...state, round: 1 }, picks, cardData, seededRandom(2)).randomDiscards).sort(), ['a', 'b', 'c']);
+  const calm = { ...state, hands: { a: HAND.slice(0, 3), b: [], c: [], d: [] } };
+  assert.deepEqual(settleSunrise(calm, picks, cardData, seededRandom(2)).randomDiscards, {});
 });

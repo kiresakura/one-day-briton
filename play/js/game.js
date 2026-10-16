@@ -1115,8 +1115,9 @@ export function gamble(tiers, settings, random = cryptoRandom) {
 }
 
 // 揭曉：照座位順序，每人照自己的選擇結算（沒送出＝睡覺；骰子照座位順序、一層一層擲）。picks 是剛從伺服器讀到的 { uid: 選擇 }。
-// 回傳 { state, result, log }：result＝{ players: { uid: { choice, tiers, rolls, bust, pounds, influence, sin } } }，每位入座的人都有一筆
-// （tiers、rolls、bust 只有豪賭有）；pounds、influence、sin 是這一夜實際的變化（爆了的醫藥費是負數，付不起時只付到 0）。
+// 回傳 { state, result, log }：result＝{ players: { uid: { choice, missed, tiers, rolls, bust, pounds, influence, sin } } }，每位入座的人
+// 都有一筆（tiers、rolls、bust 只有豪賭有；missed 只有沒送出、照睡覺算的人有，是 true，自己選了睡覺的人沒有）；pounds、influence、
+// sin 是這一夜實際的變化（爆了的醫藥費是負數，付不起時只付到 0）。
 // state 的座位加上這些變化，night 多了 result；log 是公開的黑夜紀錄（nightLog/{round}），內容同 result。
 export function resolveNight(state, picks, data, random = cryptoRandom) {
   const stage = nightStage(state.night, state.round);
@@ -1138,6 +1139,8 @@ export function resolveNight(state, picks, data, random = cryptoRandom) {
       outcome = { choice: 'gamble', tiers: pick.tiers, ...played, pounds: played.bust ? 0 - fee : played.pounds, sin: 0 };
     } else if (pick.choice === 'split') {
       outcome = { choice: 'split', pounds: share, influence: 0, sin: rules.splitSin };
+    } else if (!counted[uid]) {
+      outcome = { choice: 'sleep', missed: true, pounds: 0, influence: 0, sin: 0 };
     }
     players[uid] = outcome;
     seats[uid] = { ...seat, pounds: seat.pounds + outcome.pounds, influence: seat.influence + outcome.influence };
@@ -1247,14 +1250,30 @@ export function applyHandLimits(state, picks, data, { round, random = cryptoRand
   return { state: next, discards };
 }
 
+// cards（從 hand 拿掉的牌）照它們在 hand 裡原本的順序排；同一張牌有好幾張時照張數算。
+function inHandOrder(hand, cards) {
+  const left = [...cards];
+  return hand.filter((card) => {
+    const index = left.indexOf(card);
+    if (index === -1) return false;
+    left.splice(index, 1);
+    return true;
+  });
+}
+
 // 下一回合日出的整筆計算（processSunrise 用）：先套手牌上限（上一回合黑夜挑的棄牌，applyHandLimits），再領薪、抽牌（sunrise），
 // 最後翻一般事件與它引發的迷霧事件（settleSunriseEvents）。state 要有 table、round（新的回合）與 settleSunriseEvents 要的欄位。
-// 回傳 { state, events, discards }。
+// 回傳 { state, events, discards, randomDiscards }：randomDiscards＝{ uid: [牌編號…] }，只有沒挑（或挑的不能用）、被主持端亂數棄牌的人，
+// 牌照他手牌原本的順序排（給本人看「天亮時隨機棄了哪幾張」；照挑的棄的人不列）。
 export function settleSunrise(state, picks, data, random = cryptoRandom) {
   const limited = applyHandLimits(state, picks, data, { round: state.round - 1, random });
   const paid = sunrise(limited.state, data, random);
   const { state: next, events } = settleSunriseEvents(paid, data, random);
-  return { state: next, events, discards: limited.discards };
+  const randomDiscards = {};
+  for (const [uid, { cards, picked }] of Object.entries(limited.discards)) {
+    if (!picked) randomDiscards[uid] = inHandOrder(state.hands?.[uid] ?? [], cards);
+  }
+  return { state: next, events, discards: limited.discards, randomDiscards };
 }
 
 // ---- 終局與計分（M9） ----

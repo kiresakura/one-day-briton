@@ -432,7 +432,8 @@ export async function startTable(session, code, table, data, random) {
 
 // 日出發牌：這一桌在日出、已經開局、這一回合還沒發過時，先套手牌上限（上一回合黑夜挑的棄牌，從伺服器重讀；沒挑或不合法的
 // 亂數棄到上限），再讓每人領自己階層的薪水、抽牌，接著翻這一回合的一般事件（與它引發的迷霧事件），一次寫入（game.js 的
-// settleSunrise）。回傳 { dealt, round }：dealt 是 false 表示這次沒有寫入（已經發過、還沒開局或不是日出）。
+// settleSunrise）。被亂數棄牌的人，同一筆寫入另記 private/{code}/{uid}/randomDiscard＝{ round: 這次日出的回合, cards: [牌編號…] }
+// （照手牌原本的順序；只有本人與主持端讀得到）。回傳 { dealt, round }：dealt 是 false 表示這次沒有寫入（已經發過、還沒開局或不是日出）。
 export async function processSunrise(session, code, table, data, random) {
   const room = await readRoom(session, code);
   const state = room.tables?.[table];
@@ -453,7 +454,7 @@ export async function processSunrise(session, code, table, data, random) {
     eventDeck: pile.eventDeck ?? [],
   };
   const dealing = { table, seats: game.seats, hands, deck: pile.deck ?? [], discard: pile.discard ?? [], ...before };
-  const { state: next, events } = settleSunrise(dealing, picks, data, random);
+  const { state: next, events, randomDiscards } = settleSunrise(dealing, picks, data, random);
 
   const writes = {
     [`rooms/${code}/games/${table}/seats`]: next.seats,
@@ -467,11 +468,12 @@ export async function processSunrise(session, code, table, data, random) {
   };
   if (next.eventDeck.join() !== before.eventDeck.join()) writes[`hostOnly/${code}/${table}/eventDeck`] = next.eventDeck;
   for (const uid of Object.keys(game.seats)) writes[`private/${code}/${uid}/hand`] = next.hands[uid];
+  for (const [uid, cards] of Object.entries(randomDiscards)) writes[`private/${code}/${uid}/randomDiscard`] = { round: state.round, cards };
   const settled = { path: `rooms/${code}/deals/${table}`, done: (value) => (value ?? 0) >= state.round };
   return { dealt: await writeOnce(session, writes, settled, '發牌沒有成功，請按「補發」再試一次'), round: state.round };
 }
 
-// 自己的私密資料（{ table, hand, destiny }）一有變動就呼叫 onPrivate(資料)；還沒開局或沒有入座時是 null。
+// 自己的私密資料（{ table, hand, destiny, notice, randomDiscard }）一有變動就呼叫 onPrivate(資料)；還沒開局或沒有入座時是 null。
 // 公開的局面（games、deals）在房間裡，跟著 watchRoom 一起來。回傳取消訂閱的函式。
 export function watchPrivate(session, code, onPrivate, onError) {
   return onValue(ref(session.db, `private/${code}/${session.uid}`), (snapshot) => onPrivate(snapshot.val()), onError);
