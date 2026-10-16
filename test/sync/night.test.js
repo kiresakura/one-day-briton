@@ -709,7 +709,7 @@ test('hand limit: the next sunrise discards the picked cards first, discards at 
 });
 
 test('the rules: missed is only true and only with a sleep, in the result and in the log; players cannot write it; a one-field update cannot add it', TIMEOUT, async (t) => {
-  const { code, first, second, third } = await nightRoom(t);
+  const { code, watchers, first, second, third } = await nightRoom(t);
   const game = `rooms/${code}/games/2`;
   assert.deepEqual(await revealNight(host, code, 2), { closed: true });
   let version = await read(host, `${game}/version`);
@@ -738,7 +738,8 @@ test('the rules: missed is only true and only with a sleep, in the result and in
   await assert.rejects(bumped(third, reveal({ players })), denied, 'not even the one marked missed');
   await bumped(host, reveal({ players }));
   version += 1;
-  const stored = await read(first, game);
+  // 玩家那一端掛著整房的訂閱，get() 可能先回本機快取（還沒收到主持端剛寫的那一筆）：等訂閱看到結果再讀。
+  const stored = (await watchers.p1.until((room) => room.games?.[2]?.nightLog?.[1], 'a player sees the result')).games[2];
   assert.deepEqual([stored.night.result.players[third.uid], stored.nightLog[1].players[third.uid]], [missedSleep, missedSleep], 'everyone reads the mark');
   assert.equal(stored.night.result.players[second.uid].missed, undefined, 'a chosen sleep has no mark');
   // 寫好之後只改一個欄位：加上 missed、把 missed 的人改成分贓、拿掉 missed，都被拒。
