@@ -1,0 +1,58 @@
+{
+  "NotoSerifTC-Bold.woff2": [
+    {
+      "code": "U+25B8",
+      "char": "▸"
+    },
+    {
+      "code": "U+25BE",
+      "char": "▾"
+    },
+    {
+      "code": "U+263E",
+      "char": "☾"
+    },
+    {
+      "code": "U+2717",
+      "char": "✗"
+    },
+    {
+      "code": "U+2736",
+      "char": "✶"
+    }
+  ],
+  "NotoSerifTC-Black.woff2": [
+    {
+      "code": "U+25B8",
+      "char": "▸"
+    },
+    {
+      "code": "U+25BE",
+      "char": "▾"
+    },
+    {
+      "code": "U+263E",
+      "char": "☾"
+    },
+    {
+      "code": "U+2717",
+      "char": "✗"
+    },
+    {
+      "code": "U+2736",
+      "char": "✶"
+    }
+  ],
+  "Cinzel-Bold.woff2": [
+    {
+      "code": "U+2736",
+      "char": "✶"
+    }
+  ],
+  "CormorantGaramond-SemiBold.woff2": [
+    {
+      "code": "U+2736",
+      "char": "✶"
+    }
+  ]
+}
