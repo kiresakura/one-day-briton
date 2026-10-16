@@ -914,8 +914,10 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
 }
 
 .score-table th {
-  width: 4.5em;
+  width: 5em;
   font-weight: 700;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .score-table td {
@@ -1562,5 +1564,120 @@ body[data-phase='night'] .tab-destiny {
   .mates-table th.num,
   .mates-table td.num {
     width: 2.2em;
+  }
+}
+
+/* ---- 揭曉倒數（大數字倒數圈）、隨機棄牌提示、階段切換與結果的輕動畫（系統設了減少動態效果時都直接跳到結果） ---- */
+
+.reveal-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.ring.is-big {
+  width: 112px;
+  height: 112px;
+}
+
+.ring.is-big circle {
+  stroke-width: 3;
+}
+
+.ring.is-big .ring-num {
+  margin-top: 0;
+  color: var(--accent);
+  font: 700 56px / 1 var(--font-latin);
+}
+
+.ring.is-big.is-over .ring-num {
+  font-size: 28px;
+}
+
+.ring.is-big .ring-label {
+  display: none;
+}
+
+body[data-phase='night'] .ring.is-big .ring-num {
+  color: var(--night-cta);
+}
+
+.ring-num.is-tick {
+  animation: ring-tick 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes ring-tick {
+  from {
+    transform: scale(1.18);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.reveal-hint {
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.notice-card {
+  border-color: var(--st-wait-bd);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+body[data-phase='night'] .notice-card {
+  border-color: var(--night-rule);
+  background: var(--night-raised);
+  color: var(--night-cta);
+}
+
+.phase-head {
+  transition: background-color 0.45s ease, color 0.45s ease;
+}
+
+.phase-head.is-switching {
+  animation: head-in 0.45s ease both;
+}
+
+@keyframes head-in {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.phase-in {
+  animation: phase-in 0.45s ease both;
+}
+
+@keyframes phase-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.result-in {
+  animation: result-in 0.35s ease both;
+}
+
+@keyframes result-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

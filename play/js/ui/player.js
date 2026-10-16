@@ -12,7 +12,6 @@ import {
   dayStatus,
   discardProblem,
   duskStage,
-  eventLogList,
   needsTarget,
   nightStage,
   overLimit,
@@ -48,6 +47,7 @@ import {
   PHASE_SHORT,
   PHASE_TONES,
   SIDE_LABELS,
+  SLEEP_TEXT,
   billEffectText,
   billOf,
   billTitle,
@@ -58,7 +58,6 @@ import {
   daySeconds,
   destinyText,
   duskMineTexts,
-  duskRevealSeconds,
   endReasonNow,
   eventOf,
   eventOutcome,
@@ -66,6 +65,8 @@ import {
   explain,
   fogMeter,
   isOnline,
+  logItems,
+  logRounds,
   markPresent,
   nameOf,
   nightMineTexts,
@@ -75,10 +76,11 @@ import {
   parchmentCard,
   pendingText,
   playEntries,
-  playText,
   playersAt,
   rankedScores,
   rerenderAt,
+  revealDeadline,
+  revealTotal,
   ring,
   roleName,
   scoreRows,
@@ -116,6 +118,7 @@ let holding = false; // 天命按住中
 let showAllDestinies = false; // 終局：看全桌天命
 let connected = true;
 let watching = false; // 已經訂閱自己的私密資料、請求、票、黑夜選擇、棄牌
+let shownPhase = null; // 上一次畫的階段：換階段時標頭淡入一次
 let generation = 0;
 const stops = [];
 
@@ -136,6 +139,7 @@ export function resetPlayer() {
   logFilter = 'all';
   holding = false;
   showAllDestinies = false;
+  shownPhase = null;
   $('destiny-sheet').hidden = true;
   $('destiny-sheet').replaceChildren();
 }
@@ -381,7 +385,7 @@ function header(m) {
     h(
       'div',
       { class: 'head-main' },
-      h('div', { class: 'head-phase' }, phaseIcon(state.phase), h('h1', { class: 'phase-name', text: PHASE_NAMES[state.phase] ?? state.phase }), h('span', { class: 'phase-latin', text: PHASE_LATIN[state.phase] ?? '', attrs: { lang: 'en' } })),
+      h('div', { class: 'head-phase phase-in', data: { key: `phase-${state.phase}` } }, phaseIcon(state.phase), h('h1', { class: 'phase-name', text: PHASE_NAMES[state.phase] ?? state.phase }), h('span', { class: 'phase-latin', text: PHASE_LATIN[state.phase] ?? '', attrs: { lang: 'en' } })),
       state.phase === 'end' ? null : fogMeter(state.fog, game?.fogFired ?? []),
     ),
   ];
@@ -435,12 +439,22 @@ function actionPanel(m) {
   }
   const { state } = m;
   if (m.ended) return finalPanel(m);
+  const dropped = randomDiscardNote(m);
+  if (dropped) nodes.push(dropped);
   if (state.phase === 'sunrise') nodes.push(...sunrisePanel(m));
   else if (state.phase === 'day') nodes.push(...dayPanel(m));
   else if (state.phase === 'dusk') nodes.push(...duskPanel(m));
   else if (state.phase === 'night') nodes.push(...nightPanel(m));
   else nodes.push(section('end-wait', 'is-plain', h('p', { text: '這一桌已經結束，等結算資料…' })));
   return nodes;
+}
+
+// 日出時被系統隨機棄的牌（手牌超過上限、黑夜沒挑完）：只有本人讀得到，這一回合裡都顯示。
+function randomDiscardNote(m) {
+  const record = ctx.mine?.randomDiscard;
+  if (!record || record.round !== m.state.round || m.state.phase === 'end') return null;
+  const names = Object.values(record.cards ?? {}).map((id) => `〈${cardName(id)}〉`).join('、');
+  return section(`random-discard-${record.round}`, 'notice-card', h('p', { text: `手牌超過上限沒挑完，天亮時隨機棄了：${names}` }));
 }
 
 function waitCard(m) {
@@ -678,7 +692,8 @@ function billCard(m, id, label = '法案表決') {
   );
 }
 
-function duskResult(m, result, id) {
+// showNow：黃昏結果卡留到黑夜、黑夜揭曉之後，「你現在」的數字已經含黑夜的變化，不再寫（只在黑夜揭曉前寫）。
+function duskResult(m, result, id, { showNow = true } = {}) {
   const { room, game } = m;
   const rows = seatsInOrder(game.seats).map(([uid]) => {
     const vote = result.votes?.[uid];
@@ -690,7 +705,7 @@ function duskResult(m, result, id) {
     h('p', { class: `result-head ${result.passed ? 'is-pass' : 'is-fail'}` }, h('span', { class: 'result-mark', text: result.passed ? '✓ 通過' : '✗ 沒有通過' }), ` 贊成 ${result.yes}：反對 ${result.no}`),
     h('ul', { class: 'result-list' }, rows),
     mineTexts ? h('p', { class: 'result-mine', text: mineTexts.paid }) : null,
-    mineTexts ? h('p', { class: 'result-mine', text: mineTexts.now }) : null,
+    mineTexts && showNow ? h('p', { class: 'result-mine', text: mineTexts.now }) : null,
     bill?.todo === true ? h('p', { class: 'problem-line', text: '這張法案的效果還沒做好（todo），這次沒有結算' }) : null,
   ];
 }
@@ -740,14 +755,17 @@ function duskPanel(m) {
   const { dusk } = game;
   const nodes = [billCard(m, dusk.bill)];
   if (stage === 'revealed') {
-    nodes.push(section('dusk-result', 'result-card', heading('RESULT', '揭曉'), ...duskResult(m, dusk.result, dusk.bill)));
+    nodes.push(section('dusk-result', 'result-card result-in', heading('RESULT', '揭曉'), ...duskResult(m, dusk.result, dusk.bill)));
     return [...nodes, fold];
   }
   const sent = sentVote(m);
   const total = Object.keys(game.seats).length;
   const key = syncBallot(m, sent);
-  const progress = h('p', { class: 'progress-line' }, h('strong', { class: 'num', text: `已送出 ${dusk.submitted ?? 0}／${total}` }), stage === 'voting' ? reminderText(dusk.openedAt, 'dusk') : revealText(dusk.revealAt, duskRevealSeconds(), '投票截止了，揭曉中…'));
-  if (stage === 'closing') rerenderAt(dusk.revealAt);
+  const progress = h('p', { class: 'progress-line' }, h('strong', { class: 'num', text: `已送出 ${dusk.submitted ?? 0}／${total}` }), stage === 'voting' ? reminderText(dusk.openedAt, 'dusk') : revealText('dusk', dusk, total));
+  if (stage === 'closing') {
+    rerenderAt(dusk.revealAt);
+    nodes.push(revealCard(m, 'dusk', dusk));
+  }
   if (!duskOpen(m)) {
     nodes.push(section('ballot', 'ballot-card', h('h2', { class: 'card-title', text: '你的表決' }), progress, h('p', { text: sent ? `投票截止了，等揭曉。你送出：${sideText(sent)}` : '投票截止了，你沒有送出，算棄權' })));
     return [...nodes, fold];
@@ -806,8 +824,25 @@ function reminderText(openedAt, phase) {
   return countdownSpan('', openedAt + seconds * 1000, seconds, '・提醒 ', ' 秒', `・已經超過 ${seconds} 秒（只是提醒）`);
 }
 
-function revealText(revealAt, seconds, over) {
-  return countdownSpan('is-reveal', revealAt, seconds, '・大家都送出了，', ' 秒後揭曉', `・${over}`);
+// 揭曉倒數照實際：倒數到截止＋緩衝（主持端真正揭曉的時間），到 0 還沒揭曉寫「揭曉中…」。提前揭曉時不是大家都送出了。
+function revealText(kind, at, total) {
+  const all = (at.submitted ?? 0) >= total;
+  return countdownSpan('is-reveal', revealDeadline(kind, at), revealTotal(kind), `・${all ? '大家都送出了' : '已截止'}，`, ' 秒後揭曉', '・揭曉中…');
+}
+
+// 「大家都送出了」之後的揭曉：大數字倒數圈（每秒輕輕放大回彈），倒數到真正揭曉的時間；到 0 還沒揭曉寫「揭曉中…」。
+function revealCard(m, kind, at) {
+  const deadline = revealDeadline(kind, at);
+  rerenderAt(deadline);
+  const all = (at.submitted ?? 0) >= Object.keys(m.game.seats).length;
+  const over = serverTime(ctx.session) >= deadline;
+  return section(
+    `reveal-${kind}-${m.state.round}`,
+    'reveal-card',
+    heading(kind === 'dusk' ? 'THE BILL' : 'NIGHT', '揭曉倒數'),
+    ring({ deadline, total: revealTotal(kind), label: '揭曉倒數', overText: '…', big: true }),
+    h('p', { class: 'reveal-hint', text: over ? '揭曉中…' : all ? '大家都送出了，倒數完就揭曉' : '主持人提前截止，倒數完就揭曉' }),
+  );
 }
 
 // ---- 黑夜 ----
@@ -846,8 +881,9 @@ function nightPanel(m) {
   const { room, state, game } = m;
   const nodes = [];
   const duskNow = duskStage(game.dusk, state.round);
+  const stage = nightStage(game.night, state.round);
   if (duskNow === 'revealed') {
-    nodes.push(section('dusk-summary', 'summary-card', h('p', { class: 'summary-title' }, h('span', { class: 'hint', text: '黃昏揭曉' }), ' ', h('strong', { text: billTitle(game.dusk.bill) })), ...duskResult(m, game.dusk.result, game.dusk.bill)));
+    nodes.push(section('dusk-summary', 'summary-card', h('p', { class: 'summary-title' }, h('span', { class: 'hint', text: '黃昏揭曉' }), ' ', h('strong', { text: billTitle(game.dusk.bill) })), ...duskResult(m, game.dusk.result, game.dusk.bill, { showNow: stage !== 'revealed' })));
   } else if (duskNow === 'adjourned') {
     nodes.push(section('dusk-summary', 'summary-card', h('p', { class: 'hint', text: '今天議會休會，沒有投票' })));
   }
@@ -855,32 +891,36 @@ function nightPanel(m) {
     const tips = (ctx.cardData.data.tutorial ?? []).filter((tip) => tip.phase === 'night');
     if (tips.length) nodes.push(section('night-tips', 'tips-card', tips.map((tip) => h('p', { class: 'hint', text: `提示：${tip.text}` }))));
   }
-  const stage = nightStage(game.night, state.round);
   const sent = sentNight(m);
   if (stage === 'none') nodes.push(section('night', 'is-plain', statusBar({ kind: 'idle', icon: '…', title: '等主持端開始黑夜…' })));
   else if (stage === 'revealed') {
     const result = game.night.result;
     const mineTexts = nightMineTexts(game, result, ctx.session.uid);
+    // 沒送出的人結果有 missed（M11 起）；舊資料沒有這一欄時照自己這台裝置有沒有送出來寫。
+    const missed = result.players?.[ctx.session.uid]?.missed ?? !sent;
     nodes.push(
       section(
-        'night',
-        'result-card',
+        'night-result',
+        'result-card result-in',
         heading('NIGHT', '黑夜揭曉'),
         h('ul', { class: 'result-list' }, seatsInOrder(game.seats).map(([uid]) => {
           const outcome = result.players?.[uid];
-          return h('li', { class: uid === ctx.session.uid ? 'me' : '', text: `${nameOf(room, uid)}：${outcome ? outcomeText(outcome) : '睡覺'}` });
+          return h('li', { class: uid === ctx.session.uid ? 'me' : '', text: `${nameOf(room, uid)}：${outcome ? outcomeText(outcome) : SLEEP_TEXT}` });
         })),
         mineTexts ? h('p', { class: 'result-mine', text: mineTexts.night }) : null,
         mineTexts ? h('p', { class: 'result-mine', text: mineTexts.now }) : null,
-        sent ? null : h('p', { class: 'hint', text: '你沒有送出，算睡覺' }),
+        missed ? h('p', { class: 'hint', text: '你沒有送出，算睡覺' }) : null,
       ),
     );
   } else {
     const { night } = game;
     const key = syncNightPick(m, sent);
     const total = Object.keys(game.seats).length;
-    const progress = h('p', { class: 'progress-line' }, h('strong', { class: 'num', text: `已送出 ${night.submitted ?? 0}／${total}` }), stage === 'choosing' ? reminderText(night.openedAt, 'night') : revealText(night.revealAt, nightRules().revealSeconds, '黑夜截止了，揭曉中…'));
-    if (stage === 'closing') rerenderAt(night.revealAt);
+    const progress = h('p', { class: 'progress-line' }, h('strong', { class: 'num', text: `已送出 ${night.submitted ?? 0}／${total}` }), stage === 'choosing' ? reminderText(night.openedAt, 'night') : revealText('night', night, total));
+    if (stage === 'closing') {
+      rerenderAt(night.revealAt);
+      nodes.push(revealCard(m, 'night', night));
+    }
     if (!nightOpen(m)) {
       nodes.push(section('night', 'night-card', h('h2', { class: 'card-title', text: '今晚要做什麼？' }), progress, h('p', { text: sent ? `黑夜截止了，等揭曉。你送出：${choiceText(sent)}` : '黑夜截止了，你沒有送出，算睡覺' })));
     } else if (sent && nightEdit !== key) {
@@ -1123,37 +1163,13 @@ function matesPanel(m) {
   ];
 }
 
-// ---- 「紀錄」分頁：照回合分段、新的在上；資料是出牌紀錄、事件紀錄、黃昏與黑夜的結果 ----
-
-const PHASE_ORDER = { sunrise: 0, day: 1, dusk: 2, night: 3 };
-
-function logItems(m) {
-  const { room, game } = m;
-  const items = [];
-  for (const entry of playEntries(game)) {
-    items.push({ round: entry.round, phase: 'day', at: entry.at ?? 0, kind: 'play', icon: entry.response ? '響' : '牌', title: playText(room, entry), detail: '' });
-  }
-  eventLogList(game.eventLog).forEach((entry, index) => {
-    const { effects, problems } = eventOutcome(entry);
-    items.push({ round: entry.round, phase: entry.phase ?? 'sunrise', at: index, kind: 'event', icon: entry.kind === 'fog' ? '霧' : '✶', title: entry.kind === 'fog' ? eventTitle(entry) : `今日事件${eventTitle(entry)}`, detail: [effects, ...problems].filter(Boolean).join('；') });
-  });
-  for (const [round, log] of Object.entries(game.duskLog ?? {})) {
-    if (!log?.bill) continue;
-    items.push({ round: Number(round), phase: 'dusk', at: 0, kind: 'result', icon: '§', title: `${billTitle(log.bill)}${log.passed ? '通過' : '沒有通過'}`, detail: `贊成 ${log.yes}：反對 ${log.no}` });
-  }
-  for (const [round, log] of Object.entries(game.nightLog ?? {})) {
-    if (!log?.players) continue;
-    const lines = seatsInOrder(game.seats).map(([uid]) => `${nameOf(room, uid)}：${log.players[uid] ? outcomeText(log.players[uid]) : '睡覺'}`);
-    items.push({ round: Number(round), phase: 'night', at: 0, kind: 'result', icon: '☾', title: '黑夜揭曉', detail: lines.join('；') });
-  }
-  return items;
-}
+// ---- 「紀錄」分頁：照回合分段、新的在上；資料是出牌紀錄、事件紀錄、黃昏與黑夜的結果（shared.js 的 logItems） ----
 
 function logPanel(m) {
   if (!m.game || !ctx.cardData) return [section('log-empty', 'is-plain', h('p', { class: 'hint', text: '開局後這裡會有出牌、事件與揭曉的紀錄' }))];
   const filters = { all: '全部', play: '出牌', event: '事件' };
-  const items = logItems(m).filter((item) => logFilter === 'all' || item.kind === logFilter);
-  const rounds = [...new Set(items.map((item) => item.round))].sort((a, b) => b - a);
+  const items = logItems(m.room, m.game).filter((item) => logFilter === 'all' || item.kind === logFilter);
+  const rounds = logRounds(items);
   const current = m.state.phase === 'end' ? null : m.state.round;
   return [
     h(
@@ -1163,11 +1179,8 @@ function logPanel(m) {
       h('span', { class: 'hint', text: '新的在上面' }),
     ),
     rounds.length === 0 ? h('p', { class: 'hint', data: { key: 'log-none' }, text: '還沒有紀錄' }) : null,
-    ...rounds.map((round) => {
-      const list = items
-        .filter((item) => item.round === round)
-        .sort((a, b) => (PHASE_ORDER[b.phase] ?? 0) - (PHASE_ORDER[a.phase] ?? 0) || b.at - a.at);
-      return h(
+    ...rounds.map(({ round, items: list }) =>
+      h(
         'section',
         { class: 'log-round', data: { key: `round-${round}` } },
         h('h3', { class: 'log-round-title' }, `第 ${round} 回合`, h('span', { class: round === current ? 'tag-live' : 'hint', text: round === current ? '進行中' : '已結束' })),
@@ -1184,8 +1197,8 @@ function logPanel(m) {
             ),
           ),
         ),
-      );
-    }),
+      ),
+    ),
   ].filter(Boolean);
 }
 
@@ -1209,11 +1222,13 @@ function actionBar(m) {
   if (state.phase === 'night') {
     const rows = [];
     const discard = discardState(m);
-    if (discard && !discard.ending) {
-      rows.push(h('button', { class: 'btn btn-block', type: 'button', data: { act: 'discard-send', key: 'discard-send' }, disabled: Boolean(discard.reason), text: discard.reason ?? `選好了，棄這 ${discard.over} 張（${discard.cards.length}／${discard.over}）` }));
-    }
     const sent = sentNight(m);
-    if (nightOpen(m) && (!sent || nightEdit === `${m.me.table}:${state.round}`)) {
+    const choosing = nightOpen(m) && (!sent || nightEdit === `${m.me.table}:${state.round}`);
+    // 黑夜的選擇已送出、只剩棄牌時，棄牌是主要按鈕；兩個都在時維持「送出黑夜選擇」為主。
+    if (discard && !discard.ending) {
+      rows.push(h('button', { class: `btn btn-block${choosing ? '' : ' btn-primary'}`, type: 'button', data: { act: 'discard-send', key: 'discard-send' }, disabled: Boolean(discard.reason), text: discard.reason ?? `選好了，棄這 ${discard.over} 張（${discard.cards.length}／${discard.over}）` }));
+    }
+    if (choosing) {
       const { reason, label } = nightState(m, sent);
       rows.push(h('button', { class: 'btn btn-primary btn-block', type: 'button', data: { act: 'night-send', key: 'night-send' }, disabled: Boolean(reason), text: reason ?? label }));
     }
@@ -1335,6 +1350,13 @@ export function renderPlayer(room, me) {
   patchChildren($('player-head'), header(m));
   const scene = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night', end: 'finale' }[state.phase] ?? 'day';
   $('player-head').dataset.scene = scene;
+  // 換階段時標頭（顏色＋場景圖）淡入 0.45 秒；系統設了減少動態效果時直接換。
+  if (shownPhase !== null && shownPhase !== state.phase) {
+    $('player-head').classList.remove('is-switching');
+    void $('player-head').offsetWidth;
+    $('player-head').classList.add('is-switching');
+  }
+  shownPhase = state.phase;
   const panels = { action: actionPanel(m), role: rolePanel(m), mates: matesPanel(m), log: logPanel(m) };
   patchChildren(
     $('player-view'),
