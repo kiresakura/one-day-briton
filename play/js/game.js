@@ -135,15 +135,45 @@ export function sunrise(state, data, random = cryptoRandom) {
   return { ...state, seats, hands, deck, discard };
 }
 
+// 兩場制（M9）第 2 場的座位：照第 1 場的座位號（順時針）排成一圈，包括之後離開的人；每個座位第 1 場的階層傳給下一個座位，最後一個
+// 傳給第一個，座位號不變（第 1 題：交給左手邊＝下一個座位；第 4 題：有人離開時座位空著、階層照樣往下傳）。seats 是第 1 場的
+// games/{n}/seats，include 是第 2 場要入座的 uid（陣列或 Set）。回傳照座位號排好的 [{ uid, order, role, from }]：只有 include 裡、
+// 第 1 場有座位的人（第 1 場沒坐這一桌的人不在結果裡，store 會先擋下）；role 是上一個座位第 1 場的階層，from 是交出這個階層的人
+// （1 人的桌是自己）。沒入座的座位，原本要傳給它的階層第 2 場沒有人坐。改傳的方向或改成跳過空位，只改這個函式。
+export function rotateSeats(seats, include) {
+  const ring = seatsInOrder(seats);
+  const wanted = new Set(include ?? []);
+  return ring
+    .map(([uid, seat], index) => {
+      const [from, previous] = ring[(index - 1 + ring.length) % ring.length];
+      return { uid, order: seat.order, role: previous.role, from };
+    })
+    .filter(({ uid }) => wanted.has(uid));
+}
+
+// 照給的座位（[{ uid, order, role }]）入座：uid、座位號、階層都不能重複，人要跟 uids 一樣。回傳照座位號排好的 [{ uid, order, role }]。
+function givenSeating(uids, seating, roles) {
+  const players = [...new Set(uids)];
+  const list = [...seating].map(({ uid, order, role }) => ({ uid, order, role })).sort((a, b) => a.order - b.order);
+  const { error } = checkSeating(list.length, roles.length);
+  if (error) throw new RangeError(error);
+  const distinct = (key) => new Set(list.map((seat) => seat[key])).size === list.length;
+  if (!distinct('uid') || !distinct('order') || !distinct('role')) throw new RangeError('座位、座位號與階層都不能重複');
+  if (players.length !== list.length || !list.every(({ uid }) => players.includes(uid))) throw new RangeError('座位上的人跟要入座的人不一樣');
+  return list;
+}
+
 // 開局：入座、分階層、發天命、洗牌庫、發起始手牌與資源；firstSunrise 為 true 時接著做第 1 回合日出。
 // 座位先排好，再照座位發天命（避開判定提到這桌沒人坐的階層的天命，見 pickDestiny）。
-export function startGame(data, uids, { random = cryptoRandom, firstSunrise = FIRST_SUNRISE_PAYS } = {}) {
+// seating（[{ uid, order, role }]，兩場制第 2 場用 rotateSeats 算的）有給時照它入座，不再隨機分座位與階層，其餘照舊；
+// 沒給時結果與亂數用量都跟沒有這個選項時一樣。
+export function startGame(data, uids, { random = cryptoRandom, firstSunrise = FIRST_SUNRISE_PAYS, seating: given = null } = {}) {
   const { settings } = data;
   let deck = shuffle(buildDeck(data.actions), random);
   let discard = [];
   const used = new Set();
   const state = { seats: {}, hands: {}, destinies: {}, deck, discard };
-  const seating = assignSeats(uids, data.roles, random);
+  const seating = given ? givenSeating(uids, given, data.roles) : assignSeats(uids, data.roles, random);
   const seatedRoles = new Set(seating.map(({ role }) => role));
   for (const { uid, order, role } of seating) {
     const destiny = pickDestiny(data.destinies, role, used, random, seatedRoles);
@@ -1467,4 +1497,42 @@ export function judgeScores(scores, uid, done) {
   const destiny = { ...score.destiny, done };
   const total = score.total - destinyPoints(score.destiny) + destinyPoints(destiny);
   return rankScores({ ...scores, [uid]: { ...score, destiny, total } });
+}
+
+// ---- 兩場制（M9） ----
+// 第 1 場的 games/{n}/final 原地保留、開第 2 場後被規則鎖住；第 2 場的在 games/{n}-2/final。兩場合計不另外存，由 combineScores 從兩份
+// final 算，每個畫面算的都是同一個結果。
+
+// 天命還「待主持人判定」的人（destiny.done 不是 true／false）：[uid…]。開第 2 場之前要是空的（開了之後第 1 場就改不了）。
+export function pendingDestinies(scores) {
+  return Object.entries(scores ?? {})
+    .filter(([, score]) => typeof score?.destiny?.done !== 'boolean')
+    .map(([uid]) => uid);
+}
+
+// 兩場合計（第 3 題：同分並列，不比英鎊；Q6：第 2 場沒參加的人照樣列出、第 2 場算 0）。final1、final2 是兩場的 final（從資料庫讀的），
+// seats1 是第 1 場的座位（games/{n}/seats）。列出的人＝第 1 場有座位的人，加上兩份 final 裡有分數的人。回傳
+// { uid: { first, second, total, rank, absent, missingFirst, pending } }：first、second 是兩場的總分（沒有分數算 0），total＝兩者相加，
+// rank 是合計的名次（高的在前，同分並列，例如 1、1、3）；absent＝第 2 場沒有他的分數（沒參加；final2 沒有時每人都是），
+// missingFirst＝第 1 場沒有他的分數，pending＝第 2 場的天命還待判定（照單場的口徑算 0 分，勾了之後跟著變）。
+// 鍵的順序就是顯示的順序：名次，同名次照第 1 場的座位號（不在第 1 場座位上的排最後）。
+export function combineScores(final1, final2, seats1) {
+  const first = final1?.scores ?? {};
+  const second = final2?.scores ?? {};
+  const uids = [...new Set([...Object.keys(seats1 ?? {}), ...Object.keys(first), ...Object.keys(second)])];
+  const rows = uids.map((uid) => {
+    const one = first[uid]?.total ?? 0;
+    const two = second[uid]?.total ?? 0;
+    const row = { first: one, second: two, total: one + two, rank: 0, absent: !second[uid], missingFirst: !first[uid] };
+    return [uid, { ...row, pending: !!second[uid] && typeof second[uid].destiny?.done !== 'boolean' }];
+  });
+  for (const [, row] of rows) row.rank = 1 + rows.filter(([, other]) => other.total > row.total).length;
+  const order = (uid) => seats1?.[uid]?.order ?? Infinity;
+  rows.sort(([a, left], [b, right]) => left.rank - right.rank || order(a) - order(b) || (a < b ? -1 : a > b ? 1 : 0));
+  return Object.fromEntries(rows);
+}
+
+// 教學提示要不要顯示（第 5 題）：只在第 1 場第 1 回合。第 2 場也要顯示的話，拿掉 match 那個條件。
+export function showsTutorial(match, round) {
+  return match === 1 && round === 1;
 }

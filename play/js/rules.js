@@ -101,6 +101,52 @@ export function isValidTable(table, tableCount = MAX_TABLES) {
   return Number.isInteger(table) && table >= 1 && table <= tableCount;
 }
 
+// ---- 兩場制（M9）：局號 ----
+// 局號是 tables、games、deals、hostOnly 底下的鍵：第 1 場是 "1"…"6"（實體桌號），第 2 場是 "1-2"…"6-2"。
+// players/{uid}.table 與 private/{code}/{uid}.table 一直是實體桌號（數字）；票、黑夜的選擇、挑的棄牌的 table 是局號。
+// 局號的寫法只寫在這裡。
+export const MATCH_COUNT = 2;
+const KEY_PATTERN = /^([1-9][0-9]*)(?:-(2))?$/;
+
+// 實體桌號（1–6 的整數，或 "1" 這種字串）→ 數字；不是的話是 null。
+function tableNumber(table) {
+  const number = typeof table === 'string' && /^[1-9][0-9]*$/.test(table) ? Number(table) : table;
+  return isValidTable(number) ? number : null;
+}
+
+// 第 table 桌第 match 場的局號：(1) → "1"、(1, 2) → "1-2"。桌號或場次不對丟 RangeError。
+export function matchKey(table, match = 1) {
+  const number = tableNumber(table);
+  if (number === null) throw new RangeError(`invalid table: ${table}`);
+  if (match !== 1 && match !== MATCH_COUNT) throw new RangeError(`invalid match: ${match}`);
+  return match === 1 ? String(number) : `${number}-${match}`;
+}
+
+// 局號 → { table, match }：1、"1" → { table: 1, match: 1 }，"1-2" → { table: 1, match: 2 }。不是合法的局號（"7"、"1-3"、"1-2-2"、
+// 0、1.5、null…）回 null。
+export function parseKey(key) {
+  if (typeof key === 'number') return isValidTable(key) ? { table: key, match: 1 } : null;
+  const found = typeof key === 'string' ? KEY_PATTERN.exec(key) : null;
+  const number = found ? Number(found[1]) : null;
+  if (!isValidTable(number)) return null;
+  return { table: number, match: found[2] ? Number(found[2]) : 1 };
+}
+
+// 第 table 桌（實體桌號）目前是哪一局：房間裡有 tables/{n}-2 就是 "{n}-2"，不然是 "{n}"。桌號不對回 null。
+// 「目前是第幾場」不另外存，每次從房間資料推出來（tables 讀回來可能是陣列或物件，這裡只用 [鍵]）。
+export function activeKey(room, table) {
+  const number = tableNumber(table);
+  if (number === null) return null;
+  const second = matchKey(number, MATCH_COUNT);
+  return room?.tables?.[second] ? second : String(number);
+}
+
+// 第 table 桌（實體桌號）目前是第幾場：1 或 2。桌號不對回 null。
+export function matchOf(room, table) {
+  const key = activeKey(room, table);
+  return key === null ? null : parseKey(key).match;
+}
+
 // 房間的主持端：開房的人，加上被核准進主持名單的人。
 export function hostUids(room) {
   const uids = new Set();
