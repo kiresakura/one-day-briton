@@ -3,23 +3,28 @@
 import {
   DUSK_GRACE_MS,
   NIGHT_GRACE_MS,
+  combineScores,
   duskSettleAt,
   eventLogList,
   nightSettings,
   nightSettleAt,
+  rotateSeats,
   scoreSettings,
   shouldEnd,
   skippedEventEffects,
   sunriseEventsOf,
   seatsInOrder,
 } from '../game.js';
-import { FOG_THRESHOLDS, PHASE_LABELS } from '../rules.js';
+import { FOG_THRESHOLDS, MATCH_COUNT, PHASE_LABELS, matchKey } from '../rules.js';
 import { StoreError, serverTime, trackPresence } from '../store.js';
 import { $, h } from './dom.js';
 import { ctx, rerender } from './state.js';
 
-// 場次標示：兩場制還沒做，先寫死在這一個地方（之後由房間狀態決定）。
-export const MATCH_TEXT = '第 1 場';
+// 場次標示「第 N 場」：畫面上的場次文字都從這裡來（match 是 rules.js 的 matchOf／parseKey 算出來的 1 或 2）。
+export function matchText(match) {
+  return `第 ${match} 場`;
+}
+export const MATCH_TEXT = matchText(1);
 export const KIND_LABELS = { play: '一般', response: '響應' };
 // 齒輪連鎖各級的加成（企劃 10/15 回覆第 10 題）。
 export const CHAIN_BONUS = {
@@ -117,7 +122,7 @@ export function playEntries(game) {
 
 // ---- 倒數 ----
 
-const clocks = new Map(); // 桌號 → { key: '回合:第幾位', since }：白晝每人的提醒倒數從這台裝置看到輪到他時算起
+const clocks = new Map(); // 局號 → { key: '回合:第幾位', since }：白晝每人的提醒倒數從這台裝置看到輪到他時算起
 const wakeups = new Map(); // 黃昏與黑夜的截止時間 → 到時重畫一次的計時器（送出鈕、提前揭曉鈕要跟著停用）
 
 export function resetTimers() {
@@ -130,7 +135,8 @@ export function daySeconds() {
   return ctx.cardData?.data.settings.reminderSeconds.day ?? 60;
 }
 
-// 白晝每人的提醒倒數（只顯示，不會自動換人）：從這台裝置看到輪到這個人的那一刻算起。回傳開始的時間。
+// 白晝每人的提醒倒數（只顯示，不會自動換人）：從這台裝置看到輪到這個人的那一刻算起。table 是局號（兩場的第 1 回合分開算）。
+// 回傳開始的時間。
 export function turnSince(table, round, index) {
   const key = `${round}:${index}`;
   if (clocks.get(table)?.key !== key) clocks.set(table, { key, since: Date.now() });
@@ -462,6 +468,40 @@ export function scoreRows(score) {
 // 照名次排好的 [uid, 分數]（同名次照座位）。
 export function rankedScores(game) {
   return Object.entries(game.final?.scores ?? {}).sort(([a, x], [b, y]) => x.rank - y.rank || (game.seats[a]?.order ?? 0) - (game.seats[b]?.order ?? 0));
+}
+
+// ---- 兩場制（M9） ----
+
+// 第 2 場的階層怎麼傳：第 1 場的整圈座位（包括之後離開、沒勾參加的人）照 game.js 的 rotateSeats 算，方向與空位的規則只在那裡。
+// 回傳 uid → { order, role, from }：role 是這個座位第 2 場拿到的階層，from 是交給他的人；「我的角色卡交給誰」＝ from 是我的那一位。
+export function handovers(seats1) {
+  return new Map(rotateSeats(seats1 ?? {}, Object.keys(seats1 ?? {})).map(({ uid, ...seat }) => [uid, seat]));
+}
+
+// 第 table 桌（實體桌號）的兩場合計（game.js 的 combineScores，鍵的順序就是名次順序）；第 2 場還沒算分時是 null。
+export function combinedOf(room, table) {
+  const first = room?.games?.[matchKey(table)];
+  const second = room?.games?.[matchKey(table, MATCH_COUNT)];
+  if (!first?.final || !second?.final) return null;
+  return combineScores(first.final, second.final, first.seats);
+}
+
+// 合計名次有沒有並列。
+export function isTied(combined, row) {
+  return Object.values(combined).filter((other) => other.rank === row.rank).length > 1;
+}
+
+// 兩場合計裡一個人的其中一場（match 是 1 或 2）：「23（第 2 名）」；第 1 場沒有分數、第 2 場沒參加的算 0，寫成文字；
+// 第 2 場天命還待判定的加「+?」（判定後跟著變）。
+export function matchScoreText(row, final, uid, match) {
+  if (match === 1 && row.missingFirst) return '沒有分數（0）';
+  if (match !== 1 && row.absent) return '沒參加（0）';
+  const total = match === 1 ? row.first : row.second;
+  return `${total}${match !== 1 && row.pending ? '+?' : ''}（第 ${final?.scores?.[uid]?.rank} 名）`;
+}
+
+export function combinedTotalText(row) {
+  return `${row.total}${row.pending ? '+?' : ''}`;
 }
 
 // 等著響應的那張牌：「○○ 打出「X」（分類）」。

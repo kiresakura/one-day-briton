@@ -103,6 +103,63 @@ body.has-drawer {
   font-weight: 700;
 }
 
+/* 頂列的品牌、房號、右側不跟著縮（放不下就是真的溢出，量得到）。 */
+.host-brand,
+.host-room,
+.host-top-right {
+  flex-shrink: 0;
+}
+
+.host-top-right .top-btn,
+.host-online {
+  white-space: nowrap;
+}
+
+/* 兩場制：各狀態的桌數下面多一行各場的桌數（第 1 場結束、第 2 場進行中、第 2 場結束）；兩行都改小號，頂列高度不變。 */
+.host-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.host-status.has-matches .host-chips {
+  flex-wrap: nowrap;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.host-status.has-matches .host-chips li {
+  padding: 1px 8px;
+  line-height: 16px;
+}
+
+.host-chips .chip-match {
+  border-style: dashed;
+}
+
+.host-chips .chip-match.is-zero {
+  color: #8f8a80;
+}
+
+.host-top .top-btn.host-open-all {
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 0;
+  padding: 2px 10px;
+  border-color: var(--end-ink);
+  color: var(--end-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.host-top .top-btn.host-open-all:disabled {
+  border-style: dashed;
+  color: #8f8a80;
+}
+
 .host-top-right {
   position: relative;
   display: flex;
@@ -296,8 +353,15 @@ body.has-drawer {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 700;
+}
+
+.tc-phase-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .host-screen .phase-icon {
@@ -323,10 +387,6 @@ body.has-drawer {
 .host-screen .phase-icon-end {
   width: 10px;
   height: 10px;
-}
-
-.tc-round {
-  font-size: 13px;
 }
 
 .tc-last {
@@ -538,6 +598,49 @@ body.has-drawer {
 
 .tc-table .tc-rank,
 .tc-table .tc-total {
+  font-weight: 700;
+}
+
+/* 第 2 場結束：兩場合計（合計名次｜玩家・第 2 場階層｜第 1 場｜第 2 場｜合計）。 */
+.tc-table.is-combined th:first-child {
+  width: 68px;
+}
+
+.tc-table.is-combined th:nth-child(2) {
+  width: auto;
+}
+
+.tc-table.is-combined th:nth-child(3),
+.tc-table.is-combined th:nth-child(4) {
+  width: 52px;
+}
+
+.tc-table.is-combined th:nth-child(5) {
+  width: 44px;
+}
+
+/* 第 2 場・未開局的座位預覽（座位｜玩家｜第 1 場 → 第 2 場｜參加）。 */
+.tc-table.is-seats th:first-child {
+  width: 34px;
+}
+
+.tc-table.is-seats th:nth-child(2) {
+  width: 84px;
+}
+
+.tc-table.is-seats th:nth-child(3) {
+  width: auto;
+}
+
+.tc-table.is-seats th:nth-child(4) {
+  width: 52px;
+}
+
+.tc-table.is-seats tr.is-off td {
+  color: var(--ink-3);
+}
+
+.tc-table .tc-yes {
   font-weight: 700;
 }
 
@@ -947,6 +1050,223 @@ body.has-drawer {
   margin: 0;
 }
 
+.drawer-note-lead {
+  font-weight: 700;
+}
+
+.drawer-note p + p {
+  margin-top: 4px;
+}
+
+/* 第 2 場的紀錄：切換看第 1 場（只讀）。 */
+.drawer-switch {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  margin: 12px 20px 0;
+}
+
+.drawer-switch-btn[aria-pressed='true'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* 結算明細的三段：兩場合計、第 2 場明細、第 1 場明細（已鎖定）。 */
+.fc-part {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fc-part + .fc-part {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 2px solid var(--rule-strong);
+}
+
+.fc-part-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 17px / 1.3 var(--font-title);
+}
+
+.fc-part-tag {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fc-combined {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fc-combined th {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--rule-strong);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.fc-combined td {
+  padding: 6px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.fc-combined tr.is-pending td {
+  background: var(--accent-tint);
+}
+
+.fc-combined-rank,
+.fc-combined-total {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.fc-combined-total {
+  font-size: 16px;
+  text-align: right;
+}
+
+/* 第 2 場的座位：勾選誰參加（只存在這台裝置）。 */
+.seat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seat-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.seat-row.is-off {
+  border-style: dashed;
+  background: var(--paper-sunk);
+}
+
+.seat-no {
+  flex: none;
+  width: 52px;
+  font-weight: 700;
+}
+
+.seat-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.seat-pass {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.seat-row.is-off .seat-pass {
+  color: var(--ink-3);
+}
+
+.host-screen .seat-pick {
+  flex: none;
+  min-width: 92px;
+}
+
+.host-screen .seat-pick.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.seat-locked {
+  flex: none;
+  min-width: 92px;
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.drawer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.drawer-foot .reason {
+  flex: 1;
+  margin: 0;
+  text-align: right;
+}
+
+/* ---- 「開第 2 場」的確認框 ---- */
+
+.scrim.is-confirm {
+  z-index: 55;
+}
+
+.confirm {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px 24px;
+  border: 2px solid var(--accent);
+  border-radius: var(--r-lg);
+  background: var(--paper-raised);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+  transform: translate(-50%, -50%);
+}
+
+.confirm-title {
+  font: 700 20px / 1.3 var(--font-title);
+}
+
+.confirm-text {
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.confirm-line {
+  font-size: 14px;
+}
+
+.confirm-line.is-problem {
+  color: var(--accent);
+}
+
+.confirm .reason {
+  margin: 0;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 /* ---- 開房／接手 ---- */
 
 .host-entry-screen {
@@ -1022,24 +1342,10 @@ body.has-drawer {
   font-size: 12.5px;
 }
 
+/* 場次：一行說明（兩場制在同一間房接著打，開房時不用選）。 */
 .entry-match {
-  display: flex;
-  gap: 6px;
-}
-
-.match-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--tap);
-  padding: 0 18px;
-  border-radius: var(--r-md);
-  font-size: 15px;
-}
-
-#entry-match {
-  background: var(--ink);
-  color: #fff;
-  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .entry-note {
