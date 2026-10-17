@@ -1,6 +1,9 @@
 // 玩家端（手機）：階段標頭 → 主要動作區 → 手牌 → 動作列 → 分頁列（行動／階層／同桌／紀錄／天命・按住看）。
 // 重畫用 patchChildren 就地更新、按鈕用 data-act 委派事件：別人的動作觸發重畫時，手牌的捲動位置、頁面捲動位置、已選的牌、
 // 出價、目前分頁、按住中的天命都不會被打斷。規則與每個按鈕的作用、啟用條件與改版前相同。
+// 兩場制（M9）：每次重畫先用 rules.js 的 activeKey 找自己這一桌目前的局號（第 1 場 "3"、第 2 場 "3-2"），局面、送出的票／黑夜選擇／
+// 挑的棄牌、本機暫存與計時器的鍵都用局號；畫面上的「第 3 桌」用實體桌號。第 2 場準備中看得到自己的新階層與要交卡給誰（shared.js 的
+// handovers），第 2 場結束看兩場合計（combinedOf）。
 import {
   DISCARD_REASONS,
   NIGHT_CHOICES,
@@ -19,9 +22,10 @@ import {
   responseDeadline,
   responseProblem,
   seatsInOrder,
+  showsTutorial,
   voteProblem as voteCheck,
 } from '../game.js';
-import { hostUids } from '../rules.js';
+import { activeKey, hostUids, matchKey, parseKey } from '../rules.js';
 import {
   requestDiscard,
   requestNight,
@@ -41,7 +45,6 @@ import {
   CHAIN_BONUS,
   CHOICE_LABELS,
   END_REASON_TEXT,
-  MATCH_TEXT,
   PHASE_LATIN,
   PHASE_NAMES,
   PHASE_SHORT,
@@ -54,6 +57,8 @@ import {
   cardName,
   chainMeter,
   choiceText,
+  combinedOf,
+  combinedTotalText,
   connPill,
   daySeconds,
   destinyText,
@@ -64,10 +69,14 @@ import {
   eventTitle,
   explain,
   fogMeter,
+  handovers,
   isOnline,
+  isTied,
   logItems,
   logRounds,
   markPresent,
+  matchScoreText,
+  matchText,
   nameOf,
   nightMineTexts,
   nightRules,
@@ -102,20 +111,23 @@ let composing = null; // 正在準備出的牌 { index, card, target, chainTarge
 let sending = false; // 請求送出中
 let windowEnd = { id: null, timer: null }; // 響應截止時重畫一次的計時器（對應哪一張等著響應的牌）
 let respondPick = null; // 響應窗口選的牌 { pending, index, card }
-let ballot = null; // 正在選的票 { key: '桌:回合', side, bid, touched }；重畫時留著，換回合就清掉
+let ballot = null; // 正在選的票 { key: '局號:回合', side, bid, touched }；重畫時留著，換回合就清掉
 let voting = false;
-let duskEdit = null; // 已送出的票按了「修改」：'桌:回合'
-let nightPick = null; // 正在選的 { key: '桌:回合', choice, tiers, touched }
+let duskEdit = null; // 已送出的票按了「修改」：'局號:回合'
+let nightPick = null; // 正在選的 { key: '局號:回合', choice, tiers, touched }
 let nightSending = false;
-let nightEdit = null; // 已送出的黑夜選擇按了「修改」：'桌:回合'
-let discardPick = null; // 正在挑的棄牌 { key: '桌:回合:手牌', indexes: [手牌的第幾張…], touched }
+let nightEdit = null; // 已送出的黑夜選擇按了「修改」：'局號:回合'
+let discardPick = null; // 正在挑的棄牌 { key: '局號:回合:手牌', indexes: [手牌的第幾張…], touched }
 let discardSending = false;
 let tab = 'action';
-let lastNeed = null; // 上一次「需要我動作」的情況；換成新的情況就自動切回「行動」分頁
+let lastNeed = null; // 上一次「需要我動作」的情況（帶局號）；換成新的情況就自動切回「行動」分頁
 let handOpen = false; // 黃昏、黑夜時展開手牌
 let logFilter = 'all';
 let holding = false; // 天命按住中
 let showAllDestinies = false; // 終局：看全桌天命
+let showFirst = false; // 第 2 場：展開「第 1 場結算」（只讀）
+let showFirstDestinies = false; // 「第 1 場結算」裡看第 1 場的全桌天命
+let shownKey = null; // 上一次畫的局號：換到第 2 場時，上一場展開的東西收起來
 let connected = true;
 let watching = false; // 已經訂閱自己的私密資料、請求、票、黑夜選擇、棄牌
 let shownPhase = null; // 上一次畫的階段：換階段時標頭淡入一次
@@ -139,6 +151,9 @@ export function resetPlayer() {
   logFilter = 'all';
   holding = false;
   showAllDestinies = false;
+  showFirst = false;
+  showFirstDestinies = false;
+  shownKey = null;
   shownPhase = null;
   $('destiny-sheet').hidden = true;
   $('destiny-sheet').replaceChildren();
@@ -308,13 +323,20 @@ function handIndexes(hand, cards) {
 
 // ---- 這一次重畫要用的局面 ----
 
+// key 是自己這一桌目前的局號（activeKey；tables、games、deals 有 "1-2" 這種鍵後是物件，只用 [局號] 取值），match 是第幾場。
+// 第 2 場時 first 是同一桌第 1 場的局面（已被規則鎖住，只讀），firstSeat 是自己第 1 場的座位；prep＝主持端開了第 2 場、還沒開局。
 function model(room, me) {
-  const state = room.tables[me.table];
-  const game = room.games?.[me.table];
+  const key = activeKey(room, me.table);
+  const { match } = parseKey(key);
+  const state = room.tables[key];
+  const game = room.games?.[key];
+  const first = match === 1 ? null : (room.games?.[matchKey(me.table)] ?? null);
+  const firstSeat = first?.seats?.[ctx.session.uid] ?? null;
   const seat = game?.seats?.[ctx.session.uid];
   let wait = '';
-  if (!game) wait = '等待主持端開局';
-  else if (!seat) wait = '本桌已開局，這一局沒有你的座位，請找工作人員';
+  if (!game) wait = match === 1 ? '等待主持端開局' : `${matchText(match)}準備中`;
+  else if (!seat && match === 1) wait = '本桌已開局，這一局沒有你的座位，請找工作人員';
+  else if (!seat) wait = firstSeat ? '這一場你沒有座位（主持人設為不參加）' : `${matchText(match)}不收新人，請找工作人員`;
   else if (ctx.cardsFailed) wait = '卡牌資料有問題，請找工作人員';
   else if (!ctx.cardData || !ctx.mine) wait = '讀取手牌中…';
   const hand = ctx.mine?.hand ?? [];
@@ -322,7 +344,7 @@ function model(room, me) {
   if (!day?.myTurn || hand[composing?.index] !== composing?.card) composing = null; // 換人了或那張牌已經不在
   const ended = state.phase === 'end' && Boolean(game?.final) && Boolean(ctx.cardData);
   const ending = wait ? false : endReasonNow(game, state) !== null;
-  return { room, me, state, game, seat, wait, hand, day, ended, ending };
+  return { room, me, key, match, first, firstSeat, prep: match !== 1 && !game, state, game, seat, wait, hand, day, ended, ending };
 }
 
 // 現在需要我動作的情況（輪到我、響應窗口、黃昏開票、黑夜、要棄牌）；沒有是 null。
@@ -380,8 +402,9 @@ function roomFoot() {
 function header(m) {
   const { me, state, game } = m;
   const where = state.phase === 'end' ? `第 ${me.table} 桌・第 ${game?.final?.round ?? state.round} 回合結束` : `第 ${me.table} 桌・第 ${state.round} 回合`;
+  const tag = m.prep ? `${matchText(m.match)}・準備中` : matchText(m.match);
   return [
-    h('div', { class: 'head-top' }, h('span', { class: 'tag tag-match', text: MATCH_TEXT }), h('span', { class: 'head-where', text: where }), connPill(connected)),
+    h('div', { class: 'head-top' }, h('span', { class: `tag tag-match${m.match === 1 ? '' : ' is-second'}`, text: tag }), h('span', { class: 'head-where', text: where }), connPill(connected)),
     h(
       'div',
       { class: 'head-main' },
@@ -433,6 +456,9 @@ function strip(m) {
 
 function actionPanel(m) {
   const nodes = [];
+  if (m.prep) return prepPanel(m);
+  // 第 2 場開局了、這一場沒有自己的座位：說明，加上自己第 1 場的結算；第 2 場結束後一樣看兩場合計。
+  if (m.wait && m.match !== 1 && m.game) return m.ended ? finalPanel(m) : seatlessPanel(m);
   if (m.wait) {
     nodes.push(waitCard(m));
     return nodes;
@@ -441,6 +467,7 @@ function actionPanel(m) {
   if (m.ended) return finalPanel(m);
   const dropped = randomDiscardNote(m);
   if (dropped) nodes.push(dropped);
+  if (m.match !== 1 && state.round === 1 && state.phase === 'sunrise') nodes.push(switchCard(m));
   if (state.phase === 'sunrise') nodes.push(...sunrisePanel(m));
   else if (state.phase === 'day') nodes.push(...dayPanel(m));
   else if (state.phase === 'dusk') nodes.push(...duskPanel(m));
@@ -455,6 +482,69 @@ function randomDiscardNote(m) {
   if (!record || record.round !== m.state.round || m.state.phase === 'end') return null;
   const names = Object.values(record.cards ?? {}).map((id) => `〈${cardName(id)}〉`).join('、');
   return section(`random-discard-${record.round}`, 'notice-card', h('p', { text: `手牌超過上限沒挑完，天亮時隨機棄了：${names}` }));
+}
+
+// ---- 兩場制：準備中、換場說明、沒座位 ----
+
+// 第 1 場的座位上那個人的名字（已經離開房間的人沒有名字）。
+function seatName(m, uid) {
+  return m.room.players?.[uid]?.name ?? null;
+}
+
+// 第 2 場準備中：自己第 2 場的階層、誰交給你、你的角色卡要交給誰（shared.js 的 handovers；方向與空位的規則在 game.js 的 rotateSeats）。
+// 第 1 場之後才加入的人沒有第 1 場的座位：第 2 場不收新人。
+function handoverLines(m) {
+  const uid = ctx.session.uid;
+  if (!m.firstSeat) return null;
+  const passed = handovers(m.first.seats);
+  const mine = passed.get(uid);
+  const seats1 = m.first.seats;
+  const giver = mine.from === uid ? '只有你一人，階層照舊' : `座位 ${seats1[mine.from].order + 1} 的 ${seatName(m, mine.from) ?? '（已離開房間）'} 交給你`;
+  const receiver = [...passed].find(([, seat]) => seat.from === uid)?.[0];
+  let give = null;
+  if (receiver && receiver !== uid) {
+    const name = seatName(m, receiver);
+    give = name ? `請把你的角色卡交給座位 ${seats1[receiver].order + 1} 的 ${name}` : `座位 ${seats1[receiver].order + 1} 的人已經離開房間，你的角色卡請交給工作人員`;
+  }
+  return { role: mine.role, head: `你${matchText(m.match)}的階層：〈${roleName(mine.role)}〉`, from: `（${giver}）`, text: `你${matchText(m.match)}的階層：〈${roleName(mine.role)}〉（${giver}）`, give };
+}
+
+function prepPanel(m) {
+  const lines = handoverLines(m);
+  if (!lines) {
+    return [section('prep', 'wait-card', statusBar({ kind: 'wait', icon: '!', title: `${matchText(m.match)}不收新人，請找工作人員`, sub: `第 ${m.me.table} 桌` }), leaveButton())];
+  }
+  return [
+    section(
+      'prep',
+      'is-accent prep-card',
+      heading('NEXT MATCH', `${matchText(m.match)}・準備中`),
+      h('div', { class: 'prep-role' }, roleBadge(lines.role, 'is-large'), h('p', { class: 'prep-role-text' }, lines.head, h('span', { class: 'prep-from', text: lines.from }))),
+      lines.give ? h('p', { class: 'prep-give', text: lines.give }) : null,
+      h('p', { class: 'hint', text: `主持人按「開始${matchText(m.match)}」後，這裡會自動換成${matchText(m.match)}的手牌與天命，不用重新整理。${matchText(1)}的結算在「紀錄」分頁。` }),
+    ),
+  ];
+}
+
+// 第 2 場開局後、第 1 回合白晝之前：換場說明（新階層、重發了什麼、第 1 場的分數與名次）。
+function switchCard(m) {
+  const mine = m.first?.final?.scores?.[ctx.session.uid];
+  const result = mine ? `${matchText(1)}你得了 ${mine.total} 分（第 ${mine.rank} 名）` : `${matchText(1)}沒有你的分數（算 0 分）`;
+  return section(
+    'match-switch',
+    'is-accent switch-card',
+    heading('NEW MATCH', `${matchText(m.match)}開始`),
+    h('p', { class: 'switch-text', text: `${matchText(m.match)}開始：你是〈${roleName(m.seat.role)}〉。英鎊、影響力、手牌、天命都重發了。${result}，最後看兩場合計` }),
+  );
+}
+
+function seatlessPanel(m) {
+  const nodes = [section('seatless', 'wait-card', statusBar({ kind: 'wait', icon: '!', title: m.wait, sub: `第 ${m.me.table} 桌・${matchText(m.match)}` }))];
+  if (m.firstSeat && m.first?.final && ctx.cardData) {
+    nodes.push(h('div', { class: 'first-final is-open', data: { key: 'first-final' } }, h('h2', { class: 'list-title', text: `你的${matchText(1)}結算（只讀）` }), h('div', { class: 'first-body' }, ...scoreSummary(m.room, m.first, { ranks: false }))));
+  }
+  nodes.push(leaveButton());
+  return nodes;
 }
 
 function waitCard(m) {
@@ -497,7 +587,7 @@ function eventCards(m, compact = false) {
 
 function sunrisePanel(m) {
   const { room, game, state } = m;
-  const dealt = (room.deals?.[m.me.table] ?? 0) >= state.round;
+  const dealt = (room.deals?.[m.key] ?? 0) >= state.round;
   const first = dayStatus(game, state.round).order[0];
   return [
     section(
@@ -590,7 +680,7 @@ function dayPanel(m) {
           h('p', { class: 'turn-sub', text: `這一輪已出 ${status.turn.plays}／${max} 張・還有 ${status.remaining} 人沒出完` }),
           chainMeter(status.turn),
         ),
-        ring({ since: turnSince(m.me.table, state.round, status.turn.index), total: daySeconds(), label: '提醒秒', overText: '超過' }),
+        ring({ since: turnSince(m.key, state.round, status.turn.index), total: daySeconds(), label: '提醒秒', overText: '超過' }),
       ),
     );
   }
@@ -718,11 +808,11 @@ function duskOpen(m) {
 
 function sentVote(m) {
   const { myVote } = ctx;
-  return myVote && String(myVote.table) === String(m.me.table) && myVote.round === m.state.round ? myVote : null;
+  return myVote && String(myVote.table) === m.key && myVote.round === m.state.round ? myVote : null;
 }
 
 function syncBallot(m, sent) {
-  const key = `${m.me.table}:${m.state.round}`;
+  const key = `${m.key}:${m.state.round}`;
   // 換了回合，或自己還沒動過選票時，跟著已送出的票（重新整理後自己的票可能晚一點才到）。
   if (ballot?.key !== key || !ballot.touched) ballot = { key, side: sent?.side ?? null, bid: sent?.bid ?? 0, touched: false };
   return key;
@@ -730,9 +820,9 @@ function syncBallot(m, sent) {
 
 // 這張票現在送不送得出去：{ vote, reason }（reason 是停用原因，可以送是 null）。
 function ballotState(m, sent) {
-  const { me, state, game } = m;
-  const vote = { table: me.table, round: state.round, side: ballot.side, bid: ballot.side === 'abstain' ? 0 : ballot.bid };
-  const view = { table: me.table, round: state.round, phase: state.phase, seats: game.seats, dusk: game.dusk };
+  const { key, state, game } = m;
+  const vote = { table: key, round: state.round, side: ballot.side, bid: ballot.side === 'abstain' ? 0 : ballot.bid };
+  const view = { table: key, round: state.round, phase: state.phase, seats: game.seats, dusk: game.dusk };
   const problem = ballot.side ? voteProblem(view, vote) : null;
   let reason = null;
   if (!ballot.side) reason = '先選贊成、反對或棄權';
@@ -849,7 +939,7 @@ function revealCard(m, kind, at) {
 
 function sentNight(m) {
   const { myNight } = ctx;
-  return myNight && String(myNight.table) === String(m.me.table) && myNight.round === m.state.round ? myNight : null;
+  return myNight && String(myNight.table) === m.key && myNight.round === m.state.round ? myNight : null;
 }
 
 function nightOpen(m) {
@@ -859,16 +949,16 @@ function nightOpen(m) {
 }
 
 function syncNightPick(m, sent) {
-  const key = `${m.me.table}:${m.state.round}`;
+  const key = `${m.key}:${m.state.round}`;
   // 換了回合，或自己還沒動過時，跟著已送出的選擇（重新整理後自己的選擇可能晚一點才到）。
   if (nightPick?.key !== key || !nightPick.touched) nightPick = { key, choice: sent?.choice ?? null, tiers: sent?.tiers ?? 1, touched: false };
   return key;
 }
 
 function nightState(m, sent) {
-  const { me, state, game } = m;
-  const pick = { table: me.table, round: state.round, choice: nightPick.choice, tiers: nightPick.choice === 'gamble' ? nightPick.tiers : null };
-  const view = { table: me.table, round: state.round, phase: state.phase, seats: game.seats, night: game.night };
+  const { key, state, game } = m;
+  const pick = { table: key, round: state.round, choice: nightPick.choice, tiers: nightPick.choice === 'gamble' ? nightPick.tiers : null };
+  const view = { table: key, round: state.round, phase: state.phase, seats: game.seats, night: game.night };
   const problem = nightPick.choice ? choiceProblem(view, ctx.session.uid, { ...pick, at: serverTime(ctx.session) }) : null;
   let reason = null;
   if (!nightPick.choice) reason = '先選豪賭、分贓或睡覺';
@@ -887,7 +977,7 @@ function nightPanel(m) {
   } else if (duskNow === 'adjourned') {
     nodes.push(section('dusk-summary', 'summary-card', h('p', { class: 'hint', text: '今天議會休會，沒有投票' })));
   }
-  if (state.round === 1) {
+  if (showsTutorial(m.match, state.round)) {
     const tips = (ctx.cardData.data.tutorial ?? []).filter((tip) => tip.phase === 'night');
     if (tips.length) nodes.push(section('night-tips', 'tips-card', tips.map((tip) => h('p', { class: 'hint', text: `提示：${tip.text}` }))));
   }
@@ -995,11 +1085,11 @@ function discardState(m) {
   const over = overLimit(hand, settings);
   if (over === 0 || m.state.phase !== 'night') return null;
   if (m.ending) return { ending: true, over };
-  const where = { table: m.me.table, round: m.state.round };
+  const where = { table: m.key, round: m.state.round };
   const { myDiscard } = ctx;
-  const saved = myDiscard && String(myDiscard.table) === String(m.me.table) && myDiscard.round === m.state.round ? myDiscard : null;
+  const saved = myDiscard && String(myDiscard.table) === m.key && myDiscard.round === m.state.round ? myDiscard : null;
   const problem = saved ? discardProblem(hand, saved, where, settings) : 'no-pick';
-  const key = `${m.me.table}:${m.state.round}:${hand.join()}`;
+  const key = `${m.key}:${m.state.round}:${hand.join()}`;
   if (discardPick?.key !== key || !discardPick.touched) {
     discardPick = { key, indexes: problem === null ? handIndexes(hand, Object.values(saved.cards)) : [], touched: false };
   }
@@ -1043,24 +1133,36 @@ function discardPanel(m) {
 
 // ---- 終局 ----
 
-function finalPanel(m) {
-  const { room, game } = m;
+function medal(rank) {
+  return h('div', { class: 'rank-medal', attrs: { 'aria-hidden': 'true' } }, h('span', { text: '第' }), h('strong', { class: 'num', text: rank }), h('span', { text: '名' }));
+}
+
+function scoreTable(score, caption) {
+  return h(
+    'table',
+    { class: 'score-table' },
+    h('caption', { class: 'sr-only', text: caption }),
+    h('tbody', {}, scoreRows(score).map((row) => h('tr', { class: row.label === '總分' ? 'is-total' : '' }, h('th', { attrs: { scope: 'row' }, text: row.label }), h('td', { text: row.detail }), h('td', { class: 'num score-points', text: row.points })))),
+  );
+}
+
+// 一場的結算：自己的名次與分數明細、全桌名次（ranks 是 false 時不列）。第 1 場結束時的畫面，也是第 2 場裡「第 1 場結算」展開後的內容
+// （只讀）；note 是名次底下多一行的說明。
+function scoreSummary(room, game, { ranks = true, note = null } = {}) {
   const { final } = game;
   const mine = final.scores?.[ctx.session.uid];
   const nodes = [];
   const reason = `第 ${final.round} 回合結束後算分（${END_REASON_TEXT[final.reason] ?? final.reason}）`;
+  const noteLine = note ? h('p', { class: 'final-next', text: note }) : null;
   if (mine) {
     nodes.push(
-      section('final-mine', 'final-card', h('div', { class: 'rank-medal', attrs: { 'aria-hidden': 'true' } }, h('span', { text: '第' }), h('strong', { class: 'num', text: mine.rank }), h('span', { text: '名' })), h('div', {}, h('h2', { class: 'final-total', text: `你是第 ${mine.rank} 名，總分 ${mine.total}` }), h('p', { class: 'hint', text: reason }))),
-      section(
-        'final-detail',
-        'score-card',
-        h('table', { class: 'score-table' }, h('caption', { class: 'sr-only', text: '你的分數明細' }), h('tbody', {}, scoreRows(mine).map((row) => h('tr', { class: row.label === '總分' ? 'is-total' : '' }, h('th', { attrs: { scope: 'row' }, text: row.label }), h('td', { text: row.detail }), h('td', { class: 'num score-points', text: row.points }))))),
-      ),
+      section('final-mine', 'final-card', medal(mine.rank), h('div', {}, h('h2', { class: 'final-total', text: `你是第 ${mine.rank} 名，總分 ${mine.total}` }), h('p', { class: 'hint', text: reason }), noteLine)),
+      section('final-detail', 'score-card', scoreTable(mine, '你的分數明細')),
     );
   } else {
-    nodes.push(section('final-mine', 'final-card', h('h2', { class: 'card-title', text: '終局結算' }), h('p', { class: 'hint', text: reason })));
+    nodes.push(section('final-mine', 'final-card', h('div', {}, h('h2', { class: 'card-title', text: '終局結算' }), h('p', { class: 'hint', text: reason }), noteLine)));
   }
+  if (!ranks) return nodes;
   nodes.push(
     h('h2', { class: 'list-title', data: { key: 'rank-title' }, text: '全桌名次' }),
     h(
@@ -1078,29 +1180,116 @@ function finalPanel(m) {
         );
       }),
     ),
-    h(
-      'div',
-      { class: 'final-actions', data: { key: 'final-actions' } },
-      h('button', { class: 'btn', type: 'button', data: { act: 'all-destinies' }, attrs: { 'aria-expanded': String(showAllDestinies) }, text: showAllDestinies ? '收起全桌天命' : '看全桌天命' }),
-      leaveButton(),
-    ),
   );
-  if (showAllDestinies) {
+  return nodes;
+}
+
+function destiniesCard(key, title, room, game) {
+  return section(
+    key,
+    'destinies-card',
+    h('h2', { class: 'card-title', text: title }),
+    h('ul', { class: 'result-list' }, rankedScores(game).map(([uid, score]) => h('li', {}, h('strong', { text: `${nameOf(room, uid)}：` }), destinyText(score.destiny)))),
+  );
+}
+
+function destiniesButton(act, open) {
+  return h('button', { class: 'btn', type: 'button', data: { act }, attrs: { 'aria-expanded': String(open) }, text: open ? '收起全桌天命' : '看全桌天命' });
+}
+
+function finalPanel(m) {
+  if (m.match !== 1) return combinedPanel(m);
+  const { room, game } = m;
+  return [
+    ...scoreSummary(room, game, { note: `如果主持人開${matchText(2)}，這裡會自動換過去，不用重新整理` }),
+    h('div', { class: 'final-actions', data: { key: 'final-actions' } }, destiniesButton('all-destinies', showAllDestinies), leaveButton()),
+    showAllDestinies ? destiniesCard('all-destinies', '全桌天命', room, game) : null,
+  ].filter(Boolean);
+}
+
+// 「第 1 場結算」（只讀）：展開後是第 1 場結束時的畫面。open 是 false 時只有展開的按鈕；toggle 是 false 時一直展開、不出現按鈕。
+function firstFinalBlock(m, { open, toggle = true }) {
+  const { room, first } = m;
+  if (!first?.final || !ctx.cardData) return null;
+  const head = toggle
+    ? h('button', { class: 'btn btn-block first-toggle', type: 'button', data: { act: 'first-final' }, attrs: { 'aria-expanded': String(open) }, text: open ? `收起${matchText(1)}結算` : `${matchText(1)}結算（只讀）▸` })
+    : h('h2', { class: 'list-title', text: `${matchText(1)}結算（只讀）` });
+  return h(
+    'div',
+    { class: `first-final${open ? ' is-open' : ''}`, data: { key: 'first-final' } },
+    head,
+    open ? h('div', { class: 'first-body' }, ...scoreSummary(room, first), h('div', { class: 'final-actions' }, destiniesButton('first-destinies', showFirstDestinies)), showFirstDestinies ? destiniesCard('first-destinies', `${matchText(1)}全桌天命`, room, first) : null) : null,
+  );
+}
+
+// 第 2 場結束，由上而下：兩場合計的名次與算式、第 2 場分數明細、全桌合計名次表、看全桌天命（第 2 場）與「第 1 場結算」。合計一律用
+// game.js 的 combineScores（shared.js 的 combinedOf），畫面不自己加。
+function combinedPanel(m) {
+  const { room, game, first } = m;
+  const uid = ctx.session.uid;
+  const combined = combinedOf(room, m.me.table) ?? {};
+  const row = combined[uid];
+  const mine = game.final.scores?.[uid];
+  const reason = `${matchText(2)}第 ${game.final.round} 回合結束後算分（${END_REASON_TEXT[game.final.reason] ?? game.final.reason}）`;
+  const nodes = [];
+  if (row) {
     nodes.push(
       section(
-        'all-destinies',
-        'destinies-card',
-        h('h2', { class: 'card-title', text: '全桌天命' }),
-        h('ul', { class: 'result-list' }, rankedScores(game).map(([uid, score]) => h('li', {}, h('strong', { text: `${nameOf(room, uid)}：` }), destinyText(score.destiny)))),
+        'combined-mine',
+        'final-card combined-card',
+        medal(row.rank),
+        h(
+          'div',
+          {},
+          h('h2', { class: 'final-total', text: `兩場合計第 ${row.rank} 名${isTied(combined, row) ? '（並列）' : ''}` }),
+          h('p', { class: 'combined-sum', text: `合計 ${row.total} 分＝${matchText(1)} ${matchScoreText(row, first?.final, uid, 1)}＋${matchText(2)} ${matchScoreText(row, game.final, uid, 2)}` }),
+          row.pending ? h('p', { class: 'final-next', text: `你${matchText(2)}的天命還待主持人判定，判定後合計會跟著變` }) : null,
+          h('p', { class: 'hint', text: reason }),
+        ),
       ),
     );
+  } else {
+    nodes.push(section('combined-mine', 'final-card', h('div', {}, h('h2', { class: 'card-title', text: '兩場合計' }), h('p', { class: 'hint', text: reason }))));
   }
-  return nodes;
+  if (mine) nodes.push(section('final-detail', 'score-card', h('h2', { class: 'list-title', text: `你的${matchText(2)}分數明細` }), scoreTable(mine, `你的${matchText(2)}分數明細`)));
+  nodes.push(
+    h('h2', { class: 'list-title', data: { key: 'combined-title' }, text: '全桌兩場合計' }),
+    h(
+      'table',
+      { class: 'combined-table', data: { key: 'combined-table' } },
+      h('thead', {}, h('tr', {}, ['名次', `名字（${matchText(2)}的階層）`, matchText(1), matchText(2), '合計'].map((text) => h('th', { attrs: { scope: 'col' }, text })))),
+      h(
+        'tbody',
+        {},
+        Object.entries(combined).map(([who, line]) => {
+          const seat = game.seats[who];
+          return h(
+            'tr',
+            { class: who === uid ? 'is-me' : '', data: { key: who } },
+            h('td', { class: 'combined-rank' }, `第 ${line.rank}`, isTied(combined, line) ? h('small', { text: '並列' }) : null),
+            h('td', { class: 'combined-who' }, h('strong', { text: nameOf(room, who) }), h('small', { text: seat ? roleName(seat.role) : `${matchText(2)}沒座位` })),
+            h('td', { class: 'num', text: line.missingFirst ? '—' : line.first }),
+            h('td', { class: 'num', text: line.absent ? '沒參加' : `${line.second}${line.pending ? '+?' : ''}` }),
+            h('td', { class: 'num combined-total', text: combinedTotalText(line) }),
+          );
+        }),
+      ),
+    ),
+    h('div', { class: 'final-actions', data: { key: 'final-actions' } }, destiniesButton('all-destinies', showAllDestinies), h('button', { class: 'btn', type: 'button', data: { act: 'first-final' }, attrs: { 'aria-expanded': String(showFirst) }, text: showFirst ? `收起${matchText(1)}結算` : `${matchText(1)}結算` })),
+    showAllDestinies ? destiniesCard('all-destinies', `${matchText(2)}全桌天命`, room, game) : null,
+    showFirst ? firstFinalBlock(m, { open: true, toggle: false }) : null,
+    leaveButton(),
+  );
+  return nodes.filter(Boolean);
 }
 
 // ---- 「階層」分頁 ----
 
 function rolePanel(m) {
+  if (m.prep) {
+    const lines = handoverLines(m);
+    return [section('role-wait', 'is-plain', h('p', { text: lines ? lines.text : `${matchText(m.match)}不收新人，請找工作人員` }), lines?.give ? h('p', { text: lines.give }) : null), roomFoot()];
+  }
   if (m.wait) return [section('role-wait', 'is-plain', h('p', { text: m.wait })), roomFoot()];
   const { seat } = m;
   const role = ctx.cardData.index.roles.get(seat.role);
@@ -1125,7 +1314,7 @@ function matesPanel(m) {
   const players = playersAt(room, m.me.table);
   if (!game) {
     return [
-      section('mates', 'is-plain', h('h2', { class: 'card-title', text: `同桌 ${players.length} 人` }), h('ul', { class: 'name-list' }, players.map(([uid, player]) => h('li', { class: uid === ctx.session.uid ? 'me' : isOnline(room, uid) ? '' : 'offline', text: uid === ctx.session.uid ? `${player.name}（你）` : isOnline(room, uid) ? player.name : `${player.name}（離線）` }))), h('p', { class: 'hint', text: '等待主持端開局' })),
+      section('mates', 'is-plain', h('h2', { class: 'card-title', text: `同桌 ${players.length} 人` }), h('ul', { class: 'name-list' }, players.map(([uid, player]) => h('li', { class: uid === ctx.session.uid ? 'me' : isOnline(room, uid) ? '' : 'offline', text: uid === ctx.session.uid ? `${player.name}（你）` : isOnline(room, uid) ? player.name : `${player.name}（離線）` }))), h('p', { class: 'hint', text: m.prep ? `等主持人開始${matchText(m.match)}` : '等待主持端開局' })),
     ];
   }
   const current = day && !day.status.done ? day.status.current : null;
@@ -1156,7 +1345,7 @@ function matesPanel(m) {
             h('td', { class: `num${seat.sin ? ' is-sin' : ''}`, text: seat.sin ?? 0 }),
           );
         }),
-        unseated.map(([uid, player]) => h('tr', { class: 'is-unseated', data: { key: uid } }, h('td', { class: 'seat-no', text: '—' }), h('td', { class: 'who', attrs: { colspan: 5 } }, h('strong', { text: uid === ctx.session.uid ? `${player.name}（你）` : player.name }), h('span', { class: 'who-role', text: '未入座' })))),
+        unseated.map(([uid, player]) => h('tr', { class: 'is-unseated', data: { key: uid } }, h('td', { class: 'seat-no', text: '—' }), h('td', { class: 'who', attrs: { colspan: 5 } }, h('strong', { text: uid === ctx.session.uid ? `${player.name}（你）` : player.name }), h('span', { class: 'who-role', text: m.match === 1 ? '未入座' : `${matchText(m.match)}沒座位` })))),
       ),
     ),
     h('p', { class: 'hint', data: { key: 'mates-foot' }, text: `罪孽到終局每 ${rules.sinPerPenalty} 點扣 1 分。` }),
@@ -1166,12 +1355,17 @@ function matesPanel(m) {
 // ---- 「紀錄」分頁：照回合分段、新的在上；資料是出牌紀錄、事件紀錄、黃昏與黑夜的結果（shared.js 的 logItems） ----
 
 function logPanel(m) {
+  // 第 2 場：最上面是「第 1 場結算」（只讀）；準備中還沒有第 2 場的紀錄，直接展開。
+  const first = m.match === 1 ? null : firstFinalBlock(m, { open: m.prep || showFirst, toggle: !m.prep });
+  if (m.prep) return [first ?? section('log-empty', 'is-plain', h('p', { class: 'hint', text: `${matchText(m.match)}開局後這裡會有出牌、事件與揭曉的紀錄` }))];
   if (!m.game || !ctx.cardData) return [section('log-empty', 'is-plain', h('p', { class: 'hint', text: '開局後這裡會有出牌、事件與揭曉的紀錄' }))];
   const filters = { all: '全部', play: '出牌', event: '事件' };
   const items = logItems(m.room, m.game).filter((item) => logFilter === 'all' || item.kind === logFilter);
   const rounds = logRounds(items);
   const current = m.state.phase === 'end' ? null : m.state.round;
   return [
+    first,
+    m.match === 1 ? null : h('h2', { class: 'list-title', data: { key: 'log-title' }, text: `${matchText(m.match)}的紀錄` }),
     h(
       'div',
       { class: 'log-filters', data: { key: 'log-filters' } },
@@ -1214,7 +1408,7 @@ function actionBar(m) {
   }
   if (state.phase === 'dusk' && duskOpen(m)) {
     const sent = sentVote(m);
-    const key = `${m.me.table}:${state.round}`;
+    const key = `${m.key}:${state.round}`;
     if (sent && duskEdit !== key) return [];
     const { reason, label } = ballotState(m, sent);
     return [h('button', { class: 'btn btn-primary btn-block', type: 'button', data: { act: 'vote-send', key: 'vote-send' }, disabled: Boolean(reason), text: reason ?? label })];
@@ -1223,7 +1417,7 @@ function actionBar(m) {
     const rows = [];
     const discard = discardState(m);
     const sent = sentNight(m);
-    const choosing = nightOpen(m) && (!sent || nightEdit === `${m.me.table}:${state.round}`);
+    const choosing = nightOpen(m) && (!sent || nightEdit === `${m.key}:${state.round}`);
     // 黑夜的選擇已送出、只剩棄牌時，棄牌是主要按鈕；兩個都在時維持「送出黑夜選擇」為主。
     if (discard && !discard.ending) {
       rows.push(h('button', { class: `btn btn-block${choosing ? '' : ' btn-primary'}`, type: 'button', data: { act: 'discard-send', key: 'discard-send' }, disabled: Boolean(discard.reason), text: discard.reason ?? `選好了，棄這 ${discard.over} 張（${discard.cards.length}／${discard.over}）` }));
@@ -1308,7 +1502,12 @@ function destinySheet(m) {
   if (!holding) return [];
   const destiny = !m.wait && ctx.mine ? ctx.cardData.index.destinies.get(ctx.mine.destiny) : null;
   const ended = m.state.phase === 'end';
-  if (m.wait) return [h('div', { class: 'destiny-card' }, h('p', { text: '開局後才有天命' }))];
+  if (m.wait) {
+    let text = '開局後才有天命';
+    if (m.prep) text = `${matchText(m.match)}開局後才有新的天命`;
+    else if (m.match !== 1 && m.game) text = '這一場你沒有座位，沒有天命';
+    return [h('div', { class: 'destiny-card' }, h('p', { text }))];
+  }
   return [
     h(
       'div',
@@ -1343,10 +1542,14 @@ export function renderPlayer(room, me) {
   const { state, game } = m;
   document.body.dataset.phase = PHASE_TONES[state.phase] ?? 'day';
   if (state.phase !== 'end') wakeAtSunset(game);
-  // 需要我動作時自動切回「行動」分頁（只在情況換了的時候切一次）。
+  // 換到第 2 場（主持端開了第 2 場）：上一場展開的全桌天命、手牌收起來。
+  if (shownKey !== null && shownKey !== m.key) showAllDestinies = showFirst = showFirstDestinies = handOpen = false;
+  shownKey = m.key;
+  // 需要我動作時自動切回「行動」分頁（只在情況換了的時候切一次；帶局號，兩場的第 1 回合不會當成同一個情況）。
   const need = needOf(m);
-  if (need && need !== lastNeed) tab = 'action';
-  lastNeed = need;
+  const scoped = need && `${m.key}|${need}`;
+  if (scoped && scoped !== lastNeed) tab = 'action';
+  lastNeed = scoped;
   patchChildren($('player-head'), header(m));
   const scene = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night', end: 'finale' }[state.phase] ?? 'day';
   $('player-head').dataset.scene = scene;
@@ -1379,7 +1582,8 @@ export function renderPlayer(room, me) {
 function current() {
   const room = ctx.latestRoom;
   const me = room?.players?.[ctx.session?.uid];
-  if (!room || !me || !room.tables?.[me.table]) return null;
+  const key = room && me ? activeKey(room, me.table) : null;
+  if (!key || !room.tables?.[key]) return null;
   return model(room, me);
 }
 
@@ -1447,7 +1651,7 @@ const actions = {
   'dusk-edit': () => {
     const m = current();
     if (!m) return;
-    duskEdit = `${m.me.table}:${m.state.round}`;
+    duskEdit = `${m.key}:${m.state.round}`;
     ballot = null;
     rerender();
   },
@@ -1473,7 +1677,7 @@ const actions = {
   'night-edit': () => {
     const m = current();
     if (!m) return;
-    nightEdit = `${m.me.table}:${m.state.round}`;
+    nightEdit = `${m.key}:${m.state.round}`;
     nightPick = null;
     rerender();
   },
@@ -1504,6 +1708,14 @@ const actions = {
   },
   'all-destinies': () => {
     showAllDestinies = !showAllDestinies;
+    rerender();
+  },
+  'first-final': () => {
+    showFirst = !showFirst;
+    rerender();
+  },
+  'first-destinies': () => {
+    showFirstDestinies = !showFirstDestinies;
     rerender();
   },
 };

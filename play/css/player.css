@@ -1012,6 +1012,154 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
   margin-top: 0;
 }
 
+.final-next {
+  margin-top: 6px;
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+/* ---- 兩場制：準備中、換場說明、兩場合計、第 1 場結算 ---- */
+
+.tag-match.is-second {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.prep-role {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.prep-role-text {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.prep-from {
+  display: block;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.prep-give {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.switch-text {
+  margin-top: 4px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.combined-sum {
+  margin-top: 4px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.combined-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0 6px;
+  font-size: var(--fs-small);
+}
+
+.combined-table th {
+  padding: 0 4px;
+  color: var(--text-3);
+  font-weight: 600;
+  text-align: left;
+}
+
+.combined-table th:first-child {
+  width: 3.6em;
+}
+
+.combined-table th:nth-child(3),
+.combined-table th:nth-child(4),
+.combined-table th:nth-child(5) {
+  width: 4.4em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.combined-table td {
+  padding: 8px 4px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-raised);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.combined-table td:first-child {
+  border-left: 1px solid var(--rule);
+  border-radius: var(--r-md) 0 0 var(--r-md);
+}
+
+.combined-table td:last-child {
+  border-right: 1px solid var(--rule);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+
+.combined-table tr.is-me td {
+  border-color: var(--end-accent);
+  background: var(--gold-tint);
+}
+
+.combined-table td.num {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.combined-rank,
+.combined-total {
+  font-weight: 800;
+}
+
+.combined-table td.combined-total {
+  font-size: 16px;
+}
+
+.combined-rank small,
+.combined-who small {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-min);
+  font-weight: 400;
+}
+
+.first-final {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.first-final.is-open {
+  padding: 10px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--r-lg);
+}
+
+.first-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* ---- 階層 ---- */
 
 .role-card {

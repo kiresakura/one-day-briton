@@ -24,7 +24,6 @@ import { ctx, rerender } from './state.js';
 export function matchText(match) {
   return `第 ${match} 場`;
 }
-export const MATCH_TEXT = matchText(1);
 export const KIND_LABELS = { play: '一般', response: '響應' };
 // 齒輪連鎖各級的加成（企劃 10/15 回覆第 10 題）。
 export const CHAIN_BONUS = {
