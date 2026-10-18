@@ -122,10 +122,20 @@ test('the projector address takes the room code like the join page and knows the
   assert.equal(projectorParams('?view=screen&room=QX7M4', isRoomCode, normalizeRoomCode).valid, false);
   assert.equal(projectorParams('?view=screen&room=QX7M40', isRoomCode, normalizeRoomCode).valid, false, '0 is not in the alphabet');
   assert.equal(projectorParams('?view=screen', isRoomCode, normalizeRoomCode).valid, false);
-  assert.deepEqual(joinAddress({ protocol: 'https:', host: 'kiresakura.github.io', pathname: '/one-day-briton/play/index.html' }), {
+  assert.deepEqual(joinAddress({ protocol: 'https:', host: 'kiresakura.github.io', pathname: '/one-day-briton/play/index.html', search: '?view=screen&room=QX7M4K&slot=screen' }), {
     text: 'kiresakura.github.io/one-day-briton/play/',
     full: 'https://kiresakura.github.io/one-day-briton/play/',
+    base: 'kiresakura.github.io/one-day-briton/play/',
   });
+});
+
+test('the join address keeps only env=emu, so phones at a LAN rehearsal reach the same emulator', () => {
+  const lan = joinAddress({ protocol: 'http:', host: '192.168.1.20:5050', pathname: '/play/', search: '?view=screen&room=QX7M4K&slot=screen&env=emu&preview=1' });
+  assert.deepEqual(lan, { text: '192.168.1.20:5050/play/?env=emu', full: 'http://192.168.1.20:5050/play/?env=emu', base: '192.168.1.20:5050/play/' });
+  assert.equal(joinAddress({ protocol: 'http:', host: '127.0.0.1:5050', pathname: '/play/index.html', search: '?env=emu&view=screen' }).full, 'http://127.0.0.1:5050/play/?env=emu');
+  for (const search of ['?view=screen&room=QX7M4K&env=prod', '?view=screen&room=QX7M4K&preview=1&slot=preview', '', '?env=EMU']) {
+    assert.equal(joinAddress({ protocol: 'https:', host: 'kiresakura.github.io', pathname: '/one-day-briton/play/', search }).full, 'https://kiresakura.github.io/one-day-briton/play/', search);
+  }
 });
 
 test('clock texts round the remaining time up to the second and show hours past 60 minutes', () => {

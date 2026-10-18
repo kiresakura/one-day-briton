@@ -348,7 +348,7 @@ function sceneNodes(room, scene, now) {
       reveal: !view.preview,
       credits: creditsSummary(view.credits.images),
       mediaCredits: creditsSummary(view.credits.media),
-      creditsUrl: `${joinAddress(location).text}credits.html`,
+      creditsUrl: `${joinAddress(location).base}credits.html`,
     });
   }
   const join = joinAddress(location);

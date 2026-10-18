@@ -47,11 +47,14 @@ export function projectorParams(search, isRoomCode, normalizeRoomCode) {
   return { code, valid: isRoomCode(code), preview: params.get('preview') === '1' };
 }
 
-// 標題頁的加入方式：網址拿掉 https:// 與參數（「kiresakura.github.io/one-day-briton/play/」）。QR 碼用 full。
+// 標題頁的加入方式：網址拿掉 https:// 與參數（「kiresakura.github.io/one-day-briton/play/」）。QR 碼用 full；base 是不帶參數的
+// 網址（素材來源頁接在後面）。參數只留 env=emu：區網排練（模擬器、不是本機的位址）時手機才會連到同一個模擬器，不會跑去正式站。
 export function joinAddress(location) {
   const path = String(location?.pathname ?? '/').replace(/index\.html$/, '');
   const host = String(location?.host ?? '');
-  return { text: `${host}${path}`, full: `${location?.protocol ?? 'https:'}//${host}${path}` };
+  const base = `${host}${path}`;
+  const query = new URLSearchParams(location?.search ?? '').get('env') === 'emu' ? '?env=emu' : '';
+  return { text: `${base}${query}`, full: `${location?.protocol ?? 'https:'}//${base}${query}`, base };
 }
 
 // ---- 時間 ----
