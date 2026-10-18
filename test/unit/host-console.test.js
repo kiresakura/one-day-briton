@@ -90,7 +90,7 @@ test('投影畫面的網址：保留 env，新視窗 slot=screen，小預覽 pre
   assert.equal(screenUrl('?env=prod', 'ABCDEF', { preview: true }), '?view=screen&room=ABCDEF&preview=1&slot=preview&env=prod');
 });
 
-test('指令的錯誤：規則還沒更新、別台剛改過（照最新的那一筆寫）、其他照 message、不是 StoreError 的寫代碼', () => {
+test('指令的錯誤：規則還沒更新、別台剛改過（照最新的那一筆寫）、其他照 message、不是 StoreError 的寫通用的一句（不帶代碼）', () => {
   const outdated = new StoreError('rules-outdated', '切換投影場景要等規則更新');
   assert.equal(commandError(outdated, { clock: true }), '日落鐘控制要等規則更新，各桌照舊各自計時');
   assert.match(commandError(outdated), /^切換投影場景要等規則更新/);
@@ -101,9 +101,9 @@ test('指令的錯誤：規則還沒更新、別台剛改過（照最新的那�
   assert.equal(commandError(new StoreError('too-soon', '音效一秒只能放一次，請等一下再按')), '音效一秒只能放一次，請等一下再按');
   assert.equal(commandError(new StoreError('clock-passed', '已經日落了，不能再暫停或加減'), { clock: true }), '已經日落了，不能再暫停或加減');
   const raw = Object.assign(new Error('Client is offline.'), { code: 'unavailable' });
-  assert.equal(commandError(raw), '沒有成功（unavailable），請確認連線後再按一次');
-  assert.equal(commandError(new Error('boom')), '沒有成功（boom），請確認連線後再按一次');
-  assert.equal(commandError(null), '沒有成功，請確認連線後再按一次');
+  assert.equal(commandError(raw), '沒有寫進去，請再按一次');
+  assert.equal(commandError(new Error('boom')), '沒有寫進去，請再按一次');
+  assert.equal(commandError(null), '沒有寫進去，請再按一次');
 });
 
 test('能推的全推：確認框逐桌寫起訖、會不會發牌、算分的原因與原本的提醒', () => {

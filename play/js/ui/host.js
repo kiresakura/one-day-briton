@@ -1437,12 +1437,9 @@ export function screenUrl(search, code, { preview = false } = {}) {
 }
 
 // 控制台指令的錯誤 → 結果條的一句（docs/CONSOLE-API.md 第 6 節）。clock＝日落鐘的指令；conflict 帶的最新那一筆用 describe(latest)
-// 寫成「現在剩 33:52」這種。不是 StoreError 的（權限以外的連線錯誤會原樣丟出來）照錯誤的代碼寫。
+// 寫成「現在剩 33:52」這種。不是 StoreError 的（權限以外的連線錯誤會原樣丟出來）寫通用的一句，不帶代碼（對主持人沒有意義）。
 export function commandError(error, { clock = false, describe = null } = {}) {
-  if (!(error instanceof StoreError)) {
-    const detail = error?.code ?? error?.message ?? '';
-    return `沒有成功${detail ? `（${detail}）` : ''}，請確認連線後再按一次`;
-  }
+  if (!(error instanceof StoreError)) return '沒有寫進去，請再按一次';
   if (error.code === 'rules-outdated') return clock ? '日落鐘控制要等規則更新，各桌照舊各自計時' : `${error.message}（資料庫規則還沒發布）`;
   if (error.code === 'conflict') {
     const latest = describe ? describe(error.latest ?? null) : '';
