@@ -338,6 +338,83 @@
             ".validate": "newData.isNumber() && newData.val() % 1 === 0 && (!data.exists() || newData.val() > data.val()) && newData.val() === root.child('rooms').child($code).child('tables').child($table).child('round').val() && newData.parent().parent().child('games').child($table).exists()"
           }
         },
+        "display": {
+          ".write": "auth != null && newData.exists() && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
+          ".validate": "newData.hasChildren() && (!data.hasChild('scene') || newData.hasChild('scene')) && (!data.hasChild('broadcast') || newData.hasChild('broadcast')) && (!data.hasChild('sfx') || newData.hasChild('sfx')) && (!data.hasChild('music') || newData.hasChild('music')) && (!data.hasChild('pause') || newData.hasChild('pause'))",
+          "scene": {
+            ".validate": "newData.hasChildren(['id', 'seq', 'at', 'by']) && newData.child('seq').val() === (data.exists() ? data.child('seq').val() + 1 : 1) && newData.child('at').val() === now && newData.child('by').val() === auth.uid",
+            "id": { ".validate": "newData.isString() && newData.val().matches(/^(opening|rules|overview|standings|awards)$/)" },
+            "page": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 20" },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "at": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          },
+          "broadcast": {
+            ".validate": "newData.hasChildren(['text', 'seq', 'at', 'by']) && newData.child('seq').val() === (data.exists() ? data.child('seq').val() + 1 : 1) && newData.child('at').val() === now && newData.child('by').val() === auth.uid",
+            "text": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+            "hidden": { ".validate": "newData.val() === true" },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "at": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          },
+          "sfx": {
+            ".validate": "newData.hasChildren(['id', 'seq', 'at', 'by']) && newData.child('seq').val() === (data.exists() ? data.child('seq').val() + 1 : 1) && newData.child('at').val() === now && (!data.exists() || now >= data.child('at').val() + 1000) && newData.child('by').val() === auth.uid",
+            "id": { ".validate": "newData.isString() && newData.val().matches(/^(bell|gavel)$/)" },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "at": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          },
+          "music": {
+            ".validate": "newData.hasChildren(['track', 'on', 'seq', 'at', 'by']) && newData.child('seq').val() === (data.exists() ? data.child('seq').val() + 1 : 1) && newData.child('at').val() === now && newData.child('by').val() === auth.uid",
+            "track": { ".validate": "newData.isString() && newData.val().matches(/^(opening)$/)" },
+            "on": { ".validate": "newData.isBoolean()" },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "at": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          },
+          "pause": {
+            ".validate": "newData.hasChildren(['on', 'seq', 'at', 'by']) && newData.child('seq').val() === (data.exists() ? data.child('seq').val() + 1 : 1) && newData.child('at').val() === now && newData.child('by').val() === auth.uid && (newData.child('on').val() === true || !newData.hasChild('clocks'))",
+            "on": { ".validate": "newData.isBoolean()" },
+            "clocks": {
+              ".validate": "newData.hasChildren()",
+              "$m": { ".validate": "$m.matches(/^[12]$/) && newData.val() === true" }
+            },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "at": { ".validate": "newData.isNumber()" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "clock": {
+          "$m": {
+            ".write": "auth != null && newData.exists() && (root.child('rooms').child($code).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($code).child('hosts').child(auth.uid).val() === true)",
+            ".validate": "$m.matches(/^[12]$/) && newData.hasChildren(['startedAt', 'minutes', 'anchor', 'remain', 'adjust', 'seq', 'by']) && newData.child('by').val() === auth.uid && (!data.exists() ? (newData.child('seq').val() === 1 && newData.child('startedAt').val() === now && newData.child('anchor').val() === now && newData.child('remain').val() === newData.child('minutes').val() * 60000 && newData.child('adjust').val() === 0 && !newData.hasChild('pausedAt')) : (newData.child('seq').val() === data.child('seq').val() + 1 && newData.child('startedAt').val() === data.child('startedAt').val() && newData.child('minutes').val() === data.child('minutes').val() && ((!data.hasChild('pausedAt') && newData.child('pausedAt').val() === now && newData.child('anchor').val() === data.child('anchor').val() && newData.child('remain').val() === data.child('remain').val() && newData.child('adjust').val() === data.child('adjust').val() && data.child('remain').val() - (now - data.child('anchor').val()) > 0) || (data.hasChild('pausedAt') && !newData.hasChild('pausedAt') && newData.child('anchor').val() === now && newData.child('remain').val() === data.child('remain').val() - (data.child('pausedAt').val() - data.child('anchor').val()) && newData.child('adjust').val() === data.child('adjust').val()) || (newData.child('anchor').val() === data.child('anchor').val() && newData.child('pausedAt').val() === data.child('pausedAt').val() && newData.child('remain').val() !== data.child('remain').val() && newData.child('remain').val() - data.child('remain').val() === newData.child('adjust').val() - data.child('adjust').val() && newData.child('remain').val() - data.child('remain').val() >= -600000 && newData.child('remain').val() - data.child('remain').val() <= 600000 && (data.hasChild('pausedAt') ? data.child('remain').val() - (data.child('pausedAt').val() - data.child('anchor').val()) : data.child('remain').val() - (now - data.child('anchor').val())) > 0 && (newData.hasChild('pausedAt') ? newData.child('remain').val() - (newData.child('pausedAt').val() - newData.child('anchor').val()) : newData.child('remain').val() - (now - newData.child('anchor').val())) >= 0))))",
+            "startedAt": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
+            "minutes": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 10 && newData.val() <= 180" },
+            "anchor": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
+            "remain": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
+            "pausedAt": { ".validate": "newData.isNumber() && newData.val() % 1 === 0" },
+            "adjust": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= -1800000 && newData.val() <= 1800000" },
+            "seq": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "screens": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('rooms').child($code).child('meta').exists()",
+            ".validate": "newData.hasChildren(['audio', 'at']) && newData.child('at').val() === now",
+            "audio": { ".validate": "newData.isBoolean()" },
+            "scene": { ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
         "$other": { ".validate": false }
       }
     },
