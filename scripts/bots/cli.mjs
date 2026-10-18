@@ -220,7 +220,7 @@ async function main() {
   await closeAll(sessions.slice(bots.length));
 
   // 同一個房間同時有另一個指令在放機器人時，可能撞名、超過一桌的人數上限（joinRoom 不查人數，開局才查）：再讀一次，
-  // 多出來的（較晚加入的）機器人離開。
+  // 多出來的（較晚加入的）機器人離開。那一桌已經開局、或機器人已經有座位就不請走（走了座位就沒人動），只印一行提醒。
   let crowdedOff = 0;
   if (bots.length > 0 && !halt) {
     let timer;
@@ -230,11 +230,18 @@ async function main() {
     if (latest?.meta) {
       const capacity = capacityOf(data);
       const crowd = crowdedOut(latest, plan.table, capacity, new Set(bots.map((bot) => bot.uid)));
+      const kept = crowd.kept.map(({ uid }) => bots.find((item) => item.uid === uid));
       for (const { uid, why } of crowd.out) {
         const bot = bots.find((item) => item.uid === uid);
+        if (!bot.leave(why)) {
+          kept.push(bot); // 它自己已經看到開局了
+          continue;
+        }
         console.log(`注意：${bot.name} ${why}，離開（同一個房間請一次只跑一個指令）`);
-        bot.stop(why);
         crowdedOff += 1;
+      }
+      if (kept.length > 0) {
+        console.log(`注意：第 ${plan.table} 桌已經開局，${kept.map((bot) => bot.name).join('、')} 不離開，有座位的照常玩（同一個房間請一次只跑一個指令）`);
       }
       if (crowd.seated > capacity) {
         console.log(`注意：第 ${plan.table} 桌名單上有 ${crowd.seated} 人，超過一桌 ${capacity} 人，主持端開不了局；請有人換桌或按「離開」`);

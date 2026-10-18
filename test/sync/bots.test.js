@@ -141,13 +141,13 @@ test('after seating, the later bots with a name already taken or past six at the
   const others = Object.fromEntries([1, 2, 3, 4, 5].map((number) => [`x${number}`, at(`P${number}`, 1, number)]));
   const room = { meta: meta(2), players: { ...others, m1: at('機器人1', 1, 6), m2: at('機器人2', 1, 7), m3: at('P1', 2, 8), m4: at('機器人4', 2, 9) } };
   const mine = new Set(['m1', 'm2', 'm3', 'm4']);
-  assert.deepEqual(crowdedOut(room, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }, { uid: 'm2', why: '讓第 1 桌超過一桌 6 人' }], seated: 6 });
-  assert.deepEqual(crowdedOut(room, 2, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], seated: 1 });
+  assert.deepEqual(crowdedOut(room, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }, { uid: 'm2', why: '讓第 1 桌超過一桌 6 人' }], kept: [], seated: 6 });
+  assert.deepEqual(crowdedOut(room, 2, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], kept: [], seated: 1 });
   // 多出來的是別人（較晚加入的人、同一時間加入時 uid 排後面的）：機器人不走，人數還超過就要提醒。
   const late = { ...room, players: { ...room.players, m2: at('機器人2', 2, 7), y: at('P9', 1, 6) } };
-  assert.deepEqual(crowdedOut(late, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], seated: 7 });
+  assert.deepEqual(crowdedOut(late, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], kept: [], seated: 7 });
   assert.deepEqual(crowdedOut({ meta: meta(1), players: { b: at('機器人1', 1, 5), a: at('機器人1', 1, 5) } }, 1, 6, new Set(['a', 'b'])).out, [{ uid: 'b', why: '跟較早加入的人同名' }]);
-  assert.deepEqual(crowdedOut({ meta: meta(1), players: others }, 1, 6, new Set()), { out: [], seated: 5 });
+  assert.deepEqual(crowdedOut({ meta: meta(1), players: others }, 1, 6, new Set()), { out: [], kept: [], seated: 5 });
   // 兩個指令各放 4 個、名字一樣（8 人）：較晚的那一邊 4 個都走，較早的那一邊不會因為人數多走一個；兩邊算出來的一樣。
   const both = { meta: meta(1), players: {} };
   for (const number of [1, 2, 3, 4]) {
@@ -155,8 +155,30 @@ test('after seating, the later bots with a name already taken or past six at the
     both.players[`z${number}`] = at(`機器人${number}`, 1, number * 2);
   }
   const ours = (prefix) => new Set([1, 2, 3, 4].map((number) => `${prefix}${number}`));
-  assert.deepEqual(crowdedOut(both, 1, 6, ours('z')), { out: [1, 2, 3, 4].map((number) => ({ uid: `z${number}`, why: '跟較早加入的人同名' })), seated: 4 });
-  assert.deepEqual(crowdedOut(both, 1, 6, ours('y')), { out: [], seated: 4 });
+  assert.deepEqual(crowdedOut(both, 1, 6, ours('z')), { out: [1, 2, 3, 4].map((number) => ({ uid: `z${number}`, why: '跟較早加入的人同名' })), kept: [], seated: 4 });
+  assert.deepEqual(crowdedOut(both, 1, 6, ours('y')), { out: [], kept: [], seated: 4 });
+});
+
+// 主持端在重查之前就開局了：多出來的機器人一個都不請走（走了座位就沒人動），交給呼叫的一端印一行提醒。
+test('after seating, nobody is sent away once the table has started or the bot already has a seat', () => {
+  const at = (name, table, joinedAt) => ({ name, table, joinedAt });
+  const both = { meta: meta(2), players: {} };
+  for (const number of [1, 2, 3]) {
+    both.players[`y${number}`] = at(`機器人${number}`, 1, number * 2 - 1);
+    both.players[`z${number}`] = at(`機器人${number}`, 1, number * 2);
+  }
+  const ours = new Set(['z1', 'z2', 'z3']);
+  const same = [1, 2, 3].map((number) => ({ uid: `z${number}`, why: '跟較早加入的人同名' }));
+  assert.deepEqual(crowdedOut(both, 1, 6, ours), { out: same, kept: [], seated: 3 }, 'before the start the later three leave');
+  const seats = Object.fromEntries(Object.keys(both.players).map((uid, order) => [uid, { order }]));
+  assert.deepEqual(crowdedOut({ ...both, games: { 1: { seats } } }, 1, 6, ours), { out: [], kept: same, seated: 3 }, 'after the start they stay');
+  // 讀到的那一桌還沒開局，自己卻已經有一局的座位（資料前後不一）：一樣不請走。
+  assert.deepEqual(crowdedOut({ ...both, games: { 2: { seats: { z2: { order: 0 } } } } }, 1, 6, ours), { out: [same[0], same[2]], kept: [same[1]], seated: 3 });
+  // 超過一桌 6 人的也一樣：開局了就不請走。
+  const seven = { meta: meta(1), players: Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((number) => [`p${number}`, at(`P${number}`, 1, number)])) };
+  const over = { uid: 'p7', why: '讓第 1 桌超過一桌 6 人' };
+  assert.deepEqual(crowdedOut(seven, 1, 6, new Set(['p7'])), { out: [over], kept: [], seated: 6 });
+  assert.deepEqual(crowdedOut({ ...seven, games: { 1: { seats: {} } } }, 1, 6, new Set(['p7'])), { out: [], kept: [over], seated: 7 });
 });
 
 // 有天命還待主持人判定時，總分（與兩場合計）之後還會變：標題後面加註。
@@ -584,6 +606,31 @@ test('a bot leaves by itself when it has no seat, when nothing happens for too l
   for (const bot of [late, idle, stopped]) assert.equal(room.players[bot.uid], undefined, 'off the player list: it never got a seat');
   assert.equal(room.players[seated.uid]?.name, 'seated', 'kept on the player list: the score sheet needs it');
   assert.deepEqual(Object.keys(room.players).sort(), [person.uid, seated.uid].sort(), 'nobody else was removed');
+});
+
+// 入座後的重查請機器人離開（多出來的）：自己那一桌還沒開局才走；自己已經看到開局、有座位就不走（呼叫的一端讀到的房間比較舊也一樣）。
+test('a bot asked to leave after seating leaves only while its table has not started', TIMEOUT, async () => {
+  const code = await createRoom(host, 2);
+  await joinRoom(person, code, '真人', 1);
+  const lines = [];
+  const start = async (name, table) =>
+    startBot({ session: await connect(name), code, name, table, data: instant, delay: FAST_DELAY, waitMs: 60_000, log: (line) => lines.push(line) });
+  const seated = await start('kept', 1);
+  const waiting = await start('extra', 2);
+  await roomUntil(host, code, (room) => room.presence?.[seated.uid] === true && room.presence?.[waiting.uid] === true, 'the bots are online');
+  assert.deepEqual(await startTable(host, code, 1, instant, seededRandom(5)), { started: true });
+  for (let waited = 0; !lines.some((line) => /^\S+ kept｜.*入座：座位/.test(line)) && waited < 5000; waited += 50) await delay(50);
+  assert.ok(lines.some((line) => line.includes('kept｜') && line.includes('入座：座位')), 'the bot saw its seat');
+  assert.equal(seated.leave('跟較早加入的人同名'), false, 'seated: it stays');
+  assert.equal(waiting.leave('跟較早加入的人同名'), true, 'its table has not started: it leaves');
+  const waitingEnd = await waiting.done;
+  assert.deepEqual([waitingEnd.reason, waitingEnd.detail, waitingEnd.left], ['stopped', '跟較早加入的人同名', true]);
+  await delay(500);
+  const room = await roomOnce(host, code);
+  assert.equal(room.presence?.[seated.uid], true, 'the seated bot is still online');
+  assert.equal(room.players[seated.uid]?.name, 'kept');
+  assert.equal(room.players[waiting.uid], undefined, 'the other one left the player list');
+  assert.equal((await seated.stop()).left, false);
 });
 
 // ---- 指令列：房間不存在、已經開局時，印出原因就結束，什麼都不寫；按 Ctrl-C 時機器人離線再結束 ----

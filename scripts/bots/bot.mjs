@@ -73,7 +73,8 @@ function within(promise, ms) {
 // 先入座（joinRoom，失敗就丟出去），成功後回傳 { uid, done, stop }：done 在結束時 resolve 成
 // { reason, detail, stats, rejections, left, abandoned }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、
 // left 不在名單上了、stopped、error；rejections 是每次被退回的 { kind, reason }；left＝離開了玩家名單；abandoned＝丟下一局還沒結束的
-// 遊戲）。stop(detail) 叫它提早結束（detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。
+// 遊戲）。stop(detail) 叫它提早結束（detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。leave(detail) 是入座後的重查請它
+// 離開（多出來的）：自己那一桌還沒開局、自己也還沒有座位才離開（同 stop），回傳 true；開了局就不走，回傳 false。
 export async function startBot(options) {
   const { session, code, name, table, data } = options;
   const policy = { ...DEFAULT_POLICY, ...options.policy };
@@ -540,5 +541,13 @@ export async function startBot(options) {
     for (const wake of [...stoppers]) wake();
     return done;
   };
-  return { uid, done, stop };
+  // 呼叫的一端讀到的房間可能比自己看到的舊：自己已經看到開局（或自己有座位）就不走，走了座位就沒人動。還沒收到房間的資料時照
+  // 呼叫的一端讀到的（還沒開局）離開。
+  const leave = (detail) => {
+    const { room } = seen;
+    if (room !== undefined && (Boolean(room?.games?.[matchKey(table)]) || seatedIn(room))) return false;
+    stop(detail);
+    return true;
+  };
+  return { uid, done, stop, leave };
 }
