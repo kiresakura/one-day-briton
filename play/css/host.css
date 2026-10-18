@@ -630,14 +630,22 @@ body:has(> #screen-host:not([hidden])) > .topbar .toast.is-folded .toast-text {
   width: 112px;
 }
 
-/* 黑夜：結果欄的短句比較長（「— 沒送出・要棄 1 張」「豪賭 1 層 +5・已挑棄牌」），英鎊、影響欄收成 30px，寬度讓給結果欄。 */
-.tc-table.is-night th:nth-child(2),
-.tc-table.is-night th:nth-child(3) {
-  width: 30px;
+/* 黑夜：結果欄的短句比較長（「— 沒送出・要棄 1 張」「豪賭 1 層 +5・已挑棄牌」）。四個數字欄收成 26px（左右各留 2px）、結果欄 136px、
+   字小 1px，五欄合計跟白天一樣 240px，第 1 欄（玩家・階層）不跟著變窄。 */
+.tc-table.is-night th:nth-child(n + 2):nth-child(-n + 5) {
+  width: 26px;
+}
+
+.tc-table.is-night :is(th, td):nth-child(n + 2):nth-child(-n + 5) {
+  padding: 0 2px;
 }
 
 .tc-table.is-night th:nth-child(6) {
-  width: 148px;
+  width: 136px;
+}
+
+.tc-table.is-night td:nth-child(6) {
+  font-size: 11.5px;
 }
 
 .tc-table td {
