@@ -136,6 +136,7 @@ let shownPhase = null; // 上一次畫的階段：換階段時標頭淡入一次
 let sunsetWake = { at: null, timer: null }; // 日落鐘到點時重畫一次的計時器（at 是伺服器時間）
 let pauseWake = { at: null, timer: null }; // 「這個倒數結束後全場暫停」的倒數結束時重畫一次（蓋上暫停層）
 let covered = false; // 暫停層蓋著：所有動作都不接
+let focusBack = null; // 蓋上暫停層前焦點所在的元素：拿掉時移回去
 let generation = 0;
 const stops = [];
 
@@ -160,6 +161,7 @@ export function resetPlayer() {
   windowEnd = { id: null, timer: null };
   sunsetWake = wakeAt(sunsetWake, null);
   pauseWake = wakeAt(pauseWake, null);
+  focusBack = null; // 回首頁：不用把焦點移回玩家畫面
   setCovered(false);
   topBar.hidden = true;
   topBar.replaceChildren();
@@ -397,14 +399,21 @@ function pauseOf(m) {
   return pauseView(m.room.display, m.game, m.state, ctx.cardData?.data.settings, serverTime(ctx.session));
 }
 
+// 蓋上時焦點移到暫停層；拿掉時移回蓋上前的地方（那個元素還在畫面上才移，不然留給瀏覽器）。
 function setCovered(value) {
   if (covered === value) return;
   covered = value;
+  if (value) focusBack = document.activeElement;
   pauseLayer.hidden = !value;
   for (const node of underPause()) node?.toggleAttribute('inert', value);
-  if (!value) return;
-  setHolding(false);
-  pauseLayer.focus({ preventScroll: true });
+  if (value) {
+    setHolding(false);
+    pauseLayer.focus({ preventScroll: true });
+    return;
+  }
+  const back = focusBack;
+  focusBack = null;
+  if (back?.isConnected && back !== document.body && !pauseLayer.contains(back)) back.focus?.({ preventScroll: true });
 }
 
 // 暫停層：暫停字樣、目前的廣播 cast（不管這支手機收起了沒；沒有廣播、已經收回時是 null，不放）、自己的連線狀態。
