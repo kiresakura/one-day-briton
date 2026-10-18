@@ -285,7 +285,8 @@ async function main() {
   const benched = bots.filter((_, index) => results[index].beforeSecond).map((bot) => bot.name);
   if (benched.length > 0) console.log(`開第 2 場時請在「勾選參加」把離線的機器人取消（${benched.join('、')}）`);
   if (halt) return halt.code;
-  // 讀不到房間的資料，或丟下一局還沒結束的遊戲（例如房間被刪了）：不算正常結束。
+  // 讀不到房間的資料，或丟下一局還沒結束的遊戲（坐在進行中的一局裡卻停下了）：不算正常結束，以 1 結束。
+  // 房間不見了（room-gone）時已經沒有那一局可以丟下，跟其他自己結束的一樣以 0 結束。
   return results.some((result) => result.reason === 'error' || result.abandoned) ? 1 : 0;
 }
 
