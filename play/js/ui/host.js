@@ -5,35 +5,84 @@
 // 兩場制（M9）：每桌畫的是目前那一局（rules.js 的 activeKey：第 1 場 "3"、第 2 場 "3-2"），按鈕的 data-table 一律是局號字串，直接傳給
 // store；畫面上的「第 3 桌」用實體桌號。第 1 場結束的桌可以「開第 2 場」（store 的 openMatch），之後是「第 2 場・未開局」的座位預覽與
 // 「開始第 2 場」（startTable 帶 include）；第 2 場結束後結算明細有兩場合計（game.js 的 combineScores）。
+// 控制台模式：頂列下面多一條控制列（全場動作、日落鐘、投影畫面、音效台、全場廣播、緊急全場暫停）＋結果條，桌卡改成緊湊版；
+// 寬 1360、高 860 以上預設開，頂列「控制台」切換（記在這台裝置），窄螢幕點開是上方抽屜。控制列只放「全場」的東西，每桌的操作照舊在桌卡
+// 與抽屜。資料、規則與函式見 docs/CONSOLE-API.md：畫面只呼叫 store.js 的指令與 game.js 的純函式，不自己組寫入、不自己算日落鐘。
 import {
+  CLOCK_ADJUST_MAX_MS,
   MAX_SEATS,
   SUGGESTED_SEATS,
+  advancePlan,
   checkSeating,
+  clockElapsed,
+  clockLength,
+  clockPassed,
+  clockPaused,
+  clockRemaining,
+  clockStartWrite,
+  clockSunsetAt,
   dayStatus,
   duskStage,
+  endReasonAt,
+  isClock,
   nightStage,
   pendingDestinies,
   responseDeadline,
   seatsInOrder,
   skippedEffects,
+  standingsOf,
+  startMatch2Plan,
+  startPlan,
   sunsetStatus,
+  waitingFor,
 } from '../game.js';
-import { FOG_MAX, FOG_MIN, FOG_THRESHOLDS, MAX_TABLES, activeKey, clockOf, confirmCode, hostUids, matchKey, parseKey } from '../rules.js';
+import { WEB_VERSION } from '../config.js';
 import {
+  BROADCAST_MAX_LENGTH,
+  FOG_MAX,
+  FOG_MIN,
+  FOG_THRESHOLDS,
+  MATCH_COUNT,
+  MAX_TABLES,
+  SCENE_PAGE_MAX,
+  activeKey,
+  clockOf,
+  confirmCode,
+  hostUids,
+  isValidBroadcast,
+  matchKey,
+  normalizeBroadcast,
+  parseKey,
+} from '../rules.js';
+import {
+  StoreError,
+  adjustClock,
+  advanceAll,
   advanceOrEnd,
   approveHost,
+  hideBroadcast,
   judgeDestiny,
   openMatch,
+  pauseClock,
+  playSfx,
   processSunrise,
   rejectHost,
+  resumeClock,
   revealDusk,
   revealNight,
+  sendBroadcast,
   serverTime,
   setEndAfterRound,
+  setMusic,
+  setPause,
+  setScene,
   setStartOrder,
+  startAll,
+  startClock,
   startSettling,
   startTable,
-  watchDiscard,
+  watchConnection,
+  watchSubmissions,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
 import {
@@ -85,20 +134,59 @@ const dealing = new Set(); // 這台主持端正在發牌的局號
 let stopSettling = null; // 主持端的自動結算（出牌請求、黃昏、黑夜）
 const startChoices = new Map(); // 局號 → 下拉選單裡選好、還沒按「指定」的起始座位
 const seatPicks = new Map(); // 第 2 場的局號 → 勾了參加的 uid（Set）：只存在這台裝置，換裝置要重勾；沒動過就照預設
-const hostDiscards = new Map(); // uid → { stop, value }（各入座玩家挑的棄牌，列出還沒挑的人用）
-const busy = new Set(); // 送出中的動作（「next:3」「start:3-2」之類）：按鈕停用到做完
+const busy = new Set(); // 送出中的動作（「next:3」「start:3-2」「clock:1」之類）：按鈕停用到做完
 let drawer = null; // 開著的抽屜 { kind: 'log' | 'final' | 'seats', table: 實體桌號, view: 'current' | 'first' }
 let drawerOpener = null; // 開抽屜的按鈕（選擇器），關掉時焦點回到那裡
-let confirming = null; // 「開第 2 場」的確認框 { kind: 'one', table: 實體桌號 } 或 { kind: 'all' }
+// 確認框：「開第 2 場」{ kind: 'one', table: 實體桌號 } 或 { kind: 'all' }；控制列的確認見 consoleDialog（kind 是 start-all、advance-all…，
+// 打開時的計畫存在 plan，確認後原封交給 store）。
+let confirming = null;
 let confirmOpener = null; // 開確認框的按鈕（選擇器）
 let requestsOpen = false; // 備援主持申請面板
+
+// 控制台（這台裝置）：開或關記在 localStorage（沒選過就照視窗大小），控制列收合成一行也記著。
+const CONSOLE_KEY = 'one-day-briton:console';
+const FOLD_KEY = 'one-day-briton:console-fold';
+let stopSubmissions = null; // 在等誰：入座的人的票、黑夜選擇、挑的棄牌（store.js 的 watchSubmissions）
+let submissions = { votes: {}, nights: {}, discards: {} };
+let stopConnection = null;
+let connected = true; // .info/connected：false 時整條控制列停用
+let outcome = null; // 結果條 { ok, text, full, at, undo: { match, delta, seq } | null }
+let progress = null; // 批次動作進行中 { label, done, total }
+let draft = ''; // 廣播輸入框的字（重畫時保留；送不出去也保留）
+
+function readPref(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writePref(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // 無痕模式等存不了：這次開著的畫面照樣切換。
+  }
+}
+
+let consolePref = readPref(CONSOLE_KEY); // 'on'｜'off'｜null（沒選過）
+let folded = readPref(FOLD_KEY) === '1';
+let compactCards = false; // 控制列在頂列下面時桌卡用緊湊版（今日事件一行）
 
 // 回首頁時清掉主持端的訂閱與暫存。
 export function resetHost() {
   stopSettling?.();
   stopSettling = null;
-  for (const { stop } of hostDiscards.values()) stop();
-  hostDiscards.clear();
+  stopSubmissions?.();
+  stopSubmissions = null;
+  submissions = { votes: {}, nights: {}, discards: {} };
+  stopConnection?.();
+  stopConnection = null;
+  connected = true;
+  outcome = null;
+  progress = null;
+  draft = '';
   dealing.clear();
   startChoices.clear();
   seatPicks.clear();
@@ -152,27 +240,9 @@ function tableModel(room, key) {
   return { room, key: String(key), number: parsed.table, match: parsed.match, first, state, game, pending, ended, ending: reason !== null, reason, tone };
 }
 
-// 主持端：這一桌入座的人挑的棄牌（逐人訂閱，列出還沒挑的人用）。
-function watchHostDiscards(game) {
-  for (const uid of Object.keys(game.seats ?? {})) {
-    if (hostDiscards.has(uid)) continue;
-    const entry = { stop: () => {}, value: null };
-    hostDiscards.set(uid, entry);
-    entry.stop = watchDiscard(
-      ctx.session,
-      ctx.code,
-      (value) => {
-        entry.value = value;
-        rerender();
-      },
-      () => {},
-      uid,
-    );
-  }
-}
-
 // 黑夜時手牌超過上限的人：誰挑好了、誰還沒挑（推進到下一回合日出時會被隨機棄）。主持端沒有訂閱別人的手牌，這裡只看張數；
-// 挑的牌在不在手上，發牌時再查。回傳 { limit, missing: Set, picked: Set, text, problem }。
+// 挑的牌在不在手上，發牌時再查。挑的棄牌來自 watchSubmissions（「能推的全推」的提醒用同一份）。
+// 回傳 { limit, missing: Set, picked: Set, text, problem }。
 function handLimits(t) {
   const none = { limit: null, missing: new Set(), picked: new Set(), text: '', problem: false };
   const limit = ctx.cardData?.data.settings.handLimit;
@@ -182,7 +252,7 @@ function handLimits(t) {
   // 這一回合黑夜結束就算分：終局不棄牌，天命判定的手牌照上限算（game.js 的 destinyDone）。
   if (t.ending) return { ...none, limit, text: `這一回合結束就算分：手牌超過上限的不用棄，算分時照上限 ${limit} 張算` };
   const done = ([uid, seat]) => {
-    const value = hostDiscards.get(uid)?.value;
+    const value = submissions.discards[uid];
     const count = Object.keys(value?.cards ?? {}).length;
     return Boolean(value) && String(value.table) === t.key && value.round === t.state.round && count === seat.handCount - limit;
   };
@@ -195,10 +265,18 @@ function handLimits(t) {
 }
 
 // 「下一階段」：why 是停用原因（照現行真正的條件），note 是可以按時的提醒。黑夜要有卡牌資料才知道要不要算分（同改版前）。
+// data.ending 記著按鈕上寫的是不是「（算分）」：按下去時局面已經跟畫面不一樣（例如全場日落鐘剛被調過）就先不送，重畫給主持人看。
 function nextAction(t, why = null, note = null) {
-  const label = t.state.phase === 'night' && t.ending ? '下一階段（算分）' : '下一階段 ▸';
+  const scoring = t.state.phase === 'night' && t.ending;
+  const label = scoring ? '下一階段（算分）' : '下一階段 ▸';
   const noData = t.state.phase === 'night' && !ctx.cardData ? '卡牌資料讀取中…' : null;
-  return { act: 'next', label, why: why ?? noData, note, primary: true, data: { round: t.state.round, phase: t.state.phase } };
+  return { act: 'next', label, why: why ?? noData, note, primary: true, data: { round: t.state.round, phase: t.state.phase, ending: String(scoring) } };
+}
+
+// 在等誰（黃昏表決中、黑夜選擇中）：還沒送出的人名，照座位（game.js 的 waitingFor，跟「已送出 x／n」同一套判斷）。只在主持端顯示。
+function missingNames(t) {
+  const waiting = waitingFor(t.room, t.key, submissions);
+  return waiting?.missing.length ? waiting.missing.map((uid) => nameOf(t.room, uid)).join('、') : '';
 }
 
 // 揭曉倒數（黃昏、黑夜）：照實際倒數到截止＋緩衝（真正揭曉的時間），到 0 還沒揭曉寫「揭曉中…」。
@@ -209,11 +287,12 @@ function revealStep(t, kind, at, early, blocked, missing) {
   const total = Object.keys(t.game.seats).length;
   const sent = at.submitted ?? 0;
   const over = serverTime(ctx.session) >= deadline;
+  const names = sent < total ? missingNames(t) : '';
   return {
     kind: 'wait',
     dial: ring({ deadline, total: revealTotal(kind), label: '揭曉倒數', overText: '…' }),
     title: over ? '揭曉中…' : sent >= total ? '大家都送出了・倒數揭曉' : '已截止・倒數揭曉',
-    sub: `已送出 ${sent}／${total}・${missing}`,
+    sub: `已送出 ${sent}／${total}・${missing}${names ? `：${names}` : ''}`,
     actions: [early, nextAction(t, blocked)],
   };
 }
@@ -270,11 +349,12 @@ function duskStep(t) {
   if (stage === 'voting') {
     const seconds = ctx.cardData?.data.settings.reminderSeconds.dusk ?? 120;
     const total = Object.keys(game.seats).length;
+    const names = missingNames(t);
     return {
       kind: 'wait',
       dial: ring({ deadline: dusk.openedAt + seconds * 1000, total: seconds, label: '提醒' }),
       title: `表決中・已送出 ${dusk.submitted ?? 0}／${total}`,
-      sub: '全部送出就倒數揭曉；按「提前揭曉」時沒送出的算棄權',
+      sub: `${names ? `還沒送出：${names}・` : ''}全部送出就倒數揭曉；按「提前揭曉」時沒送出的算棄權`,
       actions: [early, nextAction(t, blocked)],
     };
   }
@@ -300,11 +380,12 @@ function nightStep(t, limits) {
   if (stage === 'choosing') {
     const seconds = ctx.cardData?.data.settings.reminderSeconds.night ?? 120;
     const total = Object.keys(game.seats).length;
+    const names = missingNames(t);
     return {
       kind: 'wait',
       dial: ring({ deadline: night.openedAt + seconds * 1000, total: seconds, label: '提醒' }),
       title: `選擇中・已送出 ${night.submitted ?? 0}／${total}`,
-      sub: '全部送出就倒數揭曉；按「提前揭曉」時沒送出的算睡覺',
+      sub: `${names ? `還沒送出：${names}・` : ''}全部送出就倒數揭曉；按「提前揭曉」時沒送出的算睡覺`,
       actions: [early, nextAction(t, blocked)],
     };
   }
@@ -428,12 +509,26 @@ function idleStep(t) {
 }
 
 function stepOf(t, limits) {
-  if (!t.game) return t.match === 1 ? idleStep(t) : seatsStep(t);
-  if (t.ended) return endStep(t);
-  if (t.state.phase === 'sunrise') return sunriseStep(t);
-  if (t.state.phase === 'day') return dayStep(t);
-  if (t.state.phase === 'dusk') return duskStep(t);
-  return nightStep(t, limits);
+  if (!t.game) return pauseGuard(t, t.match === 1 ? idleStep(t) : seatsStep(t));
+  if (t.ended) return pauseGuard(t, endStep(t));
+  if (t.state.phase === 'sunrise') return pauseGuard(t, sunriseStep(t));
+  if (t.state.phase === 'day') return pauseGuard(t, dayStep(t));
+  if (t.state.phase === 'dusk') return pauseGuard(t, duskStep(t));
+  return pauseGuard(t, nightStep(t, limits));
+}
+
+// 全場暫停中：「開始」「下一階段」「開第 2 場」停用，原因寫「全場暫停中」（本來就停用的照原本的原因）。自動結算照常跑，已經在倒數的
+// 響應窗口與揭曉照樣收尾；沒有人能推進，就不會開新的階段。
+const PAUSED_TEXT = '全場暫停中';
+const PAUSE_BLOCKED = new Set(['start', 'next', 'open-match']);
+
+function isPaused(room) {
+  return room?.display?.pause?.on === true;
+}
+
+function pauseGuard(t, step) {
+  if (!isPaused(t.room)) return step;
+  return { ...step, actions: step.actions.map((action) => (action && PAUSE_BLOCKED.has(action.act) ? { ...action, why: action.why ?? PAUSED_TEXT } : action)) };
 }
 
 // ---- 桌卡 ----
@@ -764,11 +859,7 @@ function sunsetLine(room, key) {
   return status.passed ? `日落鐘　開局 ${elapsed} 分・時間到了` : `日落鐘　開局 ${elapsed} 分・${left}`;
 }
 
-setInterval(() => {
-  const room = ctx.latestRoom;
-  if (!room) return;
-  for (const node of document.querySelectorAll('.sunset-clock[data-sunset]')) node.textContent = sunsetLine(room, node.dataset.sunset);
-}, 1000);
+setInterval(() => tick(), 1000);
 
 function linkButton(act, table, text, extra = {}) {
   return h('button', { class: `btn-link tc-link${extra.className ? ` ${extra.className}` : ''}`, type: 'button', data: { act, table, key: act }, disabled: busy.has(`${act}:${table}`), attrs: extra.attrs, text });
@@ -833,8 +924,9 @@ function cardBody(t, step, limits) {
   if (t.ended) return [statusRow(step), game.final ? (t.match === 1 ? rankTable(t) : combinedTable(t)) : null];
   const showStart = state.round === 1 && !game.turn && !game.pending;
   // 起始玩家選單出現時（第 1 回合出牌前）今日事件縮成一行，5 人以上的桌不列（1280×800 不用捲動；事件在「紀錄」裡）。
+  // 控制台的緊湊版桌卡一律一行。
   const seats = Object.keys(game.seats).length;
-  const info = showStart && seats >= 5 ? null : infoBlock(t, limits, { compact: showStart });
+  const info = showStart && seats >= 5 ? null : infoBlock(t, limits, { compact: showStart || compactCards });
   return [statusRow(step), playerTable(t, limits), info, showStart ? startOrderRow(t) : null];
 }
 
@@ -875,25 +967,33 @@ function matchChips(cards) {
 
 // 「已結束的桌全部開第 2 場」：字分兩行，頂列放得下。只做第 ① 步（各桌的座位要逐桌核對後按「開始第 2 場」）；有待判定的桌跳過，
 // 確認框裡列出來。
-function openAllButton() {
+function openAllButton(room) {
   const working = busy.has('open-all');
+  const paused = isPaused(room);
   return h(
     'button',
-    { class: 'btn top-btn host-open-all', type: 'button', data: { act: 'open-all', key: 'open-all' }, disabled: working },
-    working ? h('span', { text: '處理中…' }) : [h('span', { text: '已結束的桌' }), h('span', { text: `全部開${matchText(2)}` })],
+    { class: 'btn top-btn host-open-all', type: 'button', data: { act: 'open-all', key: 'open-all' }, attrs: { title: paused ? PAUSED_TEXT : undefined }, disabled: working || paused },
+    working ? h('span', { text: '處理中…' }) : [h('span', { text: '已結束的桌' }), h('span', { text: paused ? PAUSED_TEXT : `全部開${matchText(2)}` })],
   );
 }
 
-function topBar(room, cards) {
+// 頂列：控制台開著時「已結束的桌全部開第 2 場」放進控制列；右邊多「控制台」切換（記在這台裝置）與「開投影畫面」（新視窗）。
+// 網頁版本號（config.js 的 WEB_VERSION）寫在品牌下面，現場逐台核對每台都重新整理到新版。
+function topBar(room, cards, mode = null) {
   const counts = new Map();
   for (const { step } of cards) counts.set(step.kind, (counts.get(step.kind) ?? 0) + 1);
   const requests = requestList(room);
   const hosts = hostUids(room);
   const online = hosts.filter((uid) => isOnline(room, uid)).length;
-  const firstEnded = cards.some(({ t }) => t.match === 1 && t.ended && t.game?.final);
+  const firstEnded = !mode && cards.some(({ t }) => t.match === 1 && t.ended && t.game?.final);
   const matches = matchChips(cards);
   return [
-    h('div', { class: 'host-brand', data: { key: 'brand' } }, h('p', { class: 'host-brand-title', text: '一日英國人' }), h('p', { class: 'host-brand-sub', text: '女皇陛下萬歲！・主持端' })),
+    h(
+      'div',
+      { class: 'host-brand', data: { key: 'brand' } },
+      h('p', { class: 'host-brand-title', text: '一日英國人' }),
+      h('p', { class: 'host-brand-sub' }, '女皇陛下萬歲！・主持端', h('span', { class: 'host-version', text: `・第 ${WEB_VERSION} 版` })),
+    ),
     h('div', { class: 'host-room', data: { key: 'room' } }, h('span', { class: 'host-room-label', text: '房號' }), h('strong', { class: 'host-room-code', attrs: { id: 'host-code', lang: 'en' }, text: ctx.code })),
     // 各狀態的桌數；有桌子到了第 1 場結束之後，下面多一行各場的桌數（兩行都改小號，頂列高度不變）。
     h(
@@ -906,11 +1006,19 @@ function topBar(room, cards) {
       ),
       matches,
     ),
-    firstEnded ? openAllButton() : null,
+    firstEnded ? openAllButton(room) : null,
     h(
       'div',
       { class: 'host-top-right', data: { key: 'right' } },
       h('span', { class: 'host-online', text: `主持端 ${online} 台在線` }),
+      h('button', {
+        class: `btn top-btn host-console-toggle${consoleOn() ? ' is-on' : ''}`,
+        type: 'button',
+        data: { act: 'console-toggle' },
+        attrs: { 'aria-pressed': String(consoleOn()), 'aria-controls': 'host-console', title: isWide() ? '控制列開或關（記在這台裝置）' : '控制台抽屜開或關（記在這台裝置）' },
+        text: '控制台',
+      }),
+      h('button', { class: 'btn top-btn', type: 'button', data: { act: 'open-screen' }, attrs: { title: '在新視窗開投影畫面，拖到投影機那一邊' }, text: '開投影畫面' }),
       h('button', { class: `btn top-btn${requests.length ? ' is-alert' : ''}`, type: 'button', data: { act: 'requests' }, attrs: { 'aria-expanded': String(requestsOpen), 'aria-controls': 'host-requests' }, text: `備援主持申請 ${requests.length}` }),
       h('button', { class: 'btn top-btn', type: 'button', data: { act: 'leave' }, text: '離開' }),
       requestsOpen ? requestsPanel(room, requests, hosts, online) : null,
@@ -1124,7 +1232,7 @@ function finalDrawer(t) {
 // 第 2 場・未開局：勾選誰參加（按鈕夠大，放在抽屜裡），下面是「開始第 2 場」。
 function seatsDrawer(t) {
   const plan = seatPlan(t);
-  const step = seatsStep(t);
+  const step = pauseGuard(t, seatsStep(t));
   const [start] = step.actions;
   const working = busy.has(`start:${t.key}`);
   const rows = [
@@ -1196,6 +1304,15 @@ function openPlan(room, request) {
 
 function confirmLayer(room) {
   if (!confirming) return [];
+  const scrim = h('div', { class: 'scrim is-confirm', data: { key: 'confirm-scrim', act: 'cancel-confirm' } });
+  if (confirming.kind !== 'one' && confirming.kind !== 'all') {
+    const dialog = consoleDialog(room);
+    if (!dialog) {
+      confirming = null;
+      return [];
+    }
+    return [scrim, dialog];
+  }
   const plan = openPlan(room, confirming);
   if (!plan) {
     confirming = null;
@@ -1205,10 +1322,11 @@ function confirmLayer(room) {
   const list = (items) => items.map((item) => `第 ${item.number} 桌`).join('、');
   let why = null;
   if (!ctx.cardData) why = ctx.cardsFailed ? '卡牌資料有問題，請找工作人員' : '卡牌資料讀取中…';
+  else if (isPaused(room)) why = PAUSED_TEXT;
   else if (plan.ready.length === 0) why = '沒有可以開的桌：天命都要先判定完';
   const working = busy.has('open-all') || plan.ready.some((t) => busy.has(`open-match:${t.key}`));
   return [
-    h('div', { class: 'scrim is-confirm', data: { key: 'confirm-scrim', act: 'cancel-confirm' } }),
+    scrim,
     h(
       'div',
       { class: 'confirm', data: { key: 'confirm' }, attrs: { role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'confirm-title', 'aria-describedby': 'confirm-text' } },
@@ -1228,6 +1346,1006 @@ function confirmLayer(room) {
   ];
 }
 
+// ---- 控制台：開關、純函式（文字、網址、按鈕能不能按） ----
+
+export const CONSOLE_MIN_WIDTH = 1360;
+export const CONSOLE_MIN_HEIGHT = 860;
+const OFFLINE_TEXT = '離線中，連回來才能操作';
+const SCENES = [
+  ['opening', '開場影片'],
+  ['rules', '規則說明'],
+  ['overview', '比賽中總覽'],
+  ['standings', '兩場合計排行'],
+  ['awards', '頒獎'],
+];
+const SCENE_LABELS = Object.fromEntries(SCENES);
+const PAGED_SCENES = new Set(['rules', 'awards']); // 有 ◀ ▶ 換頁的場景
+const SFX_LABELS = { bell: '日落大鐘', gavel: '法槌' };
+const ABSENT_TEXT = { left: '已離開', moved: '換到別桌', unchecked: '被勾掉' };
+// 廣播的常用句（只是幫忙填進輸入框，送出前照樣看得到、改得了）。
+const PHRASES = ['請各桌派一人到前台', '休息 10 分鐘，請在座位上稍候', '比賽即將開始，請回到自己的座位', '請把手機調成靜音', '日落鐘剩 10 分鐘', '第 1 場結束，請準備交接角色卡', '頒獎典禮即將開始'];
+
+// 寬螢幕（寬 1360、高 860 以上）：控制列在頂列下面、桌卡改緊湊版。其他是窄螢幕：控制台預設關，點開是上方抽屜。
+export function consoleWide(width, height) {
+  return width >= CONSOLE_MIN_WIDTH && height >= CONSOLE_MIN_HEIGHT;
+}
+
+function isWide() {
+  return consoleWide(window.innerWidth, window.innerHeight);
+}
+
+// 控制台開著沒：這台裝置選過就照選的，沒選過照視窗大小。
+function consoleOn() {
+  return consolePref === 'on' || (consolePref === null && isWide());
+}
+
+// 控制列的樣子：'bar'（寬螢幕，頂列下面一條）、'fold'（收合成一行）、'drawer'（窄螢幕的上方抽屜）、null（關著）。
+function consoleMode() {
+  if (!consoleOn()) return null;
+  if (!isWide()) return 'drawer';
+  return folded ? 'fold' : 'bar';
+}
+
+// 毫秒 → 「33:52」（分鐘可以超過 60）。剩餘無條件進位（還沒到不會先顯示 0:00），已進行（up）捨去。
+export function clockText(ms, { up = false } = {}) {
+  const total = Math.max(0, up ? Math.floor(ms / 1000) : Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+// 伺服器時間 → 這台的時刻「18:44」（seconds 時「18:44:05」）。offset＝伺服器時間 − 本機時間。
+export function wallTime(serverMs, offset = 0, { seconds = false } = {}) {
+  const date = new Date(serverMs - offset);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}${seconds ? `:${pad(date.getSeconds())}` : ''}`;
+}
+
+// 日落鐘加減了多少：「＋5 分」「－1 分」；不是整分鐘（夾到上限或減到底）時寫到秒「－2 分 58 秒」。
+export function deltaText(ms) {
+  const sign = ms < 0 ? '－' : '＋';
+  const seconds = Math.round(Math.abs(ms) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  if (seconds % 60 === 0) return `${sign}${minutes} 分`;
+  return `${sign}${minutes ? `${minutes} 分 ` : ''}${seconds % 60} 秒`;
+}
+
+// 指令是誰下的：「這台」或「別台（K7Q2）」（by 是那台主持端的 uid，確認碼同備援主持那一套）。
+export function byText(by, self) {
+  if (!by) return '';
+  return by === self ? '這台' : `別台（${confirmCode(by)}）`;
+}
+
+// 投影畫面的網址：同一頁加 view=screen、room；保留目前網址的 env（本機模擬器或正式站）。「開投影畫面」的新視窗加 slot=screen
+// （同一個瀏覽器時不跟主持端共用身分）；控制列的小預覽加 preview=1、slot=preview。search 是 location.search。
+export function screenUrl(search, code, { preview = false } = {}) {
+  const env = new URLSearchParams(search).get('env');
+  const params = new URLSearchParams({ view: 'screen', room: code });
+  if (preview) params.set('preview', '1');
+  params.set('slot', preview ? 'preview' : 'screen');
+  if (env) params.set('env', env);
+  return `?${params}`;
+}
+
+// 控制台指令的錯誤 → 結果條的一句（docs/CONSOLE-API.md 第 6 節）。clock＝日落鐘的指令；conflict 帶的最新那一筆用 describe(latest)
+// 寫成「現在剩 33:52」這種。不是 StoreError 的（權限以外的連線錯誤會原樣丟出來）照錯誤的代碼寫。
+export function commandError(error, { clock = false, describe = null } = {}) {
+  if (!(error instanceof StoreError)) {
+    const detail = error?.code ?? error?.message ?? '';
+    return `沒有成功${detail ? `（${detail}）` : ''}，請確認連線後再按一次`;
+  }
+  if (error.code === 'rules-outdated') return clock ? '日落鐘控制要等規則更新，各桌照舊各自計時' : `${error.message}（資料庫規則還沒發布）`;
+  if (error.code === 'conflict') {
+    const latest = describe ? describe(error.latest ?? null) : '';
+    return `別台剛改過${latest ? `，${latest}` : ''}；看清楚再按一次`;
+  }
+  return error.message;
+}
+
+// 「能推的全推」確認框的一桌：「第 3 桌：黑夜 → 第 4 回合日出（會發牌）」「第 2 桌：黑夜 → 算分（日落鐘到了…）」，後面接原本的提醒。
+export function advanceLine(item) {
+  const from = PHASE_NAMES[item.phase] ?? item.phase;
+  const to =
+    item.to.phase === 'end'
+      ? `算分（${END_REASON_TEXT[item.ending] ?? item.ending}，算分後不能回頭）`
+      : `${item.to.round !== item.round ? `第 ${item.to.round} 回合` : ''}${PHASE_NAMES[item.to.phase] ?? item.to.phase}${item.deal ? '（會發牌）' : ''}`;
+  const match = item.match === 1 ? '' : `${matchText(item.match)}・`;
+  return `第 ${item.table} 桌：${match}${from} → ${to}${item.note ? `；${item.note}` : ''}`;
+}
+
+// 「能推的全推」一桌的結果（store.js 的 advanceAll；item 是計畫裡的那一桌）：{ ok, text }。
+export function advanceResult(result, item = null) {
+  const name = `第 ${result.table} 桌`;
+  if (result.error && result.advanced) return { ok: false, text: `${name}：推進了，但發牌沒成功（${commandError(result.error)}），請按那一桌的「補發」` };
+  if (result.error) return { ok: false, text: `${name}：${commandError(result.error)}` };
+  if (result.held) return { ok: false, text: `${name}：這一回合要算分，沒推（要算分請在那一桌按「下一階段（算分）」）` };
+  if (!result.advanced) return { ok: false, text: `${name}：局面已經變了，沒有動` };
+  if (result.ended) return { ok: true, text: `${name}：已算分（${END_REASON_TEXT[result.reason] ?? result.reason}）` };
+  const to = item ? `${item.to.round !== item.round ? `第 ${item.to.round} 回合` : ''}${PHASE_NAMES[item.to.phase] ?? item.to.phase}` : '下一階段';
+  return { ok: true, text: `${name}：${to}${result.dealt ? '（已發牌）' : ''}` };
+}
+
+// 「全部開始」「全部開始第 2 場」一桌的結果（store.js 的 startAll）：{ ok, text }。started 是 false 又沒有錯＝別台先開了。
+export function startResult(result, item = null) {
+  const name = `第 ${result.table} 桌`;
+  if (result.error) return { ok: false, text: `${name}：${commandError(result.error)}` };
+  if (!result.started) return { ok: true, text: `${name}：別台先開了` };
+  return { ok: true, text: `${name}：已開局${item?.count ? `（${item.count} 人）` : ''}` };
+}
+
+// 日落鐘按鈕的停用原因（null＝可以按）：toggle（暫停／繼續）、minus、plus。日落後都不能按；累計加減到上限的那一邊不能按；
+// 全場暫停中不能手動暫停或繼續（恢復全場時被它停住的鐘一起繼續，手動繼續的鐘會在暫停中一路走）。
+export function clockGuards(clock, now, { paused = false } = {}) {
+  if (!isClock(clock)) return null;
+  const sunset = '已經日落了，不能再暫停或加減';
+  if (clockPassed(clock, now)) return { toggle: sunset, minus: sunset, plus: sunset };
+  const adjust = clock.adjust ?? 0;
+  const cap = CLOCK_ADJUST_MAX_MS / MINUTE;
+  return {
+    toggle: paused ? '全場暫停中：恢復全場時日落鐘會一起繼續' : null,
+    minus: adjust <= -CLOCK_ADJUST_MAX_MS ? `累計已經減了 ${cap} 分（上限）` : null,
+    plus: adjust >= CLOCK_ADJUST_MAX_MS ? `累計已經加了 ${cap} 分（上限）` : null,
+  };
+}
+
+// 控制列要顯示哪幾場的日落鐘：[1]、[2]，或第 1 場還有桌在打（已開局、還沒算分）而且有桌開了第 2 場時兩個並排 [1, 2]。
+export function clockMatches(room) {
+  let first = false;
+  let second = Boolean(room?.clock?.[MATCH_COUNT]);
+  for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
+    if (room.tables?.[matchKey(table, MATCH_COUNT)]) second = true;
+    else if (room.games?.[matchKey(table)] && room.tables?.[matchKey(table)]?.phase !== 'end') first = true;
+  }
+  if (!second) return [1];
+  return first ? [1, MATCH_COUNT] : [MATCH_COUNT];
+}
+
+// 統一開始第 match 場的全場日落鐘時，已開局（還沒算分）的各桌怎麼變：[{ table, text, problem }]。原本照各桌從開局起算，之後照全場鐘
+// （剛開的鐘＝minutes 分）；原本因為日落這一回合就是最後一回合、改了之後不是的，標成 problem（主持人要知道）。
+export function clockStartChanges(room, match, minutes, settings, now) {
+  const fresh = clockStartWrite(minutes, now);
+  const changes = [];
+  for (let table = 1; table <= (room?.meta?.tableCount ?? 0); table += 1) {
+    const key = matchKey(table, match);
+    const state = room.tables?.[key];
+    const game = room.games?.[key];
+    if (!state || !game?.seats || state.phase === 'end') continue;
+    const before = sunsetStatus(game, settings, now, null);
+    const lost = endReasonAt(game, state, settings, now, null) === 'sunset' && endReasonAt(game, state, settings, now, fresh) !== 'sunset';
+    const left = before.passed ? '原本已經日落' : `原本還剩 ${Math.ceil(before.remaining / MINUTE)} 分`;
+    changes.push({ table, problem: lost, text: `第 ${table} 桌：${left}，改照全場鐘是 ${minutes} 分${lost ? '（這一回合本來結束就算分，改了之後不是最後一回合）' : ''}` });
+  }
+  return changes;
+}
+
+// 投影端狀態（rooms/{code}/screens）：每一台的確認碼、聲音開了沒、場景跟上了沒、最後回報時間（照最後回報排）。投影端只在解鎖聲音與
+// 換場景時回報、斷線時伺服器代為刪除，所以「最新的場景切換已經過了 SCREEN_LAG_MS 還沒跟上」的標成灰色（可能當掉或網路卡住）。
+// 這一筆任何登入的人都能寫自己的（可能是假的），所以一定列出確認碼與時間，不只寫「聲音已開」。
+export const SCREEN_LAG_MS = 10_000;
+
+export function screenRows(screens, scene, now, self) {
+  return Object.entries(screens ?? {})
+    .filter(([, value]) => value && typeof value === 'object')
+    .map(([uid, value]) => {
+      const synced = !scene || value.scene === scene.seq;
+      return {
+        uid,
+        code: confirmCode(uid),
+        self: uid === self,
+        audio: value.audio === true,
+        synced,
+        lagging: !synced && typeof scene?.at === 'number' && now - scene.at > SCREEN_LAG_MS,
+        at: typeof value.at === 'number' ? value.at : null,
+      };
+    })
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+}
+
+// ---- 控制台：畫面 ----
+
+function offsetNow() {
+  return serverTime(ctx.session) - Date.now();
+}
+
+function noDataText() {
+  return ctx.cardsFailed ? '卡牌資料有問題，請找工作人員' : '卡牌資料讀取中…';
+}
+
+function tablesText(items) {
+  return `第 ${items.map((item) => item.table).join('、')} 桌`;
+}
+
+function panel(key, title, content, extra = '') {
+  return h('section', { class: `cs-panel cs-${key}${extra ? ` ${extra}` : ''}`, data: { key }, attrs: { 'aria-label': title } }, h('h2', { class: 'cs-title', text: title }), content);
+}
+
+function csButton(act, label, { why = null, data = {}, className = '', busyKey = null, pressed } = {}) {
+  const working = busyKey !== null && busy.has(busyKey);
+  return h('button', {
+    class: `btn cs-btn${className ? ` ${className}` : ''}`,
+    type: 'button',
+    data: { act, ...data },
+    attrs: { title: why ?? undefined, 'aria-pressed': pressed === undefined ? undefined : String(pressed) },
+    disabled: Boolean(why) || working,
+    text: label,
+  });
+}
+
+// 全場動作：能推的全推、全部開始、已結束的桌全部開第 2 場、全部開始第 2 場。都先開確認框，確認框列出計畫。
+function actionsPanel(view) {
+  const { room, now, off, paused } = view;
+  const data = ctx.cardData?.data ?? null;
+  const common = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : data ? null : noDataText();
+  const advance = data ? advancePlan(room, data.settings, now, { discards: submissions.discards }) : null;
+  const start = data ? startPlan(room, data) : null;
+  const second = data ? startMatch2Plan(room, data, seatPicks) : null;
+  const open = openPlan(room, { kind: 'all' });
+  const working = ['advance-all', 'start-all', 'start-all-2', 'open-all'].some((key) => busy.has(key));
+
+  const advanceWhy = common ?? (working ? '處理中…' : advance.advance.length ? null : '沒有可以推的桌');
+  let advanceNote = advanceWhy;
+  if (!advanceWhy) advanceNote = `${tablesText(advance.advance)}；按了會先列出來確認`;
+  else if (!common && advance) {
+    const ending = advance.skip.filter((item) => item.reason === 'ending');
+    if (ending.length) advanceNote = `${tablesText(ending)}這一回合要算分，在確認框另外勾`;
+  }
+
+  let startWhy = common;
+  if (!startWhy && start.start.length === 0) startWhy = start.started.length && start.skip.length === 0 ? `${start.started.length} 桌都開始了` : start.started.length || start.skip.length ? '沒有可以開的桌' : '第 1 場都結束了';
+  let openWhy = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : data ? null : noDataText();
+  if (!openWhy && !open) openWhy = `還沒有桌打完${matchText(1)}`;
+  else if (!openWhy && open.ready.length === 0) openWhy = '天命都要先判定完';
+  let secondWhy = common;
+  if (!secondWhy && second.start.length === 0) secondWhy = second.started.length ? `${matchText(2)}都開始了` : second.skip.length ? '沒有可以開的桌' : `還沒有桌開${matchText(2)}`;
+
+  // 停用的鈕原因寫在滑鼠提示（title），也寫在下面那一格（最該看的那一個）。
+  const small = (act, title, why, count) =>
+    h('button', { class: 'btn cs-btn cs-small', type: 'button', data: { act }, attrs: { title: why ?? undefined }, disabled: Boolean(why) || working, text: why ? title : `${title}・${count} 桌` });
+  let status = '';
+  if (progress) status = `${progress.label} ${progress.done}／${progress.total}`;
+  else if (working) status = '處理中…';
+  else if (!common && !startWhy) status = '可以一起開全場日落鐘';
+  else if (!common && !openWhy) status = `第 1 場結束的桌可以開${matchText(2)}`;
+  else if (!common && !secondWhy) status = `可以一起開${matchText(2)}的日落鐘`;
+  else status = common ?? (open ? (secondWhy ?? openWhy) : startWhy) ?? '';
+  return panel('actions', '全場動作', [
+    h(
+      'button',
+      { class: `btn cs-btn cs-advance${advanceWhy ? '' : ' btn-primary'}`, type: 'button', data: { act: 'advance-all' }, attrs: { title: advanceWhy ?? undefined }, disabled: Boolean(advanceWhy) },
+      advance && advance.advance.length ? `能推的全推下一階段・${advance.advance.length} 桌` : '能推的全推下一階段',
+    ),
+    trunc('p', 'cs-note', advanceNote ?? ''),
+    h(
+      'div',
+      { class: 'cs-grid2' },
+      small('start-all', '全部開始', startWhy, start?.start.length),
+      small('open-all', `全部開${matchText(2)}`, openWhy, open?.ready.length),
+      small('start-all-2', `全部開始${matchText(2)}`, secondWhy, second?.start.length),
+      trunc('p', `cs-note cs-busy${progress || working ? ' is-on' : ''}`, status),
+    ),
+  ]);
+}
+
+// 一場的日落鐘：剩餘（大字）、已進行、預計日落時刻（本機時間）、進度條、暫停／繼續、－5／－1／＋1／＋5。small＝兩場並排的小鐘。
+function clockBox(view, match, small) {
+  const clock = view.room.clock?.[match];
+  if (!isClock(clock)) return noClockBox(view, match, small);
+  const { now, off } = view;
+  const guards = clockGuards(clock, now, { paused: view.paused });
+  const paused = clockPaused(clock);
+  const passed = clockPassed(clock, now);
+  const key = `clock:${match}`;
+  const working = busy.has(key);
+  const lock = off ? OFFLINE_TEXT : working ? '處理中…' : null;
+  const adjustButton = (minutes) =>
+    csButton('clock-adjust', `${minutes > 0 ? '＋' : '－'}${Math.abs(minutes)}${small ? '' : ' 分'}`, {
+      why: lock ?? (minutes < 0 ? guards.minus : guards.plus),
+      data: { match, delta: minutes * MINUTE },
+      className: 'cs-step',
+    });
+  const note = guards.toggle && !passed ? guards.toggle : passed ? '日落了：各桌這一回合結束就算分；日落後不能再加回來' : '加減只移動日落時刻，已進行的時間不會倒退';
+  return h(
+    'div',
+    { class: `cs-clock${small ? ' is-small' : ''}${paused ? ' is-paused' : ''}${passed ? ' is-passed' : ''}`, data: { key: `clock-${match}`, clock: match } },
+    h(
+      'div',
+      { class: 'cs-clock-main' },
+      h('b', { class: 'cs-remaining', text: clockText(clockRemaining(clock, now)) }),
+      h(
+        'div',
+        { class: 'cs-clock-side' },
+        h('span', { class: 'tag cs-match', text: `${matchText(match)}${passed ? '・已日落' : paused ? '・暫停中' : ''}` }),
+        h('span', { class: 'cs-elapsed', text: `已進行 ${clockText(clockElapsed(clock, now), { up: true })}` }),
+        h('span', { class: 'cs-sunset', text: sunsetAtText(clock, now) }),
+      ),
+    ),
+    h('div', { class: 'cs-progress', attrs: { 'aria-hidden': 'true' } }, h('span', { class: 'cs-progress-fill', style: { width: `${progressOf(clock, now)}%` } })),
+    h(
+      'div',
+      { class: 'cs-clock-btns' },
+      paused
+        ? csButton('clock-resume', small ? '▶' : '▶ 繼續', { why: lock ?? guards.toggle, data: { match }, className: 'cs-toggle' })
+        : csButton('clock-pause', small ? '⏸' : '⏸ 暫停', { why: lock ?? guards.toggle, data: { match }, className: 'cs-toggle' }),
+      [-5, -1, 1, 5].map(adjustButton),
+    ),
+    trunc('p', 'cs-note', small ? `${clock.by ? `最後由${byText(clock.by, ctx.session.uid)}改・` : ''}${note}` : `${note}${clock.by ? `（最後由${byText(clock.by, ctx.session.uid)}改）` : ''}`),
+  );
+}
+
+function progressOf(clock, now) {
+  const length = clockLength(clock);
+  return length > 0 ? Math.max(0, Math.min(100, (clockElapsed(clock, now) / length) * 100)) : 100;
+}
+
+function sunsetAtText(clock, now) {
+  if (clockPassed(clock, now)) {
+    const at = clockSunsetAt(clock);
+    return at === null ? '已經日落' : `${wallTime(at, offsetNow())} 日落了`;
+  }
+  const at = clockSunsetAt(clock);
+  return at === null ? '暫停中，不會日落' : `預計 ${wallTime(at, offsetNow())} 日落`;
+}
+
+// 那一場還沒有全場日落鐘：各桌各自計時，按「統一開始全場日落鐘」開（確認框寫已開局的桌會怎麼變）。第 2 場要有桌開始了第 2 場才能開
+// （store.js 不檢查；太早開會吃掉第 2 場的時間）。
+function clockStartWhy(view, match) {
+  if (view.off) return OFFLINE_TEXT;
+  if (view.paused) return '全場暫停中，恢復之後再開';
+  if (!ctx.cardData) return noDataText();
+  const error = startPlan(view.room, ctx.cardData.data).clock.error;
+  if (error) return error;
+  let started = false;
+  for (let table = 1; table <= view.room.meta.tableCount; table += 1) if (view.room.games?.[matchKey(table, match)]) started = true;
+  if (!started) return match === 1 ? '還沒有桌開局（可以在「全部開始」時一起開）' : `還沒有桌開始${matchText(2)}（可以在「全部開始${matchText(2)}」時一起開）`;
+  return busy.has(`clock:${match}`) ? '處理中…' : null;
+}
+
+function noClockBox(view, match, small) {
+  const minutes = ctx.cardData?.data.settings.sunsetMinutes;
+  const why = clockStartWhy(view, match);
+  return h(
+    'div',
+    { class: `cs-clock is-none${small ? ' is-small' : ''}`, data: { key: `none-${match}` } },
+    h('div', { class: 'cs-clock-main' }, h('span', { class: 'tag cs-match', text: matchText(match) }), h('b', { class: 'cs-none-text', text: '各桌各自計時' })),
+    h('p', { class: 'cs-note', text: '從各桌按「開始」起算' }),
+    csButton('clock-start', `統一開始全場日落鐘${minutes ? `（${minutes} 分）` : ''}`, { why, data: { match }, className: 'cs-wide' }),
+    trunc('p', 'cs-note', why ?? '開了之後這一場所有桌一起日落'),
+  );
+}
+
+function clockPanel(view) {
+  const matches = clockMatches(view.room);
+  return panel('clock', '日落鐘・全場', h('div', { class: `cs-clocks${matches.length > 1 ? ' is-two' : ''}` }, matches.map((match) => clockBox(view, match, matches.length > 1))));
+}
+
+// 投影畫面：小預覽（把投影畫面縮小放在 iframe 裡；旁邊用文字寫目前的場景與頁碼，不靠 iframe）、五顆場景鈕、規則與頒獎的 ◀ ▶。
+function scenePanel(view) {
+  const { room, off } = view;
+  const scene = room.display?.scene ?? null;
+  const current = SCENE_LABELS[scene?.id] ? scene.id : null;
+  const page = Number.isInteger(scene?.page) ? scene.page : 0;
+  const lock = off ? OFFLINE_TEXT : busy.has('scene') ? '處理中…' : null;
+  const now = current ? `投影中：${SCENE_LABELS[current]}${PAGED_SCENES.has(current) ? `・第 ${page + 1} 頁` : ''}` : '還沒有切過場景';
+  const who = scene?.by ? `${byText(scene.by, ctx.session.uid)}${typeof scene.at === 'number' ? ` ${wallTime(scene.at, offsetNow())}` : ''} 切的` : '投影那台先顯示「開始投影」頁';
+  const paged = PAGED_SCENES.has(current);
+  const pageWhy = lock ?? (paged ? null : '規則說明、頒獎才有換頁');
+  return panel('scene', '投影畫面', [
+    h(
+      'div',
+      { class: 'cs-scene-side' },
+      h(
+        'div',
+        { class: 'cs-preview', data: { key: 'preview' } },
+        h('iframe', { class: 'cs-preview-frame', attrs: { src: screenUrl(location.search, ctx.code, { preview: true }), title: '投影畫面的縮小預覽', tabindex: '-1', loading: 'lazy' } }),
+      ),
+      trunc('p', 'cs-scene-now', now),
+      trunc('p', 'cs-note', who),
+    ),
+    h(
+      'div',
+      { class: 'cs-scene-btns' },
+      SCENES.map(([id, label]) =>
+        h(
+          'button',
+          { class: `btn cs-btn cs-scene-btn${id === current ? ' is-live' : ''}`, type: 'button', data: { act: 'scene', scene: id, key: id }, attrs: { 'aria-pressed': String(id === current), title: lock ?? undefined }, disabled: Boolean(lock) },
+          h('span', { text: label }),
+          id === current ? h('small', { class: 'cs-live', text: '投影中' }) : null,
+        ),
+      ),
+      h(
+        'div',
+        { class: 'cs-pager', data: { key: 'pager' }, attrs: { role: 'group', 'aria-label': '換頁' } },
+        csButton('scene-page', '◀', { why: pageWhy ?? (page <= 0 ? '已經是第 1 頁' : null), data: { step: -1 }, className: 'cs-step' }),
+        csButton('scene-page', '▶', { why: pageWhy ?? (page >= SCENE_PAGE_MAX ? '已經是最後一頁' : null), data: { step: 1 }, className: 'cs-step' }),
+      ),
+    ),
+  ]);
+}
+
+// 音效台：日落大鐘、法槌（一次性）、開場音樂（播放／停止）；延遲與「開始投影」的說明；投影端狀態（screens）。
+function soundPanel(view) {
+  const { room, off, now } = view;
+  const music = room.display?.music ?? null;
+  const playing = music?.on === true;
+  const lock = off ? OFFLINE_TEXT : null;
+  const rows = screenRows(room.screens, room.display?.scene ?? null, now, ctx.session.uid);
+  const offset = offsetNow();
+  const screenLine = (row) => `${row.self ? '這台' : row.code}・${row.audio ? '聲音已開' : '聲音未開'}・${row.synced ? '場景已跟上' : '場景沒跟上'}・${row.at ? wallTime(row.at, offset, { seconds: true }) : '—'}`;
+  const screenFull = (row) =>
+    [`投影端 ${row.code}${row.self ? '（這台）' : ''}`, row.audio ? '聲音已開（按過「開始投影」）' : '聲音還沒開：投影那台要按「開始投影」', row.synced ? '已經照最新的場景畫' : '還沒照最新的場景畫', `最後回報 ${row.at ? wallTime(row.at, offset, { seconds: true }) : '—'}`].join('\n');
+  const stale = rows.find((row) => !row.synced && !row.lagging);
+  if (stale && typeof room.display?.scene?.at === 'number') rerenderAt(room.display.scene.at + SCREEN_LAG_MS + 100);
+  // 投影端一般是一台：一行寫第一台，還有別台就接「另 N 台」，全部的內容點一下看（每台一段）。
+  const [first] = rows;
+  const more = rows.length > 1 ? `・另 ${rows.length - 1} 台` : '';
+  return panel('sound', '音效・在投影端播', [
+    h(
+      'div',
+      { class: 'cs-sfx' },
+      ['bell', 'gavel'].map((id) => csButton('sfx', `♪ ${SFX_LABELS[id]}`, { why: lock, data: { sfx: id, key: id }, busyKey: 'sfx' })),
+      csButton('music', playing ? '■ 停止開場音樂' : '▶ 開場音樂', { why: lock, data: { on: String(!playing), key: 'music' }, busyKey: 'music', className: `cs-music${playing ? ' is-on' : ''}`, pressed: playing }),
+    ),
+    trunc('p', 'cs-note', '經資料庫傳過去，約 0.2–1 秒才響（不適合對拍）'),
+    trunc('p', 'cs-note', '投影那台要先按「開始投影」才有聲音'),
+    first
+      ? h(
+          'p',
+          { class: `cs-screens ${first.lagging ? 'is-stale' : first.audio ? 'is-ok' : 'is-warn'}`, attrs: { 'aria-label': '投影端狀態' } },
+          trunc('span', 'cs-screen-text', `投影端 ${screenLine(first)}${more}`, rows.map(screenFull).join('\n')),
+        )
+      : trunc('p', 'cs-screens is-empty', '投影端：還沒有連上（按頂列「開投影畫面」）'),
+  ]);
+}
+
+// 全場廣播：1–40 字（還剩幾字）、預覽「所有手機與投影會看到：…」、Enter 或送出；上一則（時間＋內容）與「收回」；常用句只是填進輸入框。
+function broadcastPanel(view) {
+  const { room, off } = view;
+  const last = room.display?.broadcast ?? null;
+  const text = normalizeBroadcast(draft);
+  const left = BROADCAST_MAX_LENGTH - text.length;
+  const working = busy.has('broadcast');
+  const sendWhy = off ? OFFLINE_TEXT : working ? '處理中…' : !isValidBroadcast(text) ? (text.length ? `最多 ${BROADCAST_MAX_LENGTH} 字` : '先打字') : null;
+  const offset = offsetNow();
+  let lastLine;
+  if (!last?.text) lastLine = h('p', { class: 'cs-note cs-cast-last', data: { key: 'last' }, text: '還沒有廣播過' });
+  else {
+    const when = typeof last.at === 'number' ? wallTime(last.at, offset) : '';
+    const who = byText(last.by, ctx.session.uid);
+    lastLine = h(
+      'div',
+      { class: `cs-cast-last${last.hidden ? ' is-hidden' : ''}`, data: { key: 'last' } },
+      trunc('span', 'cs-cast-last-text', `上一則 ${when}${who ? `・${who}` : ''}${last.hidden ? '（已收回）' : ''}：${last.text}`),
+      last.hidden ? null : csButton('broadcast-hide', '收回', { why: off ? OFFLINE_TEXT : working ? '處理中…' : null, className: 'cs-hide' }),
+    );
+  }
+  return panel('broadcast', '全場廣播', [
+    h(
+      'div',
+      { class: 'cs-cast-row' },
+      h('input', {
+        class: 'input cs-cast-input',
+        type: 'text',
+        value: draft,
+        disabled: off,
+        data: { input: 'broadcast' },
+        attrs: { id: 'console-broadcast', 'aria-label': '廣播內容', placeholder: `打一行字，所有手機與投影都看得到`, autocomplete: 'off', enterkeyhint: 'send' },
+      }),
+      csButton('broadcast-send', working ? '處理中…' : '送出', { why: sendWhy, className: sendWhy ? 'cs-send' : 'cs-send btn-primary' }),
+    ),
+    h(
+      'p',
+      { class: 'cs-cast-meta' },
+      h('span', { class: `cs-count${left < 0 ? ' is-over' : ''}`, text: text.length === 0 ? `最多 ${BROADCAST_MAX_LENGTH} 字` : left >= 0 ? `還剩 ${left} 字` : `多了 ${-left} 字` }),
+      trunc('span', 'cs-cast-preview', text ? `所有手機與投影會看到：${text}` : '按 Enter 或「送出」；送錯可以收回'),
+    ),
+    lastLine,
+    h(
+      'select',
+      { class: 'select cs-phrases', data: { change: 'phrase' }, attrs: { 'aria-label': '常用句（填進輸入框）' }, disabled: off },
+      h('option', { value: '', text: '常用句…' }),
+      PHRASES.map((phrase) => h('option', { value: phrase, text: phrase })),
+    ),
+  ]);
+}
+
+// 緊急全場暫停：最右邊的紅色大鈕；暫停中換成「全場暫停中（18:44 起）」＋「恢復」。暫停、恢復都要確認。
+function pausePanel(view) {
+  const { room, off } = view;
+  const pause = room.display?.pause ?? null;
+  const working = busy.has('pause');
+  if (pause?.on === true) {
+    return panel('pause', '緊急全場暫停', [
+      h('p', { class: 'cs-pause-on', text: '全場暫停中' }),
+      h('p', { class: 'cs-note', text: pauseSince(pause) }),
+      csButton('pause-off', working ? '處理中…' : '恢復', { why: off ? OFFLINE_TEXT : working ? '處理中…' : null, className: 'cs-resume' }),
+    ], 'is-on');
+  }
+  return h(
+    'section',
+    { class: 'cs-panel cs-pause', data: { key: 'pause' }, attrs: { 'aria-label': '緊急全場暫停' } },
+    h(
+      'button',
+      { class: 'cs-pause-btn', type: 'button', data: { act: 'pause-on' }, attrs: { title: off ? OFFLINE_TEXT : undefined }, disabled: off || working },
+      h('span', { class: 'cs-pause-title', text: working ? '處理中…' : '緊急全場暫停' }),
+      h('span', { class: 'cs-pause-sub', text: '手機與投影蓋上暫停畫面・日落鐘停住' }),
+    ),
+  );
+}
+
+function pauseSince(pause) {
+  const when = typeof pause.at === 'number' ? `${wallTime(pause.at, offsetNow())} 起` : '';
+  const who = byText(pause.by, ctx.session.uid);
+  return [when, who].filter(Boolean).join('・');
+}
+
+// 控制列最上面的狀態條（蓋在面板標題上，不佔高度、桌卡不會跳）：離線、全場暫停中＋「恢復」。
+function statusStrip(view) {
+  const pause = view.room.display?.pause ?? null;
+  const paused = pause?.on === true;
+  return h(
+    'div',
+    { class: `cs-strip${paused ? ' is-paused' : ''}${view.off ? ' is-off' : ''}`, data: { key: 'strip' }, attrs: { role: 'status' } },
+    view.off ? h('span', { class: 'cs-strip-off', text: OFFLINE_TEXT }) : null,
+    paused ? h('b', { class: 'cs-strip-text', text: `全場暫停中（${pauseSince(pause)}）` }) : null,
+    paused ? csButton('pause-off', busy.has('pause') ? '處理中…' : '恢復', { why: view.off ? OFFLINE_TEXT : busy.has('pause') ? '處理中…' : null, className: 'cs-strip-btn' }) : null,
+  );
+}
+
+// 結果條：✓／✗＋原因（太長「…」點一下看全文，批次動作逐桌寫在全文裡）、時間、加減日落鐘之後的「復原」；右邊是收合／收起。
+function resultBar(view, mode) {
+  let text = '每個動作的結果會寫在這裡';
+  if (progress) text = `${progress.label} ${progress.done}／${progress.total}…`;
+  else if (outcome) text = `${outcome.ok ? (outcome.warn ? '⚠' : '✓') : '✗'} ${outcome.text}`;
+  const tone = progress ? ' is-busy' : outcome ? (outcome.ok ? (outcome.warn ? ' is-warn' : ' is-ok') : ' is-error') : '';
+  const undo = outcome?.undo;
+  return h(
+    'div',
+    { class: `cs-result${tone}`, data: { key: 'result' }, attrs: { role: 'status', 'aria-live': 'polite' } },
+    trunc('p', 'cs-result-text', text, outcome && !progress ? `${text}${outcome.full !== outcome.text ? `\n${outcome.full}` : ''}` : text),
+    outcome && !progress ? h('span', { class: 'cs-result-time', text: wallTime(outcome.at, 0, { seconds: true }) }) : null,
+    undo ? csButton('clock-undo', '復原', { why: view.off ? OFFLINE_TEXT : busy.has(`clock:${undo.match}`) ? '處理中…' : null, className: 'cs-undo' }) : null,
+    mode === 'bar' ? h('button', { class: 'btn-link cs-link', type: 'button', data: { act: 'console-fold' }, text: '收合成一行' }) : null,
+    mode === 'drawer' ? h('button', { class: 'btn-link cs-link', type: 'button', data: { act: 'console-toggle' }, text: '收起控制台' }) : null,
+  );
+}
+
+// 收合成一行：日落鐘、目前投影的場景、結果、暫停鈕（暫停中是「恢復」）、展開。
+function foldBar(view) {
+  const { room, now, off } = view;
+  const pause = room.display?.pause ?? null;
+  const paused = pause?.on === true;
+  const clocks = clockMatches(room).map((match) => {
+    const clock = room.clock?.[match];
+    if (!isClock(clock)) return h('span', { class: 'cs-fold-clock', data: { key: `fold-${match}` } }, `${matchText(match)}・各桌各自計時`);
+    const state = clockPassed(clock, now) ? '已日落' : clockPaused(clock) ? '暫停中' : '';
+    return h(
+      'span',
+      { class: 'cs-fold-clock', data: { key: `fold-${match}`, clock: match } },
+      `${matchText(match)}日落鐘 `,
+      h('b', { class: 'cs-remaining', text: clockText(clockRemaining(clock, now)) }),
+      state ? ` ${state}` : '',
+    );
+  });
+  const scene = room.display?.scene ?? null;
+  const result = outcome ? `${outcome.ok ? (outcome.warn ? '⚠' : '✓') : '✗'} ${outcome.text}` : '';
+  return h(
+    'div',
+    { class: `cs-fold${paused ? ' is-paused' : ''}`, data: { key: 'fold' } },
+    clocks,
+    h('span', { class: 'cs-fold-scene', text: SCENE_LABELS[scene?.id] ? `投影中：${SCENE_LABELS[scene.id]}` : '還沒有切過場景' }),
+    trunc('span', 'cs-fold-result', progress ? `${progress.label} ${progress.done}／${progress.total}…` : off ? OFFLINE_TEXT : paused ? `全場暫停中（${pauseSince(pause)}）` : result, outcome?.full ?? result),
+    paused
+      ? csButton('pause-off', busy.has('pause') ? '處理中…' : '恢復全場', { why: off ? OFFLINE_TEXT : busy.has('pause') ? '處理中…' : null, className: 'cs-resume' })
+      : csButton('pause-on', busy.has('pause') ? '處理中…' : '緊急全場暫停', { why: off ? OFFLINE_TEXT : busy.has('pause') ? '處理中…' : null, className: 'cs-fold-pause' }),
+    h('button', { class: 'btn-link cs-link', type: 'button', data: { act: 'console-fold' }, text: '展開控制列' }),
+  );
+}
+
+function consoleView(room, mode) {
+  if (!mode) return [];
+  const now = serverTime(ctx.session);
+  const view = { room, now, off: !connected, paused: isPaused(room) };
+  if (mode === 'fold') return [foldBar(view)];
+  const parts = [
+    view.off || view.paused ? statusStrip(view) : null,
+    h('div', { class: 'cs-panels', data: { key: 'panels' } }, actionsPanel(view), clockPanel(view), scenePanel(view), soundPanel(view), broadcastPanel(view), pausePanel(view)),
+    resultBar(view, mode),
+  ].filter(Boolean);
+  return mode === 'drawer' ? [h('div', { class: 'cs-sheet', data: { key: 'sheet' } }, parts)] : parts;
+}
+
+// 控制台關著（或窄螢幕抽屜收起）時全場暫停：頂列下方浮一條紅條＋「恢復」（不佔高度，1280×800 照樣不用捲動）。
+function pauseFloat(room, mode) {
+  const pause = room.display?.pause ?? null;
+  if (pause?.on !== true || mode) return [];
+  return [
+    h(
+      'div',
+      { class: 'pause-float', data: { key: 'pause-float' }, attrs: { role: 'status' } },
+      h('b', { text: `全場暫停中（${pauseSince(pause)}）` }),
+      csButton('pause-off', busy.has('pause') ? '處理中…' : '恢復', { why: !connected ? OFFLINE_TEXT : busy.has('pause') ? '處理中…' : null, className: 'cs-strip-btn' }),
+    ),
+  ];
+}
+
+// ---- 控制台：確認框 ----
+
+// 控制列的確認框打開時就把計畫算好存起來（確認後原封交給 store；「能推的全推」每桌帶著這一刻的回合與階段）。之後局面變了，框裡寫一行
+// 提醒（照框裡的計畫做，已經變了的桌不會動；要看最新的請取消再按一次）。
+function openConsoleConfirm(request, opener) {
+  const room = ctx.latestRoom;
+  const data = ctx.cardData?.data;
+  if (!room) return;
+  const now = serverTime(ctx.session);
+  if (request.kind === 'start-all') Object.assign(request, { plan: startPlan(room, data), clock: true });
+  else if (request.kind === 'start-all-2') Object.assign(request, { plan: startMatch2Plan(room, data, seatPicks), clock: true });
+  else if (request.kind === 'advance-all') Object.assign(request, { ending: false, plan: advancePlan(room, data.settings, now, { discards: submissions.discards }) });
+  else if (request.kind === 'pause' || request.kind === 'resume') {
+    const pause = room.display?.pause ?? null;
+    Object.assign(request, { seq: pause?.seq ?? 0, clocks: Object.keys(pause?.clocks ?? {}).filter((match) => pause.clocks[match] === true) });
+  }
+  request.signature = planSignature(request.kind, room);
+  openConfirm(request, opener);
+}
+
+// 局面的「指紋」：只看計畫會用到的東西（各桌的回合、階段、有沒有開局、人數；暫停；鐘的序號），變了就在確認框提醒。
+function planSignature(kind, room) {
+  if (!['start-all', 'start-all-2', 'advance-all'].includes(kind)) return '';
+  const parts = [];
+  for (let table = 1; table <= room.meta.tableCount; table += 1) {
+    const key = activeKey(room, table);
+    const state = room.tables?.[key];
+    parts.push(`${key}:${state?.round}:${state?.phase}:${room.games?.[key] ? 1 : 0}:${playersAt(room, table).length}:${room.deals?.[key] ?? 0}`);
+  }
+  return `${parts.join('|')}|${isPaused(room)}`;
+}
+
+function dialogNode({ title, text, lines = [], options = [], hint = null, why = null, ok, danger = false, stale = false }) {
+  return h(
+    'div',
+    { class: 'confirm is-console', data: { key: `confirm-${confirming.kind}` }, attrs: { role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'confirm-title', 'aria-describedby': 'confirm-text' } },
+    h('h2', { class: 'confirm-title', attrs: { id: 'confirm-title' }, text: title }),
+    h('p', { class: 'confirm-text', attrs: { id: 'confirm-text' }, text }),
+    lines.length ? h('ul', { class: 'confirm-list' }, lines.map((line) => h('li', { class: `confirm-line${line.problem ? ' is-problem' : ''}`, text: line.text }))) : null,
+    options.map((option) =>
+      h('label', { class: 'confirm-option', data: { key: `option-${option.name}` } }, h('input', { type: 'checkbox', checked: option.checked, data: { change: 'confirm-option', option: option.name } }), h('span', { text: option.label })),
+    ),
+    stale ? h('p', { class: 'reason problem', text: '打開這個確認框之後局面變了：照框裡的計畫做，已經變了的桌不會動；要看最新的計畫請取消再按一次。' }) : null,
+    hint ? h('p', { class: 'hint', text: hint }) : null,
+    why ? h('p', { class: 'reason problem', text: why }) : null,
+    h(
+      'div',
+      { class: 'confirm-actions' },
+      h('button', { class: 'btn', type: 'button', data: { act: 'cancel-confirm', key: 'cancel' }, text: '取消' }),
+      h('button', { class: `btn${why ? '' : danger ? ' btn-primary cs-danger' : ' btn-primary'}`, type: 'button', data: { act: 'confirm-console', key: 'ok' }, disabled: Boolean(why), text: ok }),
+    ),
+  );
+}
+
+function startLines(room, plan) {
+  const lines = [];
+  const second = plan.match !== 1;
+  if (plan.start.length) {
+    for (const item of plan.start) {
+      const absent = second && item.absent.length ? `；沒參加：${item.absent.map((entry) => `${nameOf(room, entry.uid)}（${ABSENT_TEXT[entry.why] ?? entry.why}）`).join('、')}` : '';
+      lines.push({ text: `第 ${item.table} 桌：${item.count} 人${second ? '參加' : ''}${absent}` });
+      if (item.warning) lines.push({ text: `第 ${item.table} 桌${item.warning}`, problem: true });
+    }
+  }
+  // 跳過的桌照原因分組：「跳過第 3、4、5 桌：這一桌還沒有玩家」。
+  const reasons = new Map();
+  for (const item of plan.skip) reasons.set(item.reason, [...(reasons.get(item.reason) ?? []), item]);
+  for (const [reason, items] of reasons) lines.push({ text: `跳過${tablesText(items)}：${reason}`, problem: true });
+  if (plan.started.length) lines.push({ text: `已經開局：${plan.started.map((key) => `第 ${parseKey(key).table} 桌`).join('、')}` });
+  return lines;
+}
+
+function consoleDialog(room) {
+  const request = confirming;
+  const data = ctx.cardData?.data ?? null;
+  const now = serverTime(ctx.session);
+  const off = !connected ? OFFLINE_TEXT : null;
+  const stale = request.signature !== '' && request.signature !== planSignature(request.kind, room);
+  switch (request.kind) {
+    case 'start-all':
+    case 'start-all-2': {
+      const { plan } = request;
+      const second = plan.match !== 1;
+      const lines = startLines(room, plan);
+      const options = [];
+      if (plan.clock.needed && !plan.clock.error) {
+        options.push({ name: 'clock', checked: request.clock, label: `同時開始${second ? `${matchText(2)}的` : ''}全場日落鐘（${plan.clock.minutes} 分鐘）` });
+        if (request.clock && plan.started.length) {
+          for (const change of clockStartChanges(room, plan.match, plan.clock.minutes, data.settings, now)) lines.push({ text: `已開局的${change.text}`, problem: change.problem });
+        }
+      } else if (plan.clock.needed) lines.push({ text: `${plan.clock.error}；各桌照舊各自計時`, problem: true });
+      const why = off ?? (isPaused(room) ? PAUSED_TEXT : !data ? noDataText() : plan.start.length === 0 ? '沒有可以開的桌' : busy.has(request.kind) ? '處理中…' : null);
+      return dialogNode({
+        title: second ? `全部開始${matchText(2)}？` : '全部開始？',
+        text: second ? `照這台裝置的勾選開局（每桌各自洗牌）；開了之後就不能改名單。` : '每桌各自洗牌、發階層與天命，等同逐桌按「開始」。',
+        lines,
+        options,
+        hint: second ? '勾選只存在這台裝置；要改名單請先取消，在各桌的「勾選參加」改。' : '中途斷掉時已開的保留，再按一次只會開剩下的。',
+        why,
+        stale,
+        ok: `開始（${plan.start.length} 桌）`,
+      });
+    }
+    case 'advance-all': {
+      const { plan } = request;
+      const lines = plan.advance.map((item) => ({ text: advanceLine(item), problem: Boolean(item.ending || item.note) }));
+      const skipped = plan.skip.filter((item) => item.reason !== 'ended' && item.reason !== 'not-started');
+      if (skipped.length) lines.push({ text: `不推：${skipped.map((item) => `第 ${item.table} 桌（${item.text}）`).join('、')}` });
+      const scoring = plan.advance.some((item) => item.ending) || plan.skip.some((item) => item.reason === 'ending');
+      const why = off ?? (isPaused(room) ? PAUSED_TEXT : !data ? noDataText() : plan.advance.length === 0 ? '沒有可以推的桌' : busy.has('advance-all') ? '處理中…' : null);
+      return dialogNode({
+        title: '能推的全推下一階段？',
+        text: '只推「可推進」的桌，每桌照框裡的回合與階段推（別台先推了的桌不會動）；不替還在出牌的人結束白晝。',
+        lines,
+        options: scoring ? [{ name: 'ending', checked: request.ending, label: '連要算分的桌一起推（算分後不能回頭）' }] : [],
+        why,
+        stale,
+        ok: `推進（${plan.advance.length} 桌）`,
+      });
+    }
+    case 'clock-start': {
+      const minutes = data?.settings.sunsetMinutes;
+      const why = clockStartWhy({ room, off: !connected, paused: isPaused(room) }, request.match);
+      const lines = data && !why ? clockStartChanges(room, request.match, minutes, data.settings, now) : [];
+      return dialogNode({
+        title: `統一開始${matchText(request.match)}的全場日落鐘？`,
+        text: `從現在起 ${minutes} 分鐘後日落；${matchText(request.match)}所有桌的日落都照這個鐘，不再各自計時。`,
+        lines,
+        hint: '開了之後可以暫停、加減；鐘一旦開了就不能刪掉。',
+        why: room.clock?.[request.match] ? '別台已經開了這一場的全場日落鐘' : why,
+        ok: '開始全場日落鐘',
+      });
+    }
+    case 'clock-toggle': {
+      const clock = room.clock?.[request.match];
+      const guards = clockGuards(clock, now, { paused: isPaused(room) });
+      const why = off ?? (!isClock(clock) ? '這一場還沒有全場日落鐘' : clock.seq !== request.seq ? '別台剛改過這個鐘，請取消再看一次' : guards.toggle);
+      return request.pause
+        ? dialogNode({ title: `暫停${matchText(request.match)}的日落鐘？`, text: '暫停時鐘不走、不會到點；投影的鐘寫「暫停」。玩家手機上沒有鐘，畫面不變。', why, ok: '暫停日落鐘' })
+        : dialogNode({ title: `繼續${matchText(request.match)}的日落鐘？`, text: '從現在起接著倒數，暫停的時間不算。', why, ok: '繼續' });
+    }
+    case 'clock-zero': {
+      const clock = room.clock?.[request.match];
+      const why = off ?? (!isClock(clock) ? '這一場還沒有全場日落鐘' : clock.seq !== request.seq ? '別台剛改過這個鐘，請取消再看一次' : clockGuards(clock, now).minus);
+      const left = isClock(clock) ? clockText(clockRemaining(clock, now)) : '';
+      return dialogNode({
+        title: `把${matchText(request.match)}的日落鐘減到 0？`,
+        text: `現在剩 ${left}，減 ${Math.abs(request.delta) / MINUTE} 分就直接日落：各桌這一回合結束就算分。日落之後不能再加回來。`,
+        why,
+        danger: true,
+        ok: '減到 0（日落）',
+      });
+    }
+    case 'pause':
+      return dialogNode({
+        title: '全場暫停？',
+        text: '所有手機與投影會蓋上暫停畫面、日落鐘停住；正在倒數的響應窗口與揭曉會先跑完',
+        hint: `暫停中「開始」「下一階段」「全部…」「開${matchText(2)}」都不能按；任何一台主持端都能按「恢復」。`,
+        why: off ?? (isPaused(room) ? '已經是全場暫停中' : null),
+        danger: true,
+        ok: '全場暫停',
+      });
+    case 'resume':
+      return dialogNode({
+        title: '恢復全場？',
+        text: '手機與投影拿掉暫停畫面；被這次暫停停住的日落鐘接著走。',
+        why: off ?? (!isPaused(room) ? '現在沒有全場暫停' : null),
+        ok: '恢復',
+      });
+    case 'awards':
+      return dialogNode({
+        title: '切到頒獎？',
+        text: `${tablesText(request.open)}還在比賽，頒獎只會顯示已結束的桌`,
+        why: off,
+        ok: '切到頒獎',
+      });
+    default:
+      return null;
+  }
+}
+
+// ---- 控制台：指令 ----
+
+// 控制列的一個指令：送出到做完之間按鈕寫「處理中…」並停用（busy），結果寫在結果條（控制台關著時寫在頁首的提示）。
+// work 回傳 { ok, text, full?, warn?, undo? }；丟錯時照 commandError 寫成一句。
+async function command(key, work, { clock = false, describe = null } = {}) {
+  if (busy.has(key)) return;
+  busy.add(key);
+  rerender();
+  let result;
+  try {
+    result = await work();
+  } catch (error) {
+    result = { ok: false, text: commandError(error, { clock, describe }) };
+  } finally {
+    busy.delete(key);
+  }
+  if (result) {
+    outcome = { ok: result.ok, warn: result.warn === true, text: result.text, full: result.full ?? result.text, undo: result.undo ?? null, at: Date.now() };
+    if (!consoleMode() || consoleMode() === 'fold') notify(`${result.ok ? '' : '沒有成功：'}${result.text}`);
+  }
+  rerender();
+}
+
+// 批次動作的進度：store 每做完一桌呼叫一次（store 沒有包 try／catch，這裡一定不能丟錯）。
+function onProgress(label) {
+  return ({ done, total }) => {
+    try {
+      progress = { label, done, total };
+      soon();
+    } catch {
+      // 進度只是顯示，不影響批次動作。
+    }
+  };
+}
+
+function describeClock(latest) {
+  if (!isClock(latest)) return '';
+  const now = serverTime(ctx.session);
+  return clockPassed(latest, now) ? '現在已經日落' : `現在剩 ${clockText(clockRemaining(latest, now))}${clockPaused(latest) ? '（暫停中）' : ''}`;
+}
+
+function runStartAll(request) {
+  const { plan } = request;
+  const label = plan.match === 1 ? '開局中' : `${matchText(2)}開局中`;
+  command(request.kind, async () => {
+    progress = { label, done: 0, total: plan.start.length };
+    try {
+      const { results, clock } = await startAll(ctx.session, ctx.code, plan, ctx.cardData.data, { random, clock: request.clock && plan.clock.needed && !plan.clock.error, onProgress: onProgress(label) });
+      const items = new Map(plan.start.map((item) => [item.key, item]));
+      const lines = results.map((result) => startResult(result, items.get(result.key)));
+      if (plan.match !== 1) for (const result of results) if (result.started) seatPicks.delete(result.key);
+      if (clock) {
+        if (clock.error) lines.push({ ok: false, text: `全場日落鐘沒開成：${commandError(clock.error, { clock: true })}` });
+        else lines.push({ ok: true, text: clock.started ? `全場日落鐘開始了（${plan.clock.minutes} 分鐘）` : '全場日落鐘別台已經開了' });
+      }
+      const started = results.filter((result) => result.started).length;
+      const failed = lines.filter((line) => !line.ok);
+      const head = `${plan.match === 1 ? '全部開始' : `全部開始${matchText(2)}`}：${started} 桌開局${failed.length ? `；${failed.map((line) => line.text).join('；')}` : ''}${clock && !clock.error && clock.started ? '；全場日落鐘開始了' : ''}`;
+      return { ok: failed.length === 0, text: head, full: lines.map((line) => `${line.ok ? '✓' : '✗'} ${line.text}`).join('\n') };
+    } finally {
+      progress = null;
+    }
+  });
+}
+
+function runAdvanceAll(request) {
+  const { plan } = request;
+  command('advance-all', async () => {
+    progress = { label: '推進中', done: 0, total: plan.advance.length };
+    try {
+      const { results } = await advanceAll(ctx.session, ctx.code, plan, ctx.cardData.data, { random, onProgress: onProgress('推進中') });
+      const items = new Map(plan.advance.map((item) => [item.key, item]));
+      const lines = results.map((result) => advanceResult(result, items.get(result.key)));
+      const moved = results.filter((result) => result.advanced).length;
+      const failed = lines.filter((line) => !line.ok);
+      const head = `能推的全推：${moved} 桌推進了${failed.length ? `；${failed.map((line) => line.text).join('；')}` : ''}`;
+      return { ok: failed.length === 0, warn: failed.length > 0 && moved > 0, text: head, full: lines.map((line) => `${line.ok ? '✓' : '✗'} ${line.text}`).join('\n') };
+    } finally {
+      progress = null;
+    }
+  });
+}
+
+// 加減日落鐘（不確認）：結果條寫「＋5 分（日落改在 18:44）」＋「復原」（＝反方向調一次，帶著調完之後的序號：別台又改過就不會亂調）。
+function runAdjust(match, delta, expectSeq, { undo = false } = {}) {
+  command(
+    `clock:${match}`,
+    async () => {
+      const { delta: done, clock } = await adjustClock(ctx.session, ctx.code, match, delta, { expectSeq });
+      const at = clockSunsetAt(clock);
+      const when = at === null ? `暫停中，剩 ${clockText(clockRemaining(clock, serverTime(ctx.session)))}` : `日落改在 ${wallTime(at, offsetNow())}`;
+      const clipped = Math.abs(done) < Math.abs(delta) ? (Math.abs((clock.adjust ?? 0)) >= CLOCK_ADJUST_MAX_MS ? `；到了累計 ${CLOCK_ADJUST_MAX_MS / MINUTE} 分的上限` : '；減到底了') : '';
+      return { ok: true, text: `${undo ? '復原：' : ''}${matchText(match)}日落鐘${deltaText(done)}（${when}）${clipped}`, undo: undo ? null : { match, delta: -done, seq: clock.seq } };
+    },
+    { clock: true, describe: describeClock },
+  );
+}
+
+function runClockToggle(request) {
+  const { match, pause, seq } = request;
+  command(
+    `clock:${match}`,
+    async () => {
+      const { changed, clock } = pause ? await pauseClock(ctx.session, ctx.code, match, { expectSeq: seq }) : await resumeClock(ctx.session, ctx.code, match, { expectSeq: seq });
+      const left = clockText(clockRemaining(clock, serverTime(ctx.session)));
+      if (!changed) return { ok: true, text: `${matchText(match)}日落鐘本來就${pause ? '暫停著' : '在走'}（剩 ${left}）` };
+      return { ok: true, text: `${matchText(match)}日落鐘${pause ? '暫停了' : '繼續走'}（剩 ${left}）` };
+    },
+    { clock: true, describe: describeClock },
+  );
+}
+
+function runClockStart(match) {
+  const minutes = ctx.cardData?.data.settings.sunsetMinutes;
+  command(
+    `clock:${match}`,
+    async () => {
+      const { started, clock } = await startClock(ctx.session, ctx.code, match, minutes);
+      if (!started) return { ok: true, text: `${matchText(match)}的全場日落鐘別台已經開了` };
+      return { ok: true, text: `${matchText(match)}全場日落鐘開始了：${minutes} 分鐘後（${wallTime(clockSunsetAt(clock), offsetNow())}）日落` };
+    },
+    { clock: true },
+  );
+}
+
+// 全場暫停／恢復（一筆寫入，連同日落鐘）。回傳的 clocks 跟按下去時畫面上的鐘對不上（快日落、別台剛好動了鐘、暫停中被手動動過）就提醒。
+function runPause(request) {
+  const on = request.kind === 'pause';
+  const room = ctx.latestRoom;
+  const now = serverTime(ctx.session);
+  const running = [1, MATCH_COUNT].filter((match) => {
+    const clock = room?.clock?.[match];
+    return isClock(clock) && !clockPaused(clock) && !clockPassed(clock, now);
+  });
+  command(
+    'pause',
+    async () => {
+      const { changed, clocks } = await setPause(ctx.session, ctx.code, on, { expectSeq: request.seq });
+      if (!changed) return { ok: true, text: on ? '本來就是全場暫停中' : '本來就沒有全場暫停' };
+      const names = (list) => list.map((match) => matchText(Number(match))).join('、');
+      const done = clocks.map(String);
+      const expected = on ? running.map(String) : request.clocks;
+      const missed = expected.filter((match) => !done.includes(match));
+      let text = on ? `全場暫停了${done.length ? `；${names(done)}日落鐘一起停住` : ''}` : `恢復全場了${done.length ? `；${names(done)}日落鐘接著走` : ''}`;
+      if (missed.length) {
+        text += on
+          ? `；${names(missed)}日落鐘沒有停住（快日落或別台剛動了鐘），要停請在日落鐘面板按暫停`
+          : `；${names(missed)}日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續`;
+      }
+      return { ok: true, warn: missed.length > 0, text };
+    },
+    { describe: (latest) => (latest ? (latest.on === true ? '現在是全場暫停中' : '現在沒有暫停') : '') },
+  );
+}
+
+function runScene(id, page = null) {
+  command('scene', async () => {
+    await setScene(ctx.session, ctx.code, id, page === null ? {} : { page });
+    return { ok: true, text: `投影切到〈${SCENE_LABELS[id]}〉${page === null ? '' : `第 ${page + 1} 頁`}` };
+  });
+}
+
+// 頂列的「控制台」切換、窄螢幕抽屜的收起、控制列的收合都記在這台裝置。
+function setConsole(on) {
+  consolePref = on ? 'on' : 'off';
+  writePref(CONSOLE_KEY, consolePref);
+  rerender();
+}
+
+// 在等誰、連線狀態有變時重畫（訂閱的回呼可能在 renderHost 裡同步回來，排到下一輪再畫，不重入）。
+let redraw = false;
+function soon() {
+  if (redraw) return;
+  redraw = true;
+  queueMicrotask(() => {
+    redraw = false;
+    rerender();
+  });
+}
+
+// 每秒：桌卡底部的日落鐘、控制列的日落鐘（剩餘、已進行、進度條）只換字，不整個重畫；到點（日落）由 rerenderAt 重畫。
+function tick() {
+  const room = ctx.latestRoom;
+  if (!room || $('screen-host').hidden) return;
+  for (const node of document.querySelectorAll('.sunset-clock[data-sunset]')) node.textContent = sunsetLine(room, node.dataset.sunset);
+  const now = serverTime(ctx.session);
+  for (const node of $('host-console').querySelectorAll('[data-clock]')) {
+    const clock = room.clock?.[node.dataset.clock];
+    if (!isClock(clock)) continue;
+    const set = (selector, text) => {
+      const target = node.querySelector(selector);
+      if (target && target.textContent !== text) target.textContent = text;
+    };
+    set('.cs-remaining', clockText(clockRemaining(clock, now)));
+    set('.cs-elapsed', `已進行 ${clockText(clockElapsed(clock, now), { up: true })}`);
+    node.querySelector('.cs-progress-fill')?.style.setProperty('width', `${progressOf(clock, now)}%`);
+  }
+}
+
 // ---- 畫面 ----
 
 export function renderHost(room) {
@@ -1237,32 +2355,68 @@ export function renderHost(room) {
   if (ctx.cardData && !stopSettling) {
     stopSettling = startSettling(ctx.session, ctx.code, ctx.cardData.data, { random, onError: (error) => notify(explain(error)) });
   }
+  // 在等誰（入座的人的票、黑夜選擇、挑的棄牌）與這台的連線狀態：進主持畫面就訂閱，回首頁時停（resetHost）。
+  if (!stopSubmissions) {
+    stopSubmissions = () => {};
+    stopSubmissions = watchSubmissions(
+      ctx.session,
+      ctx.code,
+      (value) => {
+        submissions = value;
+        soon();
+      },
+      () => {},
+    );
+  }
+  if (!stopConnection) {
+    stopConnection = () => {};
+    stopConnection = watchConnection(ctx.session, (value) => {
+      if (value === connected) return;
+      connected = value;
+      soon();
+    });
+  }
+  const mode = consoleMode();
+  compactCards = mode === 'bar' || mode === 'fold';
   const cards = [];
   // 每桌只畫目前那一局（有 tables/{n}-2 就是第 2 場）；tables、games、deals 有 "1-2" 這種鍵後是物件，只用 [局號] 取值。
   for (let number = 1; number <= room.meta.tableCount; number += 1) {
     const t = tableModel(room, activeKey(room, number));
     if (!t) continue;
-    if (t.game) {
-      watchHostDiscards(t.game);
-      if (!t.ended) wakeAtSunset(t.game, t.key);
-    }
+    if (t.game && !t.ended) wakeAtSunset(t.game, t.key);
     const limits = handLimits(t);
     cards.push({ t, limits, step: stepOf(t, limits) });
   }
-  patchChildren($('host-top'), topBar(room, cards));
+  // 全場日落鐘到點時重畫（控制列的鐘換成「已日落」、按鈕停用）。
+  for (const match of [1, MATCH_COUNT]) {
+    const clock = room.clock?.[match];
+    if (isClock(clock) && clockSunsetAt(clock) !== null) rerenderAt(clockSunsetAt(clock));
+  }
+  patchChildren($('host-top'), topBar(room, cards, mode));
+  const section = $('host-console');
+  section.hidden = !mode;
+  section.className = `console${mode ? ` is-${mode}` : ''}`;
+  patchChildren(section, consoleView(room, mode));
+  // 控制列在頂列下面（或收合成一行）時桌卡用緊湊版；窄螢幕的抽屜蓋在桌卡上，桌卡照舊。
+  $('screen-host').classList.toggle('is-console', compactCards);
   patchChildren(
     $('host-tables'),
     cards.map(({ t, step, limits }) => tableCard(t, step, limits)),
   );
-  patchChildren($('host-layer'), [...drawerLayer(room), ...confirmLayer(room)]);
+  patchChildren($('host-layer'), [...pauseFloat(room, mode), ...drawerLayer(room), ...confirmLayer(room)]);
   document.body.classList.toggle('has-drawer', Boolean(drawer || confirming));
   markTopHeight();
   markTruncated($('screen-host'));
 }
 
-// 頁首的提示框放在頂列下方（host.css 的 --host-top-h）：頂列在比較小的畫面會變成兩行，照實際高度放。
+// 頁首的提示框放在頂列下方（host.css 的 --host-top-h）：頂列在比較小的畫面會變成兩行，照實際高度放；控制列開著時放在控制列下面
+// （不蓋住緊急暫停鈕；抽屜很高時最多到畫面六成的位置）。
 function markTopHeight() {
-  if (!$('screen-host').hidden) document.body.style.setProperty('--host-top-h', `${$('host-top').offsetHeight}px`);
+  if ($('screen-host').hidden) return;
+  const section = $('host-console');
+  const top = $('host-top').getBoundingClientRect().bottom;
+  const bar = section.hidden ? 0 : Math.min(section.getBoundingClientRect().bottom, window.innerHeight * 0.6);
+  document.body.style.setProperty('--host-top-h', `${Math.round(Math.max(top, bar))}px`);
 }
 
 // ---- 事件（委派）：按鈕上的 data-act 決定做什麼，做的時候讀當下的局面 ----
@@ -1359,9 +2513,22 @@ function openMatches(plan, one) {
 const actions = {
   // 帶著畫面上這一刻的回合與階段去推進；資料庫已經不一樣就不會動。黑夜時該算分就算分（同一筆寫入），不然推進到下一回合日出；
   // 是自己這一筆把桌子推進到新回合的日出，就接著發牌。table 一律是局號字串（不轉數字：Number('3-2') 是 NaN）。
-  next: ({ table, round, phase }) => {
+  // 黑夜：按鈕上寫的「下一階段 ▸」或「下一階段（算分）」跟按下去這一刻的判斷不一樣（全場日落鐘剛被調過或暫停、別台改了「這回合結束後
+  // 算分」）就先不送，重畫給主持人看；寫「下一階段 ▸」的不替它算分（allowEnd: false，送出途中剛好到點時回 held）。
+  next: ({ table, round, phase, ending }) => {
+    const t = current(table);
+    if (t?.game && phase === 'night' && t.state.phase === 'night' && String(t.ending) !== ending) {
+      notify(
+        t.ending
+          ? `第 ${t.number} 桌這一回合變成要算分了（${END_REASON_TEXT[t.reason] ?? t.reason}），請看清楚再按一次`
+          : `第 ${t.number} 桌這一回合不算分了，會推進到下一回合（手牌超過上限的人要先挑棄牌），請看清楚再按一次`,
+      );
+      rerender();
+      return;
+    }
     act(`next:${table}`, async () => {
-      const result = await advanceOrEnd(ctx.session, ctx.code, table, { round: Number(round), phase }, ctx.cardData?.data);
+      const result = await advanceOrEnd(ctx.session, ctx.code, table, { round: Number(round), phase }, ctx.cardData?.data, { allowEnd: phase !== 'night' || ending !== 'false' });
+      if (result.held) notify(`第 ${parseKey(table).table} 桌這一回合剛好變成要算分了，請看清楚再按「下一階段（算分）」`);
       if (result.advanced && !result.ended && result.table.phase === 'sunrise' && ctx.cardData) await deal(table);
     });
   },
@@ -1429,7 +2596,111 @@ const actions = {
   approve: ({ uid }) => act(`approve:${uid}`, () => approveHost(ctx.session, ctx.code, uid)),
   reject: ({ uid }) => act(`reject:${uid}`, () => rejectHost(ctx.session, ctx.code, uid)),
   leave: () => document.dispatchEvent(new CustomEvent('host-leave')),
+
+  // ---- 控制台 ----
+  'console-toggle': () => setConsole(!consoleOn()),
+  'console-fold': () => {
+    folded = !folded;
+    writePref(FOLD_KEY, folded ? '1' : '0');
+    rerender();
+  },
+  'open-screen': () => window.open(screenUrl(location.search, ctx.code), 'one-day-briton-screen'),
+  'start-all': () => openConsoleConfirm({ kind: 'start-all' }, '[data-act="start-all"]'),
+  'start-all-2': () => openConsoleConfirm({ kind: 'start-all-2' }, '[data-act="start-all-2"]'),
+  'advance-all': () => openConsoleConfirm({ kind: 'advance-all' }, '[data-act="advance-all"]'),
+  'clock-start': ({ match }) => openConsoleConfirm({ kind: 'clock-start', match: Number(match) }, `[data-act="clock-start"][data-match="${match}"]`),
+  'clock-pause': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: true, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-pause"][data-match="${match}"]`),
+  'clock-resume': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: false, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-resume"][data-match="${match}"]`),
+  // 加減不確認；減到 0（直接日落、加不回來）才確認。帶著畫面上那個鐘的序號：別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
+  'clock-adjust': ({ match, delta }) => {
+    const clock = ctx.latestRoom?.clock?.[match];
+    if (!isClock(clock)) return;
+    const amount = Number(delta);
+    if (amount < 0 && clockRemaining(clock, serverTime(ctx.session)) <= -amount) {
+      openConsoleConfirm({ kind: 'clock-zero', match: Number(match), delta: amount, seq: clock.seq }, `[data-act="clock-adjust"][data-match="${match}"][data-delta="${delta}"]`);
+      return;
+    }
+    runAdjust(Number(match), amount, clock.seq);
+  },
+  'clock-undo': () => {
+    const undo = outcome?.undo;
+    if (undo) runAdjust(undo.match, undo.delta, undo.seq, { undo: true });
+  },
+  scene: ({ scene }) => {
+    const room = ctx.latestRoom;
+    if (!room) return;
+    if (scene === 'awards') {
+      const open = [];
+      for (let table = 1; table <= room.meta.tableCount; table += 1) if (standingsOf(room, table)?.status === 'playing') open.push({ table });
+      if (open.length) {
+        openConsoleConfirm({ kind: 'awards', open }, '[data-act="scene"][data-scene="awards"]');
+        return;
+      }
+    }
+    runScene(scene);
+  },
+  'scene-page': ({ step }) => {
+    const scene = ctx.latestRoom?.display?.scene;
+    if (!PAGED_SCENES.has(scene?.id)) return;
+    const page = Math.max(0, Math.min(SCENE_PAGE_MAX, (Number.isInteger(scene.page) ? scene.page : 0) + Number(step)));
+    runScene(scene.id, page);
+  },
+  sfx: ({ sfx }) =>
+    command('sfx', async () => {
+      await playSfx(ctx.session, ctx.code, sfx);
+      return { ok: true, text: `${SFX_LABELS[sfx]}送到投影端了（約 0.2–1 秒後響）` };
+    }),
+  music: ({ on }) => {
+    const music = ctx.latestRoom?.display?.music ?? null;
+    const play = on === 'true';
+    command(
+      'music',
+      async () => {
+        const { changed } = await setMusic(ctx.session, ctx.code, play, { expectSeq: music?.seq ?? 0 });
+        if (!changed) return { ok: true, text: play ? '開場音樂本來就在播' : '開場音樂本來就停著' };
+        return { ok: true, text: play ? '開場音樂：播放（投影端）' : '開場音樂：停止' };
+      },
+      { describe: (latest) => (latest ? (latest.on === true ? '現在在播開場音樂' : '現在音樂停著') : '') },
+    );
+  },
+  'broadcast-send': () => sendDraft(),
+  'broadcast-hide': () => {
+    const broadcast = ctx.latestRoom?.display?.broadcast ?? null;
+    command(
+      'broadcast',
+      async () => {
+        const { changed } = await hideBroadcast(ctx.session, ctx.code, { expectSeq: broadcast?.seq ?? 0 });
+        return { ok: true, text: changed ? '廣播收回了：手機與投影都拿掉' : '這則廣播已經收回了' };
+      },
+      { describe: (latest) => (latest?.text ? `現在是「${latest.text}」${latest.hidden ? '（已收回）' : ''}` : '') },
+    );
+  },
+  'pause-on': () => openConsoleConfirm({ kind: 'pause' }, '[data-act="pause-on"]'),
+  'pause-off': () => openConsoleConfirm({ kind: 'resume' }, '[data-act="pause-off"]'),
+  'confirm-console': () => {
+    const request = confirming;
+    if (!request) return;
+    closeConfirm();
+    if (request.kind === 'start-all' || request.kind === 'start-all-2') runStartAll(request);
+    else if (request.kind === 'advance-all') runAdvanceAll(request);
+    else if (request.kind === 'clock-start') runClockStart(request.match);
+    else if (request.kind === 'clock-toggle') runClockToggle(request);
+    else if (request.kind === 'clock-zero') runAdjust(request.match, request.delta, request.seq);
+    else if (request.kind === 'pause' || request.kind === 'resume') runPause(request);
+    else if (request.kind === 'awards') runScene('awards');
+  },
 };
+
+// 送出廣播：送不出去時輸入框保留原本的字（結果條寫原因）；送出去之後輸入框還是剛剛那些字才清掉。
+function sendDraft() {
+  const input = draft;
+  if (!isValidBroadcast(normalizeBroadcast(input)) || !connected) return;
+  command('broadcast', async () => {
+    const { text } = await sendBroadcast(ctx.session, ctx.code, input);
+    if (draft === input) draft = '';
+    return { ok: true, text: `廣播送出了：「${text}」` };
+  });
+}
 
 $('screen-host').addEventListener('click', (event) => {
   const target = event.target.closest('[data-act]');
@@ -1442,8 +2713,39 @@ $('screen-host').addEventListener('click', (event) => {
 });
 
 $('screen-host').addEventListener('change', (event) => {
-  const target = event.target.closest('[data-change="start-order"]');
-  if (target) startChoices.set(target.dataset.table, Number(target.value));
+  const target = event.target.closest('[data-change]');
+  if (!target) return;
+  if (target.dataset.change === 'start-order') startChoices.set(target.dataset.table, Number(target.value));
+  // 控制列確認框的勾選：「同時開始全場日落鐘」、「連要算分的桌一起推」（重算計畫，框裡的清單跟著換）。
+  if (target.dataset.change === 'confirm-option' && confirming) {
+    if (target.dataset.option === 'clock') confirming.clock = target.checked;
+    if (target.dataset.option === 'ending' && ctx.latestRoom && ctx.cardData) {
+      confirming.ending = target.checked;
+      confirming.plan = advancePlan(ctx.latestRoom, ctx.cardData.data.settings, serverTime(ctx.session), { includeEnding: target.checked, discards: submissions.discards });
+      confirming.signature = planSignature('advance-all', ctx.latestRoom);
+    }
+    rerender();
+  }
+  // 廣播的常用句：填進輸入框（不送出），游標放回輸入框。
+  if (target.dataset.change === 'phrase' && target.value) {
+    draft = target.value;
+    target.value = '';
+    rerender();
+    $('console-broadcast')?.focus();
+  }
+});
+
+// 廣播輸入框：每打一個字就記下來（重畫時保留，字數與預覽跟著換）；Enter 送出（選字中的 Enter 不算）。
+$('screen-host').addEventListener('input', (event) => {
+  if (event.target.dataset?.input !== 'broadcast') return;
+  draft = event.target.value;
+  rerender();
+});
+
+$('screen-host').addEventListener('keydown', (event) => {
+  if (event.target.dataset?.input !== 'broadcast' || event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  sendDraft();
 });
 
 // 鍵盤：Esc 關確認框、抽屜（或備援申請面板）；確認框或抽屜開著時 Tab 只在裡面轉。
@@ -1460,7 +2762,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key !== 'Tab' || !(drawer || confirming)) return;
   const panel = $('host-layer').querySelector(confirming ? '.confirm' : '.drawer');
-  const focusable = [...(panel?.querySelectorAll('button:not(:disabled), [tabindex="0"]') ?? [])];
+  const focusable = [...(panel?.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? [])];
   if (focusable.length === 0) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -1476,11 +2778,16 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-// 視窗大小變了，重新看頂列多高、哪些名字被截斷。
+// 視窗大小變了，重新看頂列多高、哪些名字被截斷；跨過寬螢幕的門檻（1360×860）時控制台換版面（沒選過開關的跟著開或關）。
 let resizeTimer = null;
+let wideBefore = isWide();
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    if (isWide() !== wideBefore) {
+      wideBefore = isWide();
+      if (!$('screen-host').hidden) rerender();
+    }
     markTopHeight();
     markTruncated($('screen-host'));
   }, 150);

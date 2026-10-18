@@ -1530,3 +1530,799 @@ body:has(> #screen-host:not([hidden])) > .topbar .toast.is-folded .toast-text {
     margin-top: -12px;
   }
 }
+
+/* ---- 控制台模式：頂列下面一條控制列（全場動作、日落鐘、投影畫面、音效台、全場廣播、緊急全場暫停）＋結果條 ----
+   寬螢幕（1360×860 以上）在頂列下面（約 160px，桌卡改緊湊版，1440×900 不用捲動）；收合成一行（約 44px）；窄螢幕是蓋在桌卡上的上方抽屜。 */
+
+.host-version {
+  color: #c9c3b6;
+}
+
+.host-top .top-btn.host-console-toggle.is-on {
+  border-color: var(--end-ink);
+  color: var(--end-ink);
+  font-weight: 700;
+}
+
+.console {
+  position: relative;
+  z-index: 15;
+  flex: none;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+.console.is-bar {
+  padding: 6px 10px 0;
+}
+
+.console.is-fold {
+  padding: 4px 10px;
+}
+
+/* 窄螢幕：區塊本身不佔高度，內容蓋在桌卡上（頂列下面往下展開，太高就在裡面捲）。 */
+.console.is-drawer {
+  height: 0;
+  border: 0;
+  background: none;
+  z-index: 30;
+}
+
+.cs-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  max-height: min(80vh, 760px);
+  overflow: auto;
+  padding: 8px 10px 0;
+  border-bottom: 1px solid var(--rule-strong);
+  background: var(--paper-sunk);
+  box-shadow: 0 14px 30px rgba(31, 36, 48, 0.3);
+}
+
+.cs-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.05fr) minmax(0, 1.4fr) minmax(0, 0.95fr) minmax(0, 1.05fr) minmax(0, 0.5fr);
+  gap: 6px;
+  height: 136px;
+}
+
+.console.is-drawer .cs-panels {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  height: auto;
+}
+
+.cs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 9px 6px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+}
+
+.console.is-drawer .cs-panel {
+  min-height: 136px;
+}
+
+/* 面板裡的每一行都不縮（放不下的字在行內「…」，點一下看全文），面板的高度固定。 */
+.cs-panel > *,
+.cs-clock > *,
+.cs-scene-side > * {
+  flex: none;
+}
+
+.cs-title {
+  flex: none;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+}
+
+.cs-note {
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.console .trunc.cs-note,
+.console p.trunc {
+  display: block;
+}
+
+.console .cs-btn {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.console .cs-btn.btn-primary {
+  min-height: 28px;
+  font-size: 13px;
+}
+
+.console .cs-link,
+.pause-float .cs-link {
+  min-height: 22px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 全場動作 */
+.console .cs-advance {
+  width: 100%;
+  min-height: 30px;
+}
+
+.cs-grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 4px;
+}
+
+.console .cs-small {
+  display: block;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 5px;
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+}
+
+.cs-grid2 .cs-busy {
+  padding-left: 2px;
+}
+
+.cs-busy.is-on {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* 日落鐘 */
+.cs-clocks {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.cs-clocks.is-two {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.cs-clock {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cs-clocks.is-two .cs-clock + .cs-clock {
+  padding-left: 8px;
+  border-left: 1px dashed var(--rule-strong);
+}
+
+.cs-clock-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cs-remaining {
+  color: var(--ink);
+  font: 800 34px / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.cs-clock.is-small .cs-remaining {
+  font-size: 22px;
+}
+
+.cs-clock.is-paused .cs-remaining {
+  color: var(--ink-3);
+}
+
+.cs-clock.is-passed .cs-remaining {
+  color: var(--accent);
+}
+
+.cs-clock-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.console .cs-match {
+  align-self: flex-start;
+  padding: 0 6px;
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.cs-clock.is-paused .cs-match,
+.cs-clock.is-passed .cs-match {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cs-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--fog-track);
+}
+
+.cs-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--gold);
+  transition: width 0.9s linear;
+}
+
+.cs-clock.is-passed .cs-progress-fill {
+  background: var(--accent);
+}
+
+.cs-clock-btns {
+  display: flex;
+  gap: 3px;
+}
+
+.console .cs-clock-btns .cs-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.console .cs-clock-btns .cs-toggle {
+  flex: 1.5 1 0;
+}
+
+.cs-clock.is-none {
+  justify-content: flex-start;
+}
+
+.cs-none-text {
+  font-size: 15px;
+}
+
+.console .cs-wide {
+  width: 100%;
+}
+
+/* 投影畫面：左邊小預覽與目前的場景，右邊五顆場景鈕。 */
+.cs-scene {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: 8px;
+}
+
+.cs-scene > .cs-title {
+  grid-column: 1 / -1;
+}
+
+.cs-scene-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cs-preview {
+  position: relative;
+  width: 112px;
+  height: 63px;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+}
+
+.cs-preview-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  pointer-events: none;
+  transform: scale(0.0875);
+  transform-origin: 0 0;
+}
+
+.cs-scene-now {
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 14px;
+}
+
+.cs-pager {
+  display: flex;
+  gap: 4px;
+}
+
+.console .cs-pager .cs-btn {
+  flex: 1;
+  min-height: 26px;
+  padding: 0 4px;
+}
+
+.cs-scene-btns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 5px 4px;
+  padding-top: 4px;
+}
+
+.console .cs-scene-btn {
+  position: relative;
+  min-width: 0;
+  padding: 2px 4px;
+  font-size: 11.5px;
+}
+
+.console .cs-scene-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.console .cs-scene-btn.is-live {
+  border: 2px solid var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.cs-live {
+  position: absolute;
+  top: -7px;
+  right: -2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+/* 音效台與投影端狀態 */
+.cs-sfx {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.console .cs-sfx .cs-btn {
+  min-width: 0;
+  min-height: 24px;
+  padding: 1px 4px;
+}
+
+.console .cs-music {
+  grid-column: 1 / -1;
+}
+
+.console .cs-music.is-on {
+  border-color: var(--gold);
+  background: var(--gold-tint);
+  color: var(--gold-ink);
+  font-weight: 800;
+}
+
+.cs-screens {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.cs-screens:not(.is-empty)::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+.cs-screens.is-ok::before {
+  background: #3f7d4f;
+}
+
+.cs-screens.is-stale {
+  color: #9a9488;
+}
+
+.cs-screens.is-stale::before {
+  background: #b9b3a6;
+}
+
+.cs-screens .trunc {
+  display: block;
+  min-width: 0;
+}
+
+.cs-screens.is-empty {
+  color: var(--ink-3);
+}
+
+/* 全場廣播 */
+.cs-cast-row {
+  display: flex;
+  gap: 4px;
+}
+
+.console .cs-cast-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 13px;
+}
+
+.cs-cast-meta {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.cs-count {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.cs-count.is-over {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cs-cast-meta .cs-cast-preview {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.cs-cast-last {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.cs-cast-last .trunc {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-cast-last.is-hidden {
+  color: var(--ink-3);
+}
+
+.console .cs-hide {
+  min-height: 22px;
+  padding: 0 8px;
+}
+
+.console .cs-phrases {
+  min-height: 24px;
+  padding: 1px 6px;
+  font-size: 11.5px;
+}
+
+/* 緊急全場暫停：最右邊的紅色大鈕；暫停中是深紅底＋「恢復」。 */
+.cs-pause {
+  padding: 0;
+  border-color: var(--accent);
+}
+
+.cs-pause-btn {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  text-align: center;
+  cursor: pointer;
+}
+
+.cs-pause-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.cs-pause-btn:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: -4px;
+}
+
+.cs-pause-btn:disabled {
+  background: #a9878c;
+  cursor: not-allowed;
+}
+
+.cs-pause-title {
+  font: 900 17px / 1.25 var(--font-title);
+}
+
+.cs-pause-sub {
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.92;
+}
+
+.cs-pause.is-on {
+  padding: 4px 9px 6px;
+  background: #4a1219;
+  color: #fff;
+}
+
+.cs-pause.is-on .cs-title,
+.cs-pause.is-on .cs-note {
+  color: #f1d4d7;
+}
+
+.cs-pause-on {
+  font: 900 16px / 1.3 var(--font-title);
+}
+
+.console .cs-resume {
+  margin-top: auto;
+  border-color: var(--end-ink);
+  background: var(--end-ink);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+/* 控制列最上面的狀態條（離線、全場暫停中）：寬螢幕蓋在面板標題上，不佔高度。 */
+.cs-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: #5b636f;
+  color: #fff;
+  font-size: 12.5px;
+}
+
+.cs-strip.is-paused {
+  background: var(--accent);
+}
+
+.console.is-bar .cs-strip {
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  left: 10px;
+  z-index: 2;
+}
+
+.cs-strip-off {
+  font-weight: 700;
+}
+
+.console .cs-strip-btn,
+.pause-float .cs-strip-btn {
+  min-height: 20px;
+  padding: 0 12px;
+  border-color: var(--end-ink);
+  background: var(--end-ink);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+/* 結果條：✓／✗＋原因、時間、復原；右邊收合／收起。 */
+.cs-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  padding: 2px 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.cs-result .cs-result-text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-result.is-ok .cs-result-text {
+  color: #2f6b3e;
+  font-weight: 700;
+}
+
+.cs-result.is-warn .cs-result-text,
+.cs-result.is-busy .cs-result-text {
+  color: var(--gold-ink);
+  font-weight: 700;
+}
+
+.cs-result.is-error .cs-result-text {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cs-result-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.console .cs-undo {
+  min-height: 22px;
+  padding: 0 10px;
+}
+
+/* 收合成一行 */
+.cs-fold {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.cs-fold-clock .cs-remaining {
+  font-size: 20px;
+}
+
+.cs-fold-scene {
+  color: var(--ink-2);
+}
+
+.cs-fold .cs-fold-result {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-3);
+}
+
+.cs-fold.is-paused {
+  margin: -4px -10px;
+  padding: 4px 10px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.cs-fold.is-paused .cs-fold-scene,
+.cs-fold.is-paused .cs-fold-result,
+.cs-fold.is-paused .cs-remaining,
+.cs-fold.is-paused .cs-link {
+  color: #fff;
+}
+
+.console .cs-fold-pause {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+}
+
+/* 控制台關著時的全場暫停：頂列下方浮一條紅條（不佔高度）。 */
+.pause-float {
+  position: fixed;
+  top: calc(var(--host-top-h, 56px) + 8px);
+  left: 50%;
+  z-index: 64;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 8px 24px rgba(31, 36, 48, 0.3);
+  transform: translateX(-50%);
+}
+
+/* 控制列的確認框：清單比較長（逐桌），太高就在框裡捲。 */
+.confirm.is-console {
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+
+.confirm-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.confirm-list .confirm-line + .confirm-line {
+  margin-top: 4px;
+}
+
+.confirm-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.confirm-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.confirm .btn.cs-danger {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 緊湊版桌卡（控制列開著）：少一點留白、按鈕矮一點，今日事件一行，1440×900 的 3×2 桌卡不用捲動。 */
+.host-screen.is-console .host-grid {
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.host-screen.is-console .tc-body {
+  gap: 4px;
+  padding: 4px 12px 5px;
+}
+
+.host-screen.is-console .tc-status {
+  min-height: 36px;
+}
+
+.host-screen.is-console .tc-btn {
+  min-height: 32px;
+}
+
+.host-screen.is-console .tc-btn.btn-primary {
+  min-height: 34px;
+}
+
+.host-screen.is-console .tc-link {
+  min-height: 30px;
+}
