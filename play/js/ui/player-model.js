@@ -1,4 +1,5 @@
-// 玩家畫面（player.js）跟主持人控制台有關的判斷：全場暫停層要不要蓋、「最後一回合」、日落時重畫的時刻、新廣播要不要震。
+// 玩家畫面（player.js）跟主持人控制台有關的判斷：全場暫停層要不要蓋、「最後一回合」、日落時重畫的時刻、到點重畫的計時器要不要重排、
+// 新廣播要不要震。
 // 只放純函式（不碰畫面、不讀時間；時間由呼叫的人給伺服器時間），單元測試直接載入（test/unit/player-model.test.js）。
 import { endReasonAt, pauseHold, sunsetStatus } from '../game.js';
 import { clockOf } from '../rules.js';
@@ -28,6 +29,12 @@ export function sunsetWakeOf(room, key, settings, now) {
   const state = room?.tables?.[key];
   if (!settings || !state || state.phase === 'end') return null;
   return sunsetStatus(room.games?.[key], settings, now, clockOf(room, key))?.sunsetAt ?? null;
+}
+
+// 到點重畫的計時器 wake（{ at, timer }，at 是伺服器時間，timer 觸發後設成 null）要不要沿用：at 跟排好的一樣，而且計時器還在、
+// 不用排（at 是 null）或已經到點了。計時器提早觸發（伺服器時間的估計往回修了，現在還沒到 at）時不沿用，重排。
+export function keepsWake(wake, at, now) {
+  return wake.at === at && (wake.timer !== null || at === null || now >= at);
 }
 
 // 新廣播時要不要短震一次：seen 是這一頁看過的最新一則 { code, seq }，cast 是目前那一則（broadcastOf；沒有是 null）。換了房

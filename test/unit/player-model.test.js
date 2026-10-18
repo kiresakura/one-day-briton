@@ -1,5 +1,5 @@
 // 玩家畫面跟主持人控制台有關的判斷（js/ui/player-model.js 的純函式）：全場暫停層要不要蓋、什麼時候蓋、層上放哪則廣播；「最後一回合」
-// 跟主持端推進（advancePlan）同一個結論；日落時重畫的時刻；新廣播要不要震。資料用範例資料。
+// 跟主持端推進（advancePlan）同一個結論；日落時重畫的時刻；到點重畫的計時器要不要重排；新廣播要不要震。資料用範例資料。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import { loadDataFolder } from '../../scripts/lib/datafiles.mjs';
 // player-model.js 連帶載入 home.js、dom.js，dom.js 載入時在 document、window 上掛監聽；Node 裡沒有這兩個，給最小的替身。
 globalThis.document ??= { addEventListener() {} };
 globalThis.window ??= { addEventListener() {} };
-const { buzzStep, lastRoundOf, pauseView, sunsetWakeOf } = await import('../../play/js/ui/player-model.js');
+const { buzzStep, keepsWake, lastRoundOf, pauseView, sunsetWakeOf } = await import('../../play/js/ui/player-model.js');
 
 const sampleDir = fileURLToPath(new URL('../fixtures/data-example/', import.meta.url));
 const { data: sample } = await loadDataFolder(sampleDir);
@@ -185,6 +185,22 @@ test('sunsetWakeOf：日落時重畫的時刻照那一場的鐘；暫停中、�
   const idle = nightRoom();
   delete idle.games;
   assert.equal(sunsetWakeOf(idle, '1', settings, T0), null, 'not started, no clock');
+});
+
+// ---- 到點重畫的計時器 ----
+
+test('keepsWake：排好的計時器還在、或已經到點才沿用；提早觸發（還沒到 at）、時刻變了都重排；不排（null）就不動', () => {
+  const at = T0 + 5000;
+  const timer = { id: 1 };
+  assert.equal(keepsWake({ at, timer }, at, T0), true, 'still pending');
+  assert.equal(keepsWake({ at, timer: null }, at, at - 2000), false, 'fired early: schedule again');
+  assert.equal(keepsWake({ at, timer: null }, at, at), true, 'fired on time');
+  assert.equal(keepsWake({ at, timer: null }, at, at + 100), true, 'fired late');
+  assert.equal(keepsWake({ at, timer }, at + 60_000, T0), false, 'time changed (clock adjusted)');
+  assert.equal(keepsWake({ at, timer }, null, T0), false, 'nothing to wait for any more: clear');
+  assert.equal(keepsWake({ at: null, timer: null }, null, T0), true);
+  assert.equal(keepsWake({ at: null, timer: null }, null, null), true, 'no server time needed to keep nothing');
+  assert.equal(keepsWake({ at: null, timer: null }, at, T0), false, 'new time: schedule');
 });
 
 // ---- 新廣播時短震一次 ----

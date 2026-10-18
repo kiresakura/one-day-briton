@@ -44,7 +44,7 @@ import {
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
 import { broadcastNodes, broadcastOf, dismissBroadcast } from './home.js';
-import { buzzStep, lastRoundOf, pauseView, sunsetWakeOf } from './player-model.js';
+import { buzzStep, keepsWake, lastRoundOf, pauseView, sunsetWakeOf } from './player-model.js';
 import {
   CHAIN_BONUS,
   CHOICE_LABELS,
@@ -369,12 +369,21 @@ function model(room, me) {
 
 // ---- 到點重畫、全場廣播與暫停 ----
 
-// 到了伺服器時間 at 時重畫一次：at 跟排好的一樣就不動，變了就改排，null 是不排。回傳新的 { at, timer }。
+// 到了伺服器時間 at 時重畫一次：排好的還能用就不動（player-model.js 的 keepsWake），不然清掉改排，null 是不排。回傳新的 { at, timer }。
+// 觸發時先把自己這一筆的 timer 設成 null 再重畫：提早觸發（伺服器時間的估計往回修了）時那次重畫會再排一次。
 function wakeAt(wake, at) {
-  if (wake.at === at) return wake;
+  const now = at === null ? null : serverTime(ctx.session);
+  if (keepsWake(wake, at, now)) return wake;
   clearTimeout(wake.timer);
-  const left = at === null ? 0 : at - serverTime(ctx.session);
-  return { at, timer: left > 0 ? setTimeout(rerender, left + 50) : null };
+  const next = { at, timer: null };
+  const left = at === null ? 0 : at - now;
+  if (left > 0) {
+    next.timer = setTimeout(() => {
+      next.timer = null;
+      rerender();
+    }, left + 50);
+  }
+  return next;
 }
 
 // 日落時重畫一次（「最後一回合」、手牌上限的提示跟著換）：照 sunsetWakeOf 的日落時刻；全場鐘暫停中沒有日落時刻（null）就不排，
