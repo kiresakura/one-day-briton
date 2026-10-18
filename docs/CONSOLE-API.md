@@ -57,7 +57,9 @@
 - 第一個參數是 `connect()` 回傳的 `session`，第二個是房號 `code`。
 - 每個指令都先讀房間（有 `watchRoom` 時是本機快取），用讀到的 `seq`＋1 寫，`by` 是自己，`at` 是伺服器時間。兩台主持端同時寫，後到的被規則拒，回 `conflict`。
 - `expectSeq`（選填）：呼叫端畫面上看到的那一筆的 `seq`（沒有那一筆時是 0）。給了而且資料庫已經不是這個 `seq`，就不寫、直接丟 `conflict`
-  （「別台剛改過」），用在「收回這一則」「復原」這種要對著特定一筆做的動作。沒給就照目前的資料庫寫。
+  （「別台剛改過」）。控制台按鈕建議都帶：日落鐘的暫停／繼續／±（SPEC 2.5：兩台同時調，後到的要被拒；沒帶的話，別台的那一筆已經傳到這台之後才按，
+  會接在它後面再調一次，＋1 加 ＋1 變 ＋2）、全場暫停與恢復、收回、復原。沒給就照目前的資料庫寫（場景、廣播、音效這種「最後一筆為準」的可以不帶）。
+- 被拒之後只等約 0.5 秒就判斷的那條捷徑（房間裡還沒有任何控制台節點時），前提是控制台一直開著 `watchRoom`（別台的那一筆會在被拒的回覆之前傳到這台）。
 - 錯誤一律是 `StoreError`（`error.code`、`error.message` 是給人看的中文），代碼見第 6 節；`conflict` 另外帶 `error.latest`（那一筆最新的內容，沒有是 `null`）。
 - 寫入被拒時會等伺服器的現況再判斷原因：這間房已經有控制台的節點時最多約 3 秒，還沒有任何控制台節點時（舊規則一定是這樣）約 0.5 秒，
   所以「規則還沒更新」約 0.5 秒就回來。
@@ -69,17 +71,17 @@
 | `setScene(session, code, id, { page, expectSeq } = {})` | 切投影場景；`page` 是 0–20 的整數（規則、頒獎換頁），沒給就不帶。同一個場景再送一次也會寫（`seq`＋1，投影端可以用來重播開場影片） | `{ seq }` |
 | `sendBroadcast(session, code, text)` | 全場廣播：`text` 前後空白修剪後 1–40 字（UTF-16 長度，同暱稱）；新的取代舊的 | `{ seq, text }`（修剪後的） |
 | `hideBroadcast(session, code, { expectSeq } = {})` | 收回目前那一則（同一則加 `hidden: true`）；沒有廣播或已經收回就不寫 | `{ changed, seq }` |
-| `playSfx(session, code, id)` | 投影端播一次音效：`id` 是 `bell` 或 `gavel`；離上一次不到 1 秒丟 `too-soon` | `{ seq }` |
+| `playSfx(session, code, id)` | 投影端播一次音效：`id` 是 `bell` 或 `gavel`；離上一次不到 1 秒丟 `too-soon`（送出時就在 1 秒的邊界、被規則拒的也立刻回 `too-soon`，不等伺服器） | `{ seq }` |
 | `setMusic(session, code, on, { track = 'opening', expectSeq } = {})` | 背景音樂播放／停止；已經是這個狀態就不寫 | `{ changed, seq }` |
-| `setPause(session, code, on, { expectSeq } = {})` | 全場暫停／恢復，一筆寫入。暫停：同一筆停住正在走、還沒日落的鐘，記在 `pause.clocks`；恢復：只恢復 `pause.clocks` 記的、現在還停著的鐘（原本就手動暫停的不動）。已經是這個狀態就不寫 | `{ changed, seq, clocks }`（`clocks`＝這次一起停住或恢復的場次，例 `['1']`） |
-| `startClock(session, code, match, minutes)` | 開第 `match` 場（1 或 2）的全場日落鐘，`minutes` 是 10–180 的整數（照 `settings.sunsetMinutes`）。已經開了就不寫 | `{ started, clock }`（`clock` 是寫入後或原本的那一筆） |
+| `setPause(session, code, on, { expectSeq } = {})` | 全場暫停／恢復，一筆寫入。暫停：同一筆停住正在走、還沒日落的鐘，記在 `pause.clocks`；恢復：只恢復 `pause.clocks` 記的、而且還是被這一次暫停停住的鐘（`pausedAt` 等於 `pause.at`；原本就手動暫停的、暫停中被手動繼續又暫停的都不動）。暫停那一筆一定要寫得進去：鐘的部分剛好卡在日落被拒時，先不帶快日落的鐘、再不行就一個鐘都不帶，重試。已經是這個狀態就不寫 | `{ changed, seq, clocks }`（`clocks`＝這次一起停住或恢復的場次，例 `['1']`；正在走卻不在裡面的鐘就是沒停住的） |
+| `startClock(session, code, match, minutes)` | 開第 `match` 場（1 或 2）的全場日落鐘，`minutes` 是 10–180 的整數（照 `settings.sunsetMinutes`）。已經開了就不寫；全場暫停中丟 `paused`（暫停中開的鐘會一路走、恢復時也不會被照顧到） | `{ started, clock }`（`clock` 是寫入後或原本的那一筆） |
 | `pauseClock(session, code, match, { expectSeq } = {})` | 暫停這一場的鐘；已經暫停就不寫；日落後丟 `clock-passed` | `{ changed, clock }` |
 | `resumeClock(session, code, match, { expectSeq } = {})` | 繼續；沒暫停就不寫 | `{ changed, clock }` |
-| `adjustClock(session, code, match, deltaMs, { expectSeq } = {})` | 加減（毫秒，例 `5 * 60000`、`-60000`），自動夾在單次 ±10 分、累計 ±30 分、剩餘不小於 0。走著的鐘減到底時留約 1.5 秒的餘裕（主持端估的伺服器時間有誤差）。日落後丟 `clock-passed`；完全調不動（已到累計上限、或已經是 0 還要減）丟 `clock-limit` | `{ delta, clock }`（`delta`＝實際調了多少毫秒；「復原」＝`adjustClock(…, -delta)`） |
+| `adjustClock(session, code, match, deltaMs, { expectSeq } = {})` | 加減（毫秒，例 `5 * 60000`、`-60000`），自動夾在單次 ±10 分、累計 ±30 分、剩餘不小於 0。走著的鐘減到底時留約 1.5 秒的餘裕（主持端估的伺服器時間有誤差）。日落後（包括已經減到 0）丟 `clock-passed`；完全調不動（累計已到 ±30 分還要往同一邊調）丟 `clock-limit` | `{ delta, clock }`（`delta`＝實際調了多少毫秒；「復原」＝`adjustClock(…, -delta)`） |
 | `watchSubmissions(session, code, onChange, onError)` | 主持端：逐人訂閱入座的人的票、黑夜選擇、挑的棄牌（`votes/{code}/{uid}`、`nights/{code}/{uid}`、`discards/{code}/{uid}`；不在整房掛訂閱，自動結算從伺服器重讀整房的保證不變）。有變就呼叫 `onChange({ votes, nights, discards })`（都是 `{ uid: 最新一筆 }`），交給 `game.js` 的 `waitingFor`、`missingDiscards` | 停止訂閱的函式 |
-| `trackScreen(session, code, { audio, scene } = {})` | 投影端回報自己的狀態（可做）：寫 `screens/{uid}`，每次連上都先登記「斷線時刪除」再寫（同上線狀態） | `{ update({ audio, scene }), stop() }`：`update` 改內容並寫入（回傳 `Promise<寫進去了沒>`，舊規則下是 `false`），`stop` 停止並刪掉自己那一筆 |
-| `startAll(session, code, plan, data, { random, clock = false, onProgress } = {})` | 「全部開始」「全部開始第 2 場」：照 `startPlan`／`startMatch2Plan` 的計畫逐桌呼叫 `startTable`（第 2 場帶各桌的 `include`），一桌失敗不影響別桌；全場暫停中的桌不開（`error.code` 是 `paused`）。`clock` 是 `true`、計畫說那一場的鐘還沒開、而且至少有一桌已經開局時，最後開全場日落鐘。`onProgress({ done, total, key, result })` 每做完一桌呼叫一次 | `{ results: [{ key, table, started, error }], clock: { started, error } \| null }`（`error` 是 `StoreError` 或 `null`；`started: false` 且沒有錯＝別台先開了；`clock` 是 `null`＝這次沒有要開鐘） |
-| `advanceAll(session, code, plan, data, { random, onProgress } = {})` | 「能推的全推」：照 `advancePlan` 的計畫，逐桌用計畫裡的回合與階段呼叫 `advanceOrEnd`（計畫的 `includeEnding` 是 `false` 時不替要算分的桌算分，該算分的回 `held`），推進到新回合日出的接著發牌（`processSunrise`）。每一桌之前重讀房間，全場暫停了就停下、其餘的桌回 `paused` | `{ results: [{ key, table, advanced, ended, held, dealt, reason, error }] }`：`advanced: false` 且沒有錯＝局面已經變了（別台先推了）；`held: true`＝這一回合要算分、這次沒推；推進成功但發牌失敗時 `advanced: true` 而 `error` 有值（照單桌的「補發」處理） |
+| `trackScreen(session, code, { audio, scene } = {})` | 投影端回報自己的狀態（可做）：寫 `screens/{uid}`，做法同上線狀態：每次連上都先登記「斷線時刪除」再寫，被同一個身分較早的連線晚一步刪掉時補回去 | `{ update({ audio, scene }), stop() }`：`update` 改內容並寫入（回傳 `Promise<寫進去了沒>`，舊規則下是 `false`），`stop` 停止並刪掉自己那一筆 |
+| `startAll(session, code, plan, data, { random, clock = false, onProgress } = {})` | 「全部開始」「全部開始第 2 場」：照 `startPlan`／`startMatch2Plan` 的計畫逐桌呼叫 `startTable`（第 2 場帶各桌的 `include`），一桌失敗不影響別桌；全場暫停中的桌不開（`error.code` 是 `paused`）。`clock` 是 `true`、計畫說那一場的鐘還沒開、而且至少有一桌已經開局時，最後開全場日落鐘（全場暫停中、或計畫的 `clock.error` 有值時開不起來，`clock.error` 說原因）。`onProgress({ done, total, key, result })` 每做完一桌呼叫一次 | `{ results: [{ key, table, started, error }], clock: { started, error } \| null }`（`error` 是 `StoreError` 或 `null`；`started: false` 且沒有錯＝別台先開了；`clock` 是 `null`＝這次沒有要開鐘） |
+| `advanceAll(session, code, plan, data, { random, onProgress } = {})` | 「能推的全推」：照 `advancePlan` 的計畫，逐桌用計畫裡的回合與階段呼叫 `advanceOrEnd`（只有計畫的 `includeEnding` 是 `true`、而且那一桌在計畫裡就是要算分的，才替它算分；其他到了執行時才該算分的桌回 `held`，例如確認框打開之後全場鐘才到點），推進到新回合日出的接著發牌（`processSunrise`）。每一桌之前重讀房間，全場暫停了就停下、其餘的桌回 `paused` | `{ results: [{ key, table, advanced, ended, held, dealt, reason, error }] }`：`advanced: false` 且沒有錯＝局面已經變了（別台先推了）；`held: true`＝這一回合要算分、這次沒推；推進成功但發牌失敗時 `advanced: true` 而 `error` 有值（照單桌的「補發」處理） |
 
 `advanceOrEnd` 的改動：
 
@@ -121,7 +123,8 @@
   - `start: [{ key, table, uids, count, warning }]` 要開的桌（`warning` 是少於 3 人的提醒，沒有是 `null`）；
   - `skip: [{ key, table, count, reason }]` 跳過的桌與原因（0 人、超過上限；文字同單桌「開始」的停用原因）；
   - `started: [key…]` 已經開局的桌；
-  - `clock: { match: 1, needed, minutes }`：`needed`＝第 1 場的全場鐘還沒開（確認框才出現「同時開始全場日落鐘」），`minutes` 是 `settings.sunsetMinutes`。
+  - `clock: { match: 1, needed, minutes, error }`：`needed`＝第 1 場的全場鐘還沒開（確認框才出現「同時開始全場日落鐘」），`minutes` 是 `settings.sunsetMinutes`；
+    `error`＝這個分鐘數開不了全場鐘（規則只收 10–180 的整數，資料檔的設定比較寬，例如排練用的 5 分），沒問題是 `null`。
 - `startMatch2Plan(room, data, picks = {})`：已經開了第 2 場（第 ① 步）、還沒開局的桌。`picks` 是 `{ 局號: [uid…] }`（或 `Map`，值可以是 `Set`），
   是這台裝置的勾選；沒有那一桌就照預設（第 1 場有座位、而且現在還選這一桌的人，同 `startTable`）。回傳 `{ match: 2, start, skip, started, clock }`：
   - `start: [{ key, table, include, count, absent, warning }]`：`include` 是要入座的 uid（照第 1 場的座位號），`absent: [{ uid, why }]` 是第 1 場坐這一桌、
@@ -151,7 +154,7 @@
 - `pauseHold(pause, game, state, settings, now)`：玩家端的全場暫停層。回傳 `{ covered, until }`：`covered`＝現在要蓋上暫停層；
   `until`＝自己這一桌在暫停開始前就開著的響應窗口或揭曉倒數還在跑，倒數結束（伺服器時間）才蓋，這段時間先在最上面顯示「這個倒數結束後全場暫停」
   （`covered` 是 `false`）；沒有是 `null`。暫停之後才開的窗口與倒數（只可能來自還開著舊網頁的人）不算。
-- `standingsOf(room, table)`：實體桌號 `table` 的排行 `{ table, status, basis, rows }`：`status` 是 `idle`（沒開局）、`playing`（比賽中，`rows` 是空的）、`ended`；
+- `standingsOf(room, table)`：實體桌號 `table` 的排行 `{ table, match, status, basis, rows }`（`match` 是目前第幾場）：`status` 是 `idle`（沒開局）、`playing`（比賽中，`rows` 是空的）、`ended`；
   `basis` 是 `combined`（第 2 場結束，兩場合計，`combineScores`）或 `first`（只打完第 1 場、第 2 場還沒開局）；`rows: [{ uid, rank, total, first, second }]`
   照名次排（`first`、`second` 只有兩場合計才有）。桌號不存在是 `null`。
 - `topScores(room)`：「全場最高分」趣味獎 `{ basis, total, winners: [{ table, uid }] }`：有桌打完第 2 場時只比打完兩場的桌的兩場合計（`combined`），
@@ -178,11 +181,11 @@
 | `rejected` | 寫入被拒、原因不明（例如剛好卡在時間邊界） | 「沒有寫進去，請再按一次」 |
 | `permission-denied` | 自己不是這間房的主持端 | 照 `message` 寫 |
 | `room-not-found` | 房間不存在 | 照 `message` 寫 |
-| `too-soon` | 音效離上一次不到 1 秒 | 不用特別處理 |
+| `too-soon` | 音效離上一次不到 1 秒（含送出時剛好卡在 1 秒邊界被規則拒的） | 不用特別處理 |
 | `no-clock` | 這一場的全場日落鐘還沒開（暫停、繼續、加減時） | 照 `message` 寫 |
 | `clock-passed` | 已經日落，不能再暫停或加減 | 照 `message` 寫 |
-| `clock-limit` | 加減調不動（累計已到 ±30 分，或已經是 0 還要減） | 照 `message` 寫 |
-| `paused` | `startAll`、`advanceAll` 遇到全場暫停，那一桌（以及 `advanceAll` 剩下的桌）沒做 | 結果條逐桌寫「全場暫停中」 |
+| `clock-limit` | 加減調不動（累計已到 ±30 分還要往同一邊調）；已經減到 0 是 `clock-passed` | 照 `message` 寫 |
+| `paused` | 全場暫停中：`startClock` 不開鐘；`startAll`、`advanceAll` 那一桌（以及 `advanceAll` 剩下的桌）沒做 | 結果條逐桌寫「全場暫停中」 |
 
 原有的代碼（`cannot-start`、`night-not-revealed` 等）照舊，`startAll`、`advanceAll` 逐桌的 `error` 就是原本單桌函式丟的那個。
 
@@ -194,7 +197,8 @@
 - **日落鐘面板**：每桌與全場都用 `sunsetStatus`；那一場沒有鐘時寫「各桌各自計時（從各桌按『開始』起算）」。兩場同時在跑時兩個鐘各自 `clockOf`。
   減到 0 就是日落，之後不能加回來（規則擋），確認或提示要寫清楚。
 - **暫停中**：`display.pause.on` 時，「開始」「下一階段」「全部…」「開第 2 場」停用（原因「全場暫停中」）；`advancePlan` 已經把所有桌放進 `skip`，
-  `advanceAll` 每一桌之前也會再看一次。自動結算照常跑，正在倒數的窗口與揭曉會正常收尾。手動的「▶ 繼續」日落鐘在暫停中沒有被擋，要不要停用由控制台決定。
+  `advanceAll` 每一桌之前也會再看一次，`startClock` 也不開鐘。自動結算照常跑，正在倒數的窗口與揭曉會正常收尾。手動的「▶ 繼續」日落鐘在暫停中沒有被擋
+  （手動繼續又暫停的鐘，全場恢復時不會被帶著繼續），要不要停用由控制台決定。
 - **離線**：`.info/connected` 是 `false` 時控制台整條停用（`watchConnection`），免得 Firebase 把離線時按的指令排隊、連回來才生效。
 - **投影端**：只讀、不跑自動結算、不寫 `presence`；唯一會寫的是可做的 `trackScreen`。跟主持端同一個瀏覽器時建議加 `&slot=screen`，不然 `screens` 會記在主持端的 uid 底下。
   音效用 `sfxToPlay`，影片在 `display.scene.seq` 沒變時不重播，背景音樂看 `music.on`。日落自動敲鐘（可做）：用 `clockSunsetAt` 或 `sunsetStatus` 的 `sunsetAt` 在本機排時間，到點播 `bell`（不寫資料庫）。
