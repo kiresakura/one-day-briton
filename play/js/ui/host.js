@@ -85,7 +85,7 @@ import {
   watchSubmissions,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
-import { PAUSE_HOLD_TEXT, clockUnderPause, manualPausedMatches, nearSunsetLine, nearSunsetMatches, pauseReport, undoWhy, zeroAfter } from './host-model.js';
+import { PAUSE_HOLD_TEXT, clockUnderPause, manualPausedMatches, nearSunsetLine, nearSunsetMatches, pauseReport, planSignature, undoWhy, zeroAfter } from './host-model.js';
 import {
   END_REASON_TEXT,
   PHASE_NAMES,
@@ -1452,7 +1452,8 @@ export function advanceLine(item) {
   return `第 ${item.table} 桌：${match}${from} → ${to}${item.note ? `；${item.note}` : ''}`;
 }
 
-// 「能推的全推」一桌的結果（store.js 的 advanceAll；item 是計畫裡的那一桌）：{ ok, text }。
+// 「能推的全推」一桌的結果（store.js 的 advanceAll；item 是計畫裡的那一桌）：{ ok, text }，要提醒的多帶 warn。計畫要算分、實際卻推進了
+// （確認框打開後別台取消了「這回合結束後算分」，store 重讀之後照「不算分」推到下一回合日出、接著發牌）照實寫。
 export function advanceResult(result, item = null) {
   const name = `第 ${result.table} 桌`;
   if (result.error && result.advanced) return { ok: false, text: `${name}：推進了，但發牌沒成功（${commandError(result.error)}），請按那一桌的「補發」` };
@@ -1460,6 +1461,7 @@ export function advanceResult(result, item = null) {
   if (result.held) return { ok: false, text: `${name}：這一回合要算分，沒推（要算分請在那一桌按「下一階段（算分）」）` };
   if (!result.advanced) return { ok: false, text: `${name}：局面已經變了，沒有動` };
   if (result.ended) return { ok: true, text: `${name}：已算分（${END_REASON_TEXT[result.reason] ?? result.reason}）` };
+  if (item?.ending) return { ok: true, warn: true, text: `${name}：這一回合不算分了，推到第 ${item.round + 1} 回合日出${result.dealt ? '（已發牌）' : ''}` };
   const to = item ? `${item.to.round !== item.round ? `第 ${item.to.round} 回合` : ''}${PHASE_NAMES[item.to.phase] ?? item.to.phase}` : '下一階段';
   return { ok: true, text: `${name}：${to}${result.dealt ? '（已發牌）' : ''}` };
 }
@@ -1996,20 +1998,8 @@ function openConsoleConfirm(request, opener) {
     const pause = room.display?.pause ?? null;
     Object.assign(request, { seq: pause?.seq ?? 0 });
   }
-  request.signature = planSignature(request.kind, room);
+  request.signature = planSignature(request.kind, room, data?.settings, now);
   openConfirm(request, opener);
-}
-
-// 局面的「指紋」：只看計畫會用到的東西（各桌的回合、階段、有沒有開局、人數；暫停；鐘的序號），變了就在確認框提醒。
-function planSignature(kind, room) {
-  if (!['start-all', 'start-all-2', 'advance-all'].includes(kind)) return '';
-  const parts = [];
-  for (let table = 1; table <= room.meta.tableCount; table += 1) {
-    const key = activeKey(room, table);
-    const state = room.tables?.[key];
-    parts.push(`${key}:${state?.round}:${state?.phase}:${room.games?.[key] ? 1 : 0}:${playersAt(room, table).length}:${room.deals?.[key] ?? 0}`);
-  }
-  return `${parts.join('|')}|${isPaused(room)}`;
 }
 
 function dialogNode({ title, text, lines = [], options = [], hint = null, why = null, ok, danger = false, stale = false }) {
@@ -2057,7 +2047,7 @@ function consoleDialog(room) {
   const data = ctx.cardData?.data ?? null;
   const now = serverTime(ctx.session);
   const off = !connected ? OFFLINE_TEXT : null;
-  const stale = request.signature !== '' && request.signature !== planSignature(request.kind, room);
+  const stale = request.signature !== '' && request.signature !== planSignature(request.kind, room, data?.settings, now);
   switch (request.kind) {
     case 'start-all':
     case 'start-all-2': {
@@ -2246,8 +2236,14 @@ function runAdvanceAll(request) {
       const lines = results.map((result) => advanceResult(result, items.get(result.key)));
       const moved = results.filter((result) => result.advanced).length;
       const failed = lines.filter((line) => !line.ok);
-      const head = `能推的全推：${moved} 桌推進了${failed.length ? `；${failed.map((line) => line.text).join('；')}` : ''}`;
-      return { ok: failed.length === 0, warn: failed.length > 0 && moved > 0, text: head, full: lines.map((line) => `${line.ok ? '✓' : '✗'} ${line.text}`).join('\n') };
+      const notes = lines.filter((line) => !line.ok || line.warn);
+      const head = `能推的全推：${moved} 桌推進了${notes.length ? `；${notes.map((line) => line.text).join('；')}` : ''}`;
+      return {
+        ok: failed.length === 0,
+        warn: lines.some((line) => line.warn) || (failed.length > 0 && moved > 0),
+        text: head,
+        full: lines.map((line) => `${line.ok ? (line.warn ? '⚠' : '✓') : '✗'} ${line.text}`).join('\n'),
+      };
     } finally {
       progress = null;
     }
@@ -2742,9 +2738,10 @@ $('screen-host').addEventListener('change', (event) => {
   if (target.dataset.change === 'confirm-option' && confirming) {
     if (target.dataset.option === 'clock') confirming.clock = target.checked;
     if (target.dataset.option === 'ending' && ctx.latestRoom && ctx.cardData) {
+      const now = serverTime(ctx.session);
       confirming.ending = target.checked;
-      confirming.plan = advancePlan(ctx.latestRoom, ctx.cardData.data.settings, serverTime(ctx.session), { includeEnding: target.checked, discards: submissions.discards });
-      confirming.signature = planSignature('advance-all', ctx.latestRoom);
+      confirming.plan = advancePlan(ctx.latestRoom, ctx.cardData.data.settings, now, { includeEnding: target.checked, discards: submissions.discards });
+      confirming.signature = planSignature('advance-all', ctx.latestRoom, ctx.cardData.data.settings, now);
     }
     rerender();
   }

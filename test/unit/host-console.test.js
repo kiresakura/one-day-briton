@@ -118,7 +118,7 @@ test('能推的全推：確認框逐桌寫起訖、會不會發牌、算分的�
   assert.equal(advanceLine({ ...base, key: '2-2', table: 2, match: 2, phase: 'dusk', to: { round: 3, phase: 'night' } }), '第 2 桌：第 2 場・黃昏 → 黑夜');
 });
 
-test('能推的全推：逐桌的結果（推進、發牌、算分、要算分沒推、局面變了、錯誤、推進了但發牌失敗）', () => {
+test('能推的全推：逐桌的結果（推進、發牌、算分、要算分沒推、局面變了、錯誤、推進了但發牌失敗、計畫要算分卻推進了）', () => {
   const item = { key: '3', table: 3, match: 1, round: 3, phase: 'night', to: { round: 4, phase: 'sunrise' }, deal: true };
   const result = { key: '3', table: 3, advanced: true, ended: false, held: false, dealt: true, reason: null, error: null };
   assert.deepEqual(advanceResult(result, item), { ok: true, text: '第 3 桌：第 4 回合日出（已發牌）' });
@@ -129,6 +129,10 @@ test('能推的全推：逐桌的結果（推進、發牌、算分、要算分�
   assert.deepEqual(advanceResult({ ...result, advanced: false, dealt: false, error: new StoreError('paused', '全場暫停中，沒有推') }, item), { ok: false, text: '第 3 桌：全場暫停中，沒有推' });
   assert.match(advanceResult({ ...result, dealt: false, error: new StoreError('rejected', '發牌沒有寫進去') }, item).text, /推進了，但發牌沒成功.*補發/);
   assert.deepEqual(advanceResult({ ...result, dealt: false }, { ...item, phase: 'sunrise', round: 4, to: { round: 4, phase: 'day' }, deal: false }), { ok: true, text: '第 3 桌：白晝' });
+  // 計畫要算分（主持端提早收場），確認之前別台取消了：store 照「不算分」推到下一回合日出並發牌，照實寫、給 warn。
+  const ending = { ...item, to: { round: 3, phase: 'end' }, ending: 'host', deal: false };
+  assert.deepEqual(advanceResult(result, ending), { ok: true, warn: true, text: '第 3 桌：這一回合不算分了，推到第 4 回合日出（已發牌）' });
+  assert.deepEqual(advanceResult({ ...result, ended: true, dealt: false, reason: 'host' }, ending), { ok: true, text: '第 3 桌：已算分（主持端提早收場）' });
 });
 
 test('全部開始：逐桌的結果（開了幾人、別台先開了、錯誤）', () => {

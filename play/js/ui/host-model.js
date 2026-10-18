@@ -1,7 +1,7 @@
 // 主持人控制台的判斷（只有純函式，不碰畫面）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條怎麼寫。畫面在 host.js，測試在 test/unit/host-model.test.js。
-import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, isClock } from '../game.js';
-import { MATCH_COUNT } from '../rules.js';
+// 結果條怎麼寫、確認框打開後局面變了沒。畫面在 host.js，測試在 test/unit/host-model.test.js。
+import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, endReasonAt, isClock } from '../game.js';
+import { MATCH_COUNT, activeKey, clockOf } from '../rules.js';
 import { PAUSE_NEAR_SUNSET_MS } from '../store.js';
 
 // 走著的鐘，store.js 照「現在＋這麼多毫秒」判斷日落與加減（減到底時會剩約 1.5 秒）。同 store.js 的 CLOCK_MARGIN_MS（store.js 還沒有匯出它）。
@@ -107,4 +107,21 @@ export function pauseReport(on, result, before, after, now) {
   if (missed.length) parts.push(`${namesOf(missed)}日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續`);
   if (manual.length) parts.push(`${namesOf(manual)}日落鐘還在暫停（手動暫停的），要繼續請在日落鐘面板按繼續`);
   return { ok: true, warn: missed.length + manual.length > 0, text: parts.join('；') };
+}
+
+// 全場動作確認框的局面「指紋」：計畫會用到的東西（各桌的回合、階段、有沒有開局、人數、發牌、「這回合結束後算分」、黑夜的桌這一刻
+// 該不該算分；兩個全場鐘的序號；全場暫停），變了就在確認框提醒。settings、now 只有「能推的全推」用（黑夜的桌該不該算分）。
+export function planSignature(kind, room, settings = null, now = 0) {
+  if (!['start-all', 'start-all-2', 'advance-all'].includes(kind) || !room) return '';
+  const parts = [];
+  for (let table = 1; table <= (room.meta?.tableCount ?? 0); table += 1) {
+    const key = activeKey(room, table);
+    const state = room.tables?.[key];
+    const game = room.games?.[key];
+    const players = Object.values(room.players ?? {}).filter((player) => player?.table === table).length;
+    const ending = kind === 'advance-all' && settings && state?.phase === 'night' ? (endReasonAt(game, state, settings, now, clockOf(room, key)) ?? '-') : '';
+    parts.push(`${key}:${state?.round}:${state?.phase}:${game ? 1 : 0}:${players}:${room.deals?.[key] ?? 0}:${game?.endAfterRound ?? ''}:${ending}`);
+  }
+  const clocks = CLOCK_KEYS.map((match) => room.clock?.[match]?.seq ?? '').join(':');
+  return `${parts.join('|')}|${clocks}|${room.display?.pause?.on === true}`;
 }

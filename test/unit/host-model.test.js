@@ -1,5 +1,5 @@
 // 主持人控制台的判斷（play/js/ui/host-model.js）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條的字。
+// 結果條的字、確認框打開後局面變了沒。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { clockStartWrite } from '../../play/js/game.js';
@@ -12,6 +12,7 @@ import {
   nearSunsetLine,
   nearSunsetMatches,
   pauseReport,
+  planSignature,
   undoWhy,
   zeroAfter,
 } from '../../play/js/ui/host-model.js';
@@ -142,4 +143,55 @@ test('恢復全場之後的結果條：接著走的、沒跟著繼續的、還�
     text: '恢復全場了；第 1 場日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續',
   });
   assert.deepEqual(pauseReport(false, { changed: false, clocks: [], nearSunset: [] }, before, before, later), { ok: true, warn: false, text: '本來就沒有全場暫停' });
+});
+
+test('局面的指紋：「這回合結束後算分」、兩個全場鐘的序號、黑夜的桌該不該算分（鐘到了）變了都會變；不相干的不變', () => {
+  const settings = { sunsetMinutes: 75, maxRounds: 12 };
+  const seats = { a: { order: 0 }, b: { order: 1 } };
+  const base = () => ({
+    meta: { tableCount: 2 },
+    players: { a: { table: 1 }, b: { table: 1 } },
+    tables: { 1: { round: 3, phase: 'night' }, 2: { round: 2, phase: 'day' } },
+    games: { 1: { seats, startedAt: NOW - 10 * MINUTE, endAfterRound: 3 }, 2: { seats, startedAt: NOW - 10 * MINUTE } },
+    deals: { 1: 3, 2: 2 },
+    clock: { 1: clock(40 * MINUTE, { seq: 4 }) },
+    display: {},
+  });
+  const sign = (room, now = NOW) => planSignature('advance-all', room, settings, now);
+  const room = base();
+  assert.equal(sign(room), sign(base()));
+  room.display.scene = { id: 'rules', seq: 2 };
+  assert.equal(sign(room), sign(base()));
+  // 別台取消了「這回合結束後算分」。
+  const cancelled = base();
+  delete cancelled.games[1].endAfterRound;
+  assert.notEqual(sign(cancelled), sign(base()));
+  // 鐘被調過（序號變了）、第 2 場開了鐘、全場暫停。
+  const adjusted = base();
+  adjusted.clock[1] = { ...adjusted.clock[1], seq: 5 };
+  assert.notEqual(sign(adjusted), sign(base()));
+  const second = base();
+  second.clock[2] = clock(75 * MINUTE, { seq: 1 });
+  assert.notEqual(sign(second), sign(base()));
+  const paused = base();
+  paused.display.pause = { on: true, seq: 1, at: NOW };
+  assert.notEqual(sign(paused), sign(base()));
+  // 鐘沒動但時間到了：黑夜的第 1 桌從不算分變成要算分（日落鐘到了）。
+  const noHost = base();
+  delete noHost.games[1].endAfterRound;
+  noHost.clock[1] = clock(5_000, { seq: 4 });
+  assert.notEqual(sign(noHost, NOW + 6_000), sign(noHost, NOW));
+  // 白晝的桌不看該不該算分（推進那一步不受影響）。
+  const day = base();
+  day.tables[1] = { round: 3, phase: 'day' };
+  day.clock[1] = clock(5_000, { seq: 4 });
+  assert.equal(sign(day, NOW + 6_000), sign(day, NOW));
+  // 「這回合結束後算分」本身也在指紋裡（不在黑夜的桌也是）。
+  const dayPlain = base();
+  dayPlain.tables[1] = { round: 3, phase: 'day' };
+  const dayMarked = structuredClone(dayPlain);
+  delete dayPlain.games[1].endAfterRound;
+  assert.notEqual(sign(dayMarked), sign(dayPlain));
+  assert.equal(planSignature('pause', base()), '');
+  assert.equal(planSignature('advance-all', null), '');
 });
