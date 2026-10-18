@@ -5,17 +5,18 @@ import {
   NIGHT_GRACE_MS,
   combineScores,
   duskSettleAt,
+  endReasonAt,
   eventLogList,
   nightSettings,
   nightSettleAt,
   rotateSeats,
   scoreSettings,
-  shouldEnd,
   skippedEventEffects,
   sunriseEventsOf,
+  sunsetStatus,
   seatsInOrder,
 } from '../game.js';
-import { FOG_THRESHOLDS, MATCH_COUNT, PHASE_LABELS, matchKey } from '../rules.js';
+import { FOG_THRESHOLDS, MATCH_COUNT, PHASE_LABELS, clockOf, matchKey } from '../rules.js';
 import { StoreError, serverTime, trackPresence } from '../store.js';
 import './art.js'; // 美術選項（場景標頭、卡背的 A／B 版）寫到 <html> 上
 import { $, h } from './dom.js';
@@ -41,7 +42,6 @@ export const PHASE_TONES = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: '
 export const END_REASON_TEXT = { sunset: '日落鐘到了', maxRounds: '到了回合上限', host: '主持端提早收場' };
 export const ACHIEVEMENT_LABELS = { parliament: '議會之聲', gear: '齒輪大師' };
 export const RESOURCE_LABELS = { pounds: '英鎊', influence: '影響力' };
-const MINUTE_MS = 60_000;
 
 // 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框放在頂列下方（host.css），錯誤 8 秒後自己消失（字多的久一點；
 // 滑鼠停在上面時先不消失），按 × 可以先關掉；下一次按按鈕時照樣清掉。
@@ -464,16 +464,28 @@ export function scoreRules() {
   return scoreSettings(ctx.cardData?.data.settings);
 }
 
-// 這一回合是不是最後一回合（這一回合黑夜揭曉後按「下一階段」就算分）：原因或 null。玩家畫面的「這是最後一回合」、主持端的
-// 「下一階段（算分）」都看它；日落鐘照伺服器時間算。
-export function endReasonNow(game, state) {
-  if (!game?.seats || !ctx.cardData || state.phase === 'end') return null;
-  return shouldEnd({ round: state.round, startedAt: game.startedAt, endAfterRound: game.endAfterRound }, ctx.cardData.data.settings, serverTime(ctx.session));
+// 局號 key 那一場的全場日落鐘。沒給 key 時（舊的呼叫方式只給 game）在最近一次的房間資料裡找這一局（同一份資料裡的同一個物件）；
+// 找不到就是 null（照各桌的 startedAt）。
+function clockFor(game, key, room = ctx.latestRoom) {
+  if (key !== null && key !== undefined) return clockOf(room, key);
+  const found = Object.entries(room?.games ?? {}).find(([, value]) => value === game);
+  return found ? clockOf(room, found[0]) : null;
 }
 
-// 日落鐘到點時重畫一次（「這是最後一回合」、按鈕跟著換）。
-export function wakeAtSunset(game) {
-  if (ctx.cardData && typeof game?.startedAt === 'number') rerenderAt(game.startedAt + scoreRules().sunsetMinutes * MINUTE_MS);
+// 這一回合是不是最後一回合（這一回合黑夜揭曉後按「下一階段」就算分）：原因或 null。主持端的「下一階段（算分）」「最後一回合」、
+// 手牌上限提示都看它，跟 store.js 的 advanceOrEnd 同一個判斷（game.js 的 endReasonAt，帶那一場的全場日落鐘，照伺服器時間算）。
+// key 是局號；舊的呼叫方式 endReasonNow(game, state) 照樣可以用（全場鐘從最近一次的房間資料找）。
+export function endReasonNow(game, state, key = null) {
+  if (!game?.seats || !ctx.cardData || !state || state.phase === 'end') return null;
+  return endReasonAt(game, state, ctx.cardData.data.settings, serverTime(ctx.session), clockFor(game, key));
+}
+
+// 日落鐘到點時重畫一次（「這是最後一回合」、按鈕跟著換）：有全場鐘照鐘的日落時刻，暫停中不會到點就不排（鐘一變房間就會重畫）。
+// key 同 endReasonNow。
+export function wakeAtSunset(game, key = null) {
+  if (!ctx.cardData) return;
+  const status = sunsetStatus(game, ctx.cardData.data.settings, serverTime(ctx.session), clockFor(game, key));
+  if (typeof status?.sunsetAt === 'number') rerenderAt(status.sunsetAt);
 }
 
 // 天命那一項：內容與是否達成（終局時公開）。
