@@ -1580,12 +1580,12 @@ function actionsPanel(view) {
   const open = openPlan(room, { kind: 'all' });
   const working = ['advance-all', 'start-all', 'start-all-2', 'open-all'].some((key) => busy.has(key));
 
-  const advanceWhy = common ?? (working ? '處理中…' : advance.advance.length ? null : '沒有可以推的桌');
+  // 只剩這一回合要算分的桌時也能按：確認框裡另外勾「連要算分的桌一起推」才會推。
+  const ending = advance ? advance.skip.filter((item) => item.reason === 'ending') : [];
+  const advanceWhy = common ?? (working ? '處理中…' : advance.advance.length || ending.length ? null : '沒有可以推的桌');
   let advanceNote = advanceWhy;
-  if (!advanceWhy) advanceNote = `${tablesText(advance.advance)}；按了會先列出來確認`;
-  else if (!common && advance) {
-    const ending = advance.skip.filter((item) => item.reason === 'ending');
-    if (ending.length) advanceNote = `${tablesText(ending)}這一回合要算分，在確認框另外勾`;
+  if (!advanceWhy) {
+    advanceNote = advance.advance.length ? `${tablesText(advance.advance)}；按了會先列出來確認` : `${tablesText(ending)}這一回合要算分，在確認框另外勾`;
   }
 
   let startWhy = common;
@@ -2075,7 +2075,8 @@ function consoleDialog(room) {
       const skipped = plan.skip.filter((item) => item.reason !== 'ended' && item.reason !== 'not-started');
       if (skipped.length) lines.push({ text: `不推：${skipped.map((item) => `第 ${item.table} 桌（${item.text}）`).join('、')}` });
       const scoring = plan.advance.some((item) => item.ending) || plan.skip.some((item) => item.reason === 'ending');
-      const why = off ?? (isPaused(room) ? PAUSED_TEXT : !data ? noDataText() : plan.advance.length === 0 ? '沒有可以推的桌' : busy.has('advance-all') ? '處理中…' : null);
+      const none = scoring && !request.ending ? '要算分的桌要先勾「連要算分的桌一起推」' : '沒有可以推的桌';
+      const why = off ?? (isPaused(room) ? PAUSED_TEXT : !data ? noDataText() : plan.advance.length === 0 ? none : busy.has('advance-all') ? '處理中…' : null);
       return dialogNode({
         title: '能推的全推下一階段？',
         text: '只推「可推進」的桌，每桌照框裡的回合與階段推（別台先推了的桌不會動）；不替還在出牌的人結束白晝。',
