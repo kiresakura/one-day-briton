@@ -156,6 +156,15 @@ html[data-art-scene='b'] .phase-head[data-scene='finale'] {
   background: currentColor;
 }
 
+/* 第 2 場準備中：沙漏。 */
+.phase-icon-prep {
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 8px 6px;
+  border-color: currentColor transparent;
+}
+
 /* ---- 內容 ---- */
 
 .player-view {

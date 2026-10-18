@@ -93,6 +93,15 @@ body[data-phase='end'] {
   --phase-accent: var(--gold);
 }
 
+/* 第 2 場準備中（還沒開局）：中性的羊皮紙底，不配場景圖（js/ui/player.js 的 toneOf）。字色同羊皮紙卡面，對比 ≥ 6:1。 */
+body[data-phase='prep'] {
+  --head-bg: var(--card-bg);
+  --head-ink: var(--card-ink);
+  --head-sub: var(--card-ink-2);
+  --head-line: var(--card-frame);
+  --head-veil: transparent, transparent;
+}
+
 h1,
 h2,
 h3 {

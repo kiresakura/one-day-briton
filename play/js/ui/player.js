@@ -361,8 +361,13 @@ function needOf(m) {
 
 // ---- 共用的小元件 ----
 
-function phaseIcon(phase) {
-  return h('span', { class: `phase-icon phase-icon-${PHASE_TONES[phase] ?? 'day'}`, attrs: { 'aria-hidden': 'true' } });
+// 標頭與頁面的色調（<body data-phase>）：照階段；第 2 場準備中（還沒開局）是中性的 prep，不用日出的。
+function toneOf(m) {
+  return m.prep ? 'prep' : (PHASE_TONES[m.state.phase] ?? 'day');
+}
+
+function phaseIcon(tone) {
+  return h('span', { class: `phase-icon phase-icon-${tone}`, attrs: { 'aria-hidden': 'true' } });
 }
 
 function section(key, className, ...children) {
@@ -402,7 +407,8 @@ function roomFoot() {
 
 function header(m) {
   const { me, state, game } = m;
-  // 第 2 場準備中：桌況已經是新一場的第 1 回合日出，但還沒開局，標頭寫「準備中」，不寫回合、不放迷霧值，免得像已經開始了。
+  // 第 2 場準備中：桌況已經是新一場的第 1 回合日出，但還沒開局，標頭寫「準備中」、配沙漏與羊皮紙底（不用日出的圖示、場景圖與底色），
+  // 不寫回合、不放迷霧值，免得像已經開始了。
   let where = state.phase === 'end' ? `第 ${me.table} 桌・第 ${game?.final?.round ?? state.round} 回合結束` : `第 ${me.table} 桌・第 ${state.round} 回合`;
   if (m.prep) where = `第 ${me.table} 桌・還沒開局`;
   const phase = m.prep ? { key: 'prep', name: '準備中', latin: 'NEXT MATCH' } : { key: state.phase, name: PHASE_NAMES[state.phase] ?? state.phase, latin: PHASE_LATIN[state.phase] ?? '' };
@@ -411,7 +417,7 @@ function header(m) {
     h(
       'div',
       { class: 'head-main' },
-      h('div', { class: 'head-phase phase-in', data: { key: `phase-${phase.key}` } }, phaseIcon(state.phase), h('h1', { class: 'phase-name', text: phase.name }), h('span', { class: 'phase-latin', text: phase.latin, attrs: { lang: 'en' } })),
+      h('div', { class: 'head-phase phase-in', data: { key: `phase-${phase.key}` } }, phaseIcon(toneOf(m)), h('h1', { class: 'phase-name', text: phase.name }), h('span', { class: 'phase-latin', text: phase.latin, attrs: { lang: 'en' } })),
       state.phase === 'end' || m.prep ? null : fogMeter(state.fog, game?.fogFired ?? []),
     ),
   ];
@@ -1543,7 +1549,7 @@ export function renderPlayer(room, me) {
   watchAll();
   const m = model(room, me);
   const { state, game } = m;
-  document.body.dataset.phase = PHASE_TONES[state.phase] ?? 'day';
+  document.body.dataset.phase = toneOf(m);
   if (state.phase !== 'end') wakeAtSunset(game);
   // 換到第 2 場（主持端開了第 2 場）：上一場展開的全桌天命、手牌收起來。
   if (shownKey !== null && shownKey !== m.key) showAllDestinies = showFirst = showFirstDestinies = handOpen = false;
@@ -1554,15 +1560,17 @@ export function renderPlayer(room, me) {
   if (scoped && scoped !== lastNeed) tab = 'action';
   lastNeed = scoped;
   patchChildren($('player-head'), header(m));
-  const scene = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night', end: 'finale' }[state.phase] ?? 'day';
+  // 第 2 場準備中不放場景圖（沒有對應的圖，標頭只剩羊皮紙底）。
+  const scene = m.prep ? 'prep' : ({ sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night', end: 'finale' }[state.phase] ?? 'day');
   $('player-head').dataset.scene = scene;
-  // 換階段時標頭（顏色＋場景圖）淡入 0.45 秒；系統設了減少動態效果時直接換。
-  if (shownPhase !== null && shownPhase !== state.phase) {
+  // 換階段時標頭（顏色＋場景圖）淡入 0.45 秒；系統設了減少動態效果時直接換。準備中到開局（都是日出）也算換一次。
+  const look = m.prep ? 'prep' : state.phase;
+  if (shownPhase !== null && shownPhase !== look) {
     $('player-head').classList.remove('is-switching');
     void $('player-head').offsetWidth;
     $('player-head').classList.add('is-switching');
   }
-  shownPhase = state.phase;
+  shownPhase = look;
   const panels = { action: actionPanel(m), role: rolePanel(m), mates: matesPanel(m), log: logPanel(m) };
   patchChildren(
     $('player-view'),
