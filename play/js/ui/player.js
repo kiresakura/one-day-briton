@@ -373,9 +373,10 @@ function heading(latin, text) {
   return h('p', { class: 'eyebrow' }, latin ? h('span', { class: 'eyebrow-latin', text: latin, attrs: { lang: 'en' } }) : null, h('span', { text }));
 }
 
-// 圖：事件、法案、階層徽章。圖用背景圖疊在紋飾底與字形記號上面：之後新加的牌沒有圖時只看到紋飾底，不會出現破圖。
+// 圖：事件、法案、階層徽章。圖用背景圖疊在紋飾底上（multiply，白底透出羊皮紙）：之後新加的牌沒有圖時只看到紋飾底，不會出現破圖。
+// 字形記號只在沒有牌（id 是 null）時顯示，有圖時不放，免得從圖的白底透出來。
 function art(kind, id, glyph) {
-  return h('div', { class: `art art-${kind}`, attrs: { 'aria-hidden': 'true' }, data: { glyph } }, id ? h('span', { class: 'art-img', style: { 'background-image': `url("./assets/${kind}/${id}.webp")` } }) : null);
+  return h('div', { class: `art art-${kind}`, attrs: { 'aria-hidden': 'true' }, data: { glyph: id ? null : glyph } }, id ? h('span', { class: 'art-img', style: { 'background-image': `url("./assets/${kind}/${id}.webp")` } }) : null);
 }
 
 function roleBadge(roleId, size = '') {
@@ -384,7 +385,7 @@ function roleBadge(roleId, size = '') {
   return h(
     'span',
     { class: `badge ${size}`, attrs: { 'aria-hidden': 'true' } },
-    known ? h('span', { class: 'badge-img', style: { 'background-image': `url("./assets/roles/${roleId}.png")` } }) : null,
+    known ? h('span', { class: 'badge-img', style: { 'background-image': `url("./assets/roles/${roleId}.webp")` } }) : null,
     h('span', { class: 'badge-mark', text: mark }),
   );
 }

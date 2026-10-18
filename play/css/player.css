@@ -21,7 +21,7 @@
   margin: 0 auto;
 }
 
-/* ---- 階段標頭：場景圖上蓋 82–90% 的階段底色 ---- */
+/* ---- 階段標頭：場景圖上蓋 72%（上）–88%（下）的階段底色；字的對比照實際場景圖算過，最差的 1% 像素上標頭字仍 ≥ 4.5:1 ---- */
 
 .phase-head {
   --scene: none;
@@ -32,20 +32,36 @@
   color: var(--head-ink);
 }
 
+/* 場景圖有兩版，js/ui/art.js 的 ART.scene 決定（寫在 <html data-art-scene>）：A＝彩色版加暖色調和（預設）、B＝灰階疊羊皮紙。 */
 .phase-head[data-scene='dawn'] {
-  --scene: url('../assets/scenes/dawn.webp');
+  --scene: url('../assets/scenes/dawn-a.webp');
 }
 .phase-head[data-scene='day'] {
-  --scene: url('../assets/scenes/day.webp');
+  --scene: url('../assets/scenes/day-a.webp');
 }
 .phase-head[data-scene='dusk'] {
-  --scene: url('../assets/scenes/dusk.webp');
+  --scene: url('../assets/scenes/dusk-a.webp');
 }
 .phase-head[data-scene='night'] {
-  --scene: url('../assets/scenes/night.webp');
+  --scene: url('../assets/scenes/night-a.webp');
 }
 .phase-head[data-scene='finale'] {
-  --scene: url('../assets/scenes/finale.webp');
+  --scene: url('../assets/scenes/finale-a.webp');
+}
+html[data-art-scene='b'] .phase-head[data-scene='dawn'] {
+  --scene: url('../assets/scenes/dawn-b.webp');
+}
+html[data-art-scene='b'] .phase-head[data-scene='day'] {
+  --scene: url('../assets/scenes/day-b.webp');
+}
+html[data-art-scene='b'] .phase-head[data-scene='dusk'] {
+  --scene: url('../assets/scenes/dusk-b.webp');
+}
+html[data-art-scene='b'] .phase-head[data-scene='night'] {
+  --scene: url('../assets/scenes/night-b.webp');
+}
+html[data-art-scene='b'] .phase-head[data-scene='finale'] {
+  --scene: url('../assets/scenes/finale-b.webp');
 }
 
 .head-top {
@@ -510,6 +526,7 @@ body[data-phase='night'] .eyebrow {
   font-size: 16px;
 }
 
+/* 事件、法案圖：館藏版畫與照片統一成灰階白底，疊在羊皮紙上（multiply）＝墨印在紙上的樣子，外面一圈墨色框。 */
 .art {
   position: relative;
   flex: none;
@@ -518,9 +535,11 @@ body[data-phase='night'] .eyebrow {
   width: 64px;
   height: 64px;
   overflow: hidden;
-  border: 1px solid var(--end-accent);
-  border-radius: 8px;
-  background: radial-gradient(circle at 50% 38%, #f8eedb, #e6cfae 75%);
+  isolation: isolate;
+  border: 2px solid var(--card-ink);
+  border-radius: var(--r-sm);
+  background: url('../assets/ui/parchment-texture.webp') 0 0 / 320px 320px, radial-gradient(circle at 50% 38%, #f8eedb, #e6cfae 75%);
+  box-shadow: inset 0 0 0 1px rgba(255, 250, 238, 0.55);
 }
 
 .art::before {
@@ -546,6 +565,7 @@ body[data-phase='night'] .eyebrow {
   position: absolute;
   inset: 0;
   background: center / cover no-repeat;
+  mix-blend-mode: multiply;
 }
 
 .bill-effects {
@@ -1202,10 +1222,13 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
   height: 56px;
 }
 
+/* 有肖像的階層：灰階肖像疊羊皮紙色（multiply）切圓，外圈留黃銅色；字形記號縮成右下角的小封蠟章。 */
 .badge-img {
   position: absolute;
-  inset: 0;
-  background: center / contain no-repeat;
+  inset: 2px;
+  border-radius: 50%;
+  background: center / cover no-repeat, var(--card-bg);
+  background-blend-mode: multiply;
 }
 
 .badge-mark {
@@ -1220,6 +1243,29 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
 
 .badge.is-large .badge-mark {
   font-size: 22px;
+}
+
+.badge-img + .badge-mark {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--seal);
+  box-shadow: 0 0 0 1px var(--card-bg);
+  font-size: 9px;
+  text-shadow: none;
+}
+
+.badge.is-large .badge-img + .badge-mark {
+  right: -2px;
+  bottom: -2px;
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
 }
 
 .money {
@@ -1426,10 +1472,16 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
   font-weight: 900;
 }
 
+/* 卡背有兩版，js/ui/art.js 的 ART.cardBack 決定（寫在 <html data-art-back>）：A＝深紅（預設）、B＝淺一階。 */
 .log-icon.is-play {
   border-radius: 4px;
-  background: url('../assets/ui/card-back.webp') center / cover, var(--seal);
+  background: url('../assets/ui/card-back-a.webp') center / cover, var(--seal);
   color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+html[data-art-back='b'] .log-icon.is-play {
+  background-image: url('../assets/ui/card-back-b.webp');
 }
 
 .log-icon.is-result {
@@ -1678,7 +1730,7 @@ body[data-phase='night'] .tab-destiny {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: url('../assets/ui/wax-seal.png') center / cover, var(--seal);
+  background: url('../assets/ui/wax-seal.webp') center / cover, var(--seal);
   color: #fff;
   font-family: var(--font-title);
   font-size: 18px;

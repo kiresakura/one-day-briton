@@ -22,7 +22,7 @@ body {
   --head-ink: var(--day-ink);
   --head-sub: #7a5a1a;
   --head-line: #c9a35a;
-  --head-veil: rgba(236, 223, 191, 0.82), rgba(236, 223, 191, 0.9);
+  --head-veil: rgba(236, 223, 191, 0.72), rgba(236, 223, 191, 0.88);
   --phase-accent: var(--day-accent);
   --text: var(--ink);
   --text-2: var(--ink-2);
@@ -48,7 +48,7 @@ body[data-phase='dawn'] {
   --head-ink: var(--dawn-ink);
   --head-sub: var(--dawn-accent);
   --head-line: #d9a48c;
-  --head-veil: rgba(242, 215, 198, 0.82), rgba(242, 215, 198, 0.9);
+  --head-veil: rgba(242, 215, 198, 0.72), rgba(242, 215, 198, 0.88);
   --phase-accent: var(--dawn-accent);
 }
 
@@ -58,7 +58,7 @@ body[data-phase='dusk'] {
   --head-ink: var(--dusk-ink);
   --head-sub: var(--dusk-accent);
   --head-line: #b5653f;
-  --head-veil: rgba(110, 38, 34, 0.85), rgba(110, 38, 34, 0.9);
+  --head-veil: rgba(110, 38, 34, 0.72), rgba(110, 38, 34, 0.88);
   --phase-accent: var(--accent);
 }
 
@@ -68,7 +68,7 @@ body[data-phase='night'] {
   --head-ink: var(--night-ink);
   --head-sub: var(--night-accent);
   --head-line: var(--night-rule);
-  --head-veil: rgba(14, 21, 34, 0.8), rgba(14, 21, 34, 0.9);
+  --head-veil: rgba(14, 21, 34, 0.72), rgba(14, 21, 34, 0.88);
   --phase-accent: var(--night-cta);
   --text: var(--night-ink);
   --text-2: #c8d2e2;
@@ -87,7 +87,7 @@ body[data-phase='end'] {
   --head-ink: var(--end-ink);
   --head-sub: var(--end-accent);
   --head-line: var(--end-accent);
-  --head-veil: rgba(42, 32, 24, 0.84), rgba(42, 32, 24, 0.9);
+  --head-veil: rgba(42, 32, 24, 0.72), rgba(42, 32, 24, 0.88);
   --phase-accent: var(--gold);
 }
 
@@ -769,7 +769,7 @@ button.pcard {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: url('../assets/ui/wax-seal.png') center / cover, radial-gradient(circle, var(--seal-ring) 0 55%, var(--seal) 56%);
+  background: url('../assets/ui/wax-seal.webp') center / cover, radial-gradient(circle, var(--seal-ring) 0 55%, var(--seal) 56%);
   color: #fff;
   font-family: var(--font-title);
   font-size: 11px;

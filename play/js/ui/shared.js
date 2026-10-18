@@ -17,6 +17,7 @@ import {
 } from '../game.js';
 import { FOG_THRESHOLDS, MATCH_COUNT, PHASE_LABELS, matchKey } from '../rules.js';
 import { StoreError, serverTime, trackPresence } from '../store.js';
+import './art.js'; // 美術選項（場景標頭、卡背的 A／B 版）寫到 <html> 上
 import { $, h } from './dom.js';
 import { ctx, rerender } from './state.js';
 
