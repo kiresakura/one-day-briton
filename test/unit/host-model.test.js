@@ -1,17 +1,19 @@
 // 主持人控制台的判斷（play/js/ui/host-model.js）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條的字、確認框打開後局面變了沒。
+// 結果條的字、確認框打開後局面變了沒、全場暫停中每桌按鈕的停用原因。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { clockStartWrite } from '../../play/js/game.js';
 import { PAUSE_NEAR_SUNSET_MS } from '../../play/js/store.js';
 import {
   CLOCK_MARGIN_MS,
+  PAUSED_TEXT,
   clockUnderPause,
   heldByPause,
   manualPausedMatches,
   nearSunsetLine,
   nearSunsetMatches,
   pauseReport,
+  pausedWhy,
   planSignature,
   undoWhy,
   zeroAfter,
@@ -194,4 +196,15 @@ test('局面的指紋：「這回合結束後算分」、兩個全場鐘的序�
   assert.notEqual(sign(dayMarked), sign(dayPlain));
   assert.equal(planSignature('pause', base()), '');
   assert.equal(planSignature('advance-all', null), '');
+});
+
+test('全場暫停中每桌的按鈕：開始、下一階段、開第 2 場、提前揭曉停用；其他照原本', () => {
+  assert.equal(PAUSED_TEXT, '全場暫停中');
+  for (const act of ['start', 'next', 'open-match', 'reveal-dusk', 'reveal-night']) {
+    assert.equal(pausedWhy(act, null, true), '全場暫停中');
+    assert.equal(pausedWhy(act, undefined, false), null);
+  }
+  assert.equal(pausedWhy('redeal', null, true), null);
+  assert.equal(pausedWhy('end-toggle', '只有黑夜之前能按', true), '只有黑夜之前能按');
+  assert.equal(pausedWhy('next', '響應結算後才能按', false), '響應結算後才能按');
 });

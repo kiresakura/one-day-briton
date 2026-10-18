@@ -1,11 +1,12 @@
 // 主持人控制台的判斷（只有純函式，不碰畫面）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條怎麼寫、確認框打開後局面變了沒。畫面在 host.js，測試在 test/unit/host-model.test.js。
+// 結果條怎麼寫、確認框打開後局面變了沒、全場暫停中每桌按鈕的停用原因。畫面在 host.js，測試在 test/unit/host-model.test.js。
 import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, endReasonAt, isClock } from '../game.js';
 import { MATCH_COUNT, activeKey, clockOf } from '../rules.js';
 import { PAUSE_NEAR_SUNSET_MS } from '../store.js';
 
 // 走著的鐘，store.js 照「現在＋這麼多毫秒」判斷日落與加減（減到底時會剩約 1.5 秒）。同 store.js 的 CLOCK_MARGIN_MS（store.js 還沒有匯出它）。
 export const CLOCK_MARGIN_MS = 1500;
+export const PAUSED_TEXT = '全場暫停中';
 const CLOCK_KEYS = ['1', String(MATCH_COUNT)];
 const NEAR_SECONDS = PAUSE_NEAR_SUNSET_MS / 1000;
 
@@ -124,4 +125,14 @@ export function planSignature(kind, room, settings = null, now = 0) {
   }
   const clocks = CLOCK_KEYS.map((match) => room.clock?.[match]?.seq ?? '').join(':');
   return `${parts.join('|')}|${clocks}|${room.display?.pause?.on === true}`;
+}
+
+// 全場暫停中每桌停用的按鈕：「開始」「下一階段」「開第 2 場」，還有「提前揭曉」（玩家被暫停畫面蓋著、不能投票或選擇，提前揭曉等於
+// 替還沒送出的人棄權或睡覺）。自動結算照常跑，已經在倒數的響應窗口與揭曉照樣收尾；沒有人能推進，就不會開新的階段。
+export const PAUSE_BLOCKED = new Set(['start', 'next', 'open-match', 'reveal-dusk', 'reveal-night']);
+
+// 每桌按鈕 act 的停用原因：全場暫停中、在上面那一組的寫「全場暫停中」（本來就停用的照原本的原因）；其他照原本的 why。
+export function pausedWhy(act, why, paused) {
+  if (!paused || !PAUSE_BLOCKED.has(act)) return why ?? null;
+  return why ?? PAUSED_TEXT;
 }

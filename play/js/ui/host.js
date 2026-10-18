@@ -85,7 +85,19 @@ import {
   watchSubmissions,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
-import { PAUSE_HOLD_TEXT, clockUnderPause, manualPausedMatches, nearSunsetLine, nearSunsetMatches, pauseReport, planSignature, undoWhy, zeroAfter } from './host-model.js';
+import {
+  PAUSED_TEXT,
+  PAUSE_HOLD_TEXT,
+  clockUnderPause,
+  manualPausedMatches,
+  nearSunsetLine,
+  nearSunsetMatches,
+  pauseReport,
+  pausedWhy,
+  planSignature,
+  undoWhy,
+  zeroAfter,
+} from './host-model.js';
 import {
   END_REASON_TEXT,
   PHASE_NAMES,
@@ -518,18 +530,14 @@ function stepOf(t, limits) {
   return pauseGuard(t, nightStep(t, limits));
 }
 
-// 全場暫停中：「開始」「下一階段」「開第 2 場」停用，原因寫「全場暫停中」（本來就停用的照原本的原因）。自動結算照常跑，已經在倒數的
-// 響應窗口與揭曉照樣收尾；沒有人能推進，就不會開新的階段。
-const PAUSED_TEXT = '全場暫停中';
-const PAUSE_BLOCKED = new Set(['start', 'next', 'open-match']);
-
+// 全場暫停中：「開始」「下一階段」「開第 2 場」「提前揭曉」停用（host-model.js 的 pausedWhy）。
 function isPaused(room) {
   return room?.display?.pause?.on === true;
 }
 
 function pauseGuard(t, step) {
   if (!isPaused(t.room)) return step;
-  return { ...step, actions: step.actions.map((action) => (action && PAUSE_BLOCKED.has(action.act) ? { ...action, why: action.why ?? PAUSED_TEXT } : action)) };
+  return { ...step, actions: step.actions.map((action) => (action ? { ...action, why: pausedWhy(action.act, action.why, true) } : action)) };
 }
 
 // ---- 桌卡 ----
@@ -2133,7 +2141,7 @@ function consoleDialog(room) {
         title: '全場暫停？',
         text: '所有手機與投影會蓋上暫停畫面、日落鐘停住；正在倒數的響應窗口與揭曉會先跑完',
         lines: near.length ? [{ text: nearSunsetLine(near), problem: true }] : [],
-        hint: `暫停中「開始」「下一階段」「全部…」「開${matchText(2)}」都不能按；任何一台主持端都能按「恢復」。`,
+        hint: `暫停中「開始」「下一階段」「提前揭曉」「全部…」「開${matchText(2)}」都不能按；任何一台主持端都能按「恢復」。`,
         why: off ?? (isPaused(room) ? '已經是全場暫停中' : null),
         danger: true,
         ok: '全場暫停',
@@ -2548,8 +2556,9 @@ const actions = {
     });
   },
   redeal: ({ table }) => act(`redeal:${table}`, () => deal(table)),
-  'reveal-dusk': ({ table }) => act(`reveal-dusk:${table}`, () => revealDusk(ctx.session, ctx.code, table)),
-  'reveal-night': ({ table }) => act(`reveal-night:${table}`, () => revealNight(ctx.session, ctx.code, table)),
+  // 全場暫停中鈕是停用的；畫面還沒跟上（剛被別台暫停）時也不送。
+  'reveal-dusk': ({ table }) => (isPaused(ctx.latestRoom) ? rerender() : act(`reveal-dusk:${table}`, () => revealDusk(ctx.session, ctx.code, table))),
+  'reveal-night': ({ table }) => (isPaused(ctx.latestRoom) ? rerender() : act(`reveal-night:${table}`, () => revealNight(ctx.session, ctx.code, table))),
   'end-toggle': ({ table }) => {
     const t = current(table);
     if (!t?.game) return;
