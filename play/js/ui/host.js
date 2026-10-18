@@ -85,6 +85,7 @@ import {
   watchSubmissions,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
+import { undoWhy, zeroAfter } from './host-model.js';
 import {
   END_REASON_TEXT,
   PHASE_NAMES,
@@ -1892,7 +1893,8 @@ function statusStrip(view) {
   );
 }
 
-// 結果條：✓／✗＋原因（太長「…」點一下看全文，批次動作逐桌寫在全文裡）、時間、加減日落鐘之後的「復原」；右邊是收合／收起。
+// 結果條：✓／✗＋原因（太長「…」點一下看全文，批次動作逐桌寫在全文裡）、時間、加減日落鐘之後的「復原」（已經日落就停用）；
+// 右邊是收合／收起。
 function resultBar(view, mode) {
   let text = '每個動作的結果會寫在這裡';
   if (progress) text = `${progress.label} ${progress.done}／${progress.total}…`;
@@ -1904,7 +1906,12 @@ function resultBar(view, mode) {
     { class: `cs-result${tone}`, data: { key: 'result' }, attrs: { role: 'status', 'aria-live': 'polite' } },
     trunc('p', 'cs-result-text', text, outcome && !progress ? `${text}${outcome.full !== outcome.text ? `\n${outcome.full}` : ''}` : text),
     outcome && !progress ? h('span', { class: 'cs-result-time', text: wallTime(outcome.at, 0, { seconds: true }) }) : null,
-    undo ? csButton('clock-undo', '復原', { why: view.off ? OFFLINE_TEXT : busy.has(`clock:${undo.match}`) ? '處理中…' : null, className: 'cs-undo' }) : null,
+    undo
+      ? csButton('clock-undo', '復原', {
+          why: view.off ? OFFLINE_TEXT : busy.has(`clock:${undo.match}`) ? '處理中…' : undoWhy(view.room.clock?.[undo.match], view.now),
+          className: 'cs-undo',
+        })
+      : null,
     mode === 'bar' ? h('button', { class: 'btn-link cs-link', type: 'button', data: { act: 'console-fold' }, text: '收合成一行' }) : null,
     mode === 'drawer' ? h('button', { class: 'btn-link cs-link', type: 'button', data: { act: 'console-toggle' }, text: '收起控制台' }) : null,
   );
@@ -2117,7 +2124,7 @@ function consoleDialog(room) {
       const left = isClock(clock) ? clockText(clockRemaining(clock, now)) : '';
       return dialogNode({
         title: `把${matchText(request.match)}的日落鐘減到 0？`,
-        text: `現在剩 ${left}，減 ${Math.abs(request.delta) / MINUTE} 分就直接日落：各桌這一回合結束就算分。日落之後不能再加回來。`,
+        text: `現在剩 ${left}，${request.undo ? '復原要' : ''}減 ${deltaText(request.delta).slice(1)}就直接日落：各桌這一回合結束就算分。日落之後不能再加回來。`,
         why,
         danger: true,
         ok: '減到 0（日落）',
@@ -2615,20 +2622,33 @@ const actions = {
   'clock-start': ({ match }) => openConsoleConfirm({ kind: 'clock-start', match: Number(match) }, `[data-act="clock-start"][data-match="${match}"]`),
   'clock-pause': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: true, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-pause"][data-match="${match}"]`),
   'clock-resume': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: false, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-resume"][data-match="${match}"]`),
-  // 加減不確認；減到 0（直接日落、加不回來）才確認。帶著畫面上那個鐘的序號：別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
+  // 加減不確認；減到 0（直接日落、加不回來；照 store 的餘裕算，見 host-model.js 的 zeroAfter）才確認。帶著畫面上那個鐘的序號：
+  // 別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
   'clock-adjust': ({ match, delta }) => {
     const clock = ctx.latestRoom?.clock?.[match];
     if (!isClock(clock)) return;
     const amount = Number(delta);
-    if (amount < 0 && clockRemaining(clock, serverTime(ctx.session)) <= -amount) {
+    if (zeroAfter(clock, amount, serverTime(ctx.session))) {
       openConsoleConfirm({ kind: 'clock-zero', match: Number(match), delta: amount, seq: clock.seq }, `[data-act="clock-adjust"][data-match="${match}"][data-delta="${delta}"]`);
       return;
     }
     runAdjust(Number(match), amount, clock.seq);
   },
+  // 復原＝反方向調一次：一樣先看會不會減到 0（會就開同一個確認框）；已經日落就不送（鈕本來就停用）。
   'clock-undo': () => {
     const undo = outcome?.undo;
-    if (undo) runAdjust(undo.match, undo.delta, undo.seq, { undo: true });
+    const clock = undo ? ctx.latestRoom?.clock?.[undo.match] : null;
+    if (!undo || !isClock(clock)) return;
+    const now = serverTime(ctx.session);
+    if (undoWhy(clock, now)) {
+      rerender();
+      return;
+    }
+    if (zeroAfter(clock, undo.delta, now)) {
+      openConsoleConfirm({ kind: 'clock-zero', match: undo.match, delta: undo.delta, seq: undo.seq, undo: true }, '[data-act="clock-undo"]');
+      return;
+    }
+    runAdjust(undo.match, undo.delta, undo.seq, { undo: true });
   },
   scene: ({ scene }) => {
     const room = ctx.latestRoom;
@@ -2689,7 +2709,7 @@ const actions = {
     else if (request.kind === 'advance-all') runAdvanceAll(request);
     else if (request.kind === 'clock-start') runClockStart(request.match);
     else if (request.kind === 'clock-toggle') runClockToggle(request);
-    else if (request.kind === 'clock-zero') runAdjust(request.match, request.delta, request.seq);
+    else if (request.kind === 'clock-zero') runAdjust(request.match, request.delta, request.seq, { undo: request.undo === true });
     else if (request.kind === 'pause' || request.kind === 'resume') runPause(request);
     else if (request.kind === 'awards') runScene('awards');
   },
