@@ -85,7 +85,7 @@ import {
   watchSubmissions,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
-import { undoWhy, zeroAfter } from './host-model.js';
+import { PAUSE_HOLD_TEXT, clockUnderPause, manualPausedMatches, nearSunsetLine, nearSunsetMatches, pauseReport, undoWhy, zeroAfter } from './host-model.js';
 import {
   END_REASON_TEXT,
   PHASE_NAMES,
@@ -1472,18 +1472,22 @@ export function startResult(result, item = null) {
   return { ok: true, text: `${name}：已開局${item?.count ? `（${item.count} 人）` : ''}` };
 }
 
-// 日落鐘按鈕的停用原因（null＝可以按）：toggle（暫停／繼續）、minus、plus。日落後都不能按；累計加減到上限的那一邊不能按；
-// 全場暫停中不能手動暫停或繼續（恢復全場時被它停住的鐘一起繼續，手動繼續的鐘會在暫停中一路走）。
-export function clockGuards(clock, now, { paused = false } = {}) {
+// 日落鐘按鈕的停用原因（null＝可以按）：toggle（暫停／繼續）、minus、plus，hold 是全場暫停中這個鐘是哪一種（host-model.js 的
+// clockUnderPause；沒有全場暫停是 null）。日落後都不能按；累計加減到上限的那一邊不能按。全場暫停中：被這次暫停停住的（恢復時一起繼續）、
+// 手動暫停的（在暫停中繼續會一路走）、快日落的（照常日落、不停）都不能手動暫停或繼續；在走、沒被停住的可以手動暫停。
+// pause 是房間的 display/pause，match 是第幾場。
+export function clockGuards(clock, now, { pause = null, match = 1 } = {}) {
   if (!isClock(clock)) return null;
   const sunset = '已經日落了，不能再暫停或加減';
-  if (clockPassed(clock, now)) return { toggle: sunset, minus: sunset, plus: sunset };
+  if (clockPassed(clock, now)) return { toggle: sunset, minus: sunset, plus: sunset, hold: null };
   const adjust = clock.adjust ?? 0;
   const cap = CLOCK_ADJUST_MAX_MS / MINUTE;
+  const hold = clockUnderPause(clock, pause, match, now);
   return {
-    toggle: paused ? '全場暫停中：恢復全場時日落鐘會一起繼續' : null,
+    toggle: hold && hold !== 'free' ? PAUSE_HOLD_TEXT[hold] : null,
     minus: adjust <= -CLOCK_ADJUST_MAX_MS ? `累計已經減了 ${cap} 分（上限）` : null,
     plus: adjust >= CLOCK_ADJUST_MAX_MS ? `累計已經加了 ${cap} 分（上限）` : null,
+    hold,
   };
 }
 
@@ -1633,7 +1637,7 @@ function clockBox(view, match, small) {
   const clock = view.room.clock?.[match];
   if (!isClock(clock)) return noClockBox(view, match, small);
   const { now, off } = view;
-  const guards = clockGuards(clock, now, { paused: view.paused });
+  const guards = clockGuards(clock, now, { pause: view.room.display?.pause ?? null, match });
   const paused = clockPaused(clock);
   const passed = clockPassed(clock, now);
   const key = `clock:${match}`;
@@ -1645,7 +1649,7 @@ function clockBox(view, match, small) {
       data: { match, delta: minutes * MINUTE },
       className: 'cs-step',
     });
-  const note = guards.toggle && !passed ? guards.toggle : passed ? '日落了：各桌這一回合結束就算分；日落後不能再加回來' : '加減只移動日落時刻，已進行的時間不會倒退';
+  const note = passed ? '日落了：各桌這一回合結束就算分；日落後不能再加回來' : guards.hold ? PAUSE_HOLD_TEXT[guards.hold] : '加減只移動日落時刻，已進行的時間不會倒退';
   return h(
     'div',
     { class: `cs-clock${small ? ' is-small' : ''}${paused ? ' is-paused' : ''}${passed ? ' is-passed' : ''}`, data: { key: `clock-${match}`, clock: match } },
@@ -1990,7 +1994,7 @@ function openConsoleConfirm(request, opener) {
   else if (request.kind === 'advance-all') Object.assign(request, { ending: false, plan: advancePlan(room, data.settings, now, { discards: submissions.discards }) });
   else if (request.kind === 'pause' || request.kind === 'resume') {
     const pause = room.display?.pause ?? null;
-    Object.assign(request, { seq: pause?.seq ?? 0, clocks: Object.keys(pause?.clocks ?? {}).filter((match) => pause.clocks[match] === true) });
+    Object.assign(request, { seq: pause?.seq ?? 0 });
   }
   request.signature = planSignature(request.kind, room);
   openConfirm(request, opener);
@@ -2112,10 +2116,12 @@ function consoleDialog(room) {
     }
     case 'clock-toggle': {
       const clock = room.clock?.[request.match];
-      const guards = clockGuards(clock, now, { paused: isPaused(room) });
+      const guards = clockGuards(clock, now, { pause: room.display?.pause ?? null, match: request.match });
       const why = off ?? (!isClock(clock) ? '這一場還沒有全場日落鐘' : clock.seq !== request.seq ? '別台剛改過這個鐘，請取消再看一次' : guards.toggle);
+      // 全場暫停中手動暫停沒被停住的鐘：它不在這次暫停的紀錄裡，恢復全場時不會跟著繼續。
+      const lines = guards?.hold === 'free' ? [{ text: '全場恢復時不會自動繼續，要記得手動繼續', problem: true }] : [];
       return request.pause
-        ? dialogNode({ title: `暫停${matchText(request.match)}的日落鐘？`, text: '暫停時鐘不走、不會到點；投影的鐘寫「暫停」。玩家手機上沒有鐘，畫面不變。', why, ok: '暫停日落鐘' })
+        ? dialogNode({ title: `暫停${matchText(request.match)}的日落鐘？`, text: '暫停時鐘不走、不會到點；投影的鐘寫「暫停」。玩家手機上沒有鐘，畫面不變。', lines, why, ok: '暫停日落鐘' })
         : dialogNode({ title: `繼續${matchText(request.match)}的日落鐘？`, text: '從現在起接著倒數，暫停的時間不算。', why, ok: '繼續' });
     }
     case 'clock-zero': {
@@ -2130,22 +2136,29 @@ function consoleDialog(room) {
         ok: '減到 0（日落）',
       });
     }
-    case 'pause':
+    case 'pause': {
+      // 快日落的鐘全場暫停不停它（照常日落）：先講一句，免得以為停住了。
+      const near = nearSunsetMatches(room, now);
       return dialogNode({
         title: '全場暫停？',
         text: '所有手機與投影會蓋上暫停畫面、日落鐘停住；正在倒數的響應窗口與揭曉會先跑完',
+        lines: near.length ? [{ text: nearSunsetLine(near), problem: true }] : [],
         hint: `暫停中「開始」「下一階段」「全部…」「開${matchText(2)}」都不能按；任何一台主持端都能按「恢復」。`,
         why: off ?? (isPaused(room) ? '已經是全場暫停中' : null),
         danger: true,
         ok: '全場暫停',
       });
-    case 'resume':
+    }
+    case 'resume': {
+      const manual = manualPausedMatches(room);
       return dialogNode({
         title: '恢復全場？',
         text: '手機與投影拿掉暫停畫面；被這次暫停停住的日落鐘接著走。',
+        lines: manual.length ? [{ text: `${manual.map((match) => matchText(match)).join('、')}日落鐘是手動暫停的：恢復全場後還是停著，要繼續請自己按繼續`, problem: true }] : [],
         why: off ?? (!isPaused(room) ? '現在沒有全場暫停' : null),
         ok: '恢復',
       });
+    }
     case 'awards':
       return dialogNode({
         title: '切到頒獎？',
@@ -2283,31 +2296,16 @@ function runClockStart(match) {
   );
 }
 
-// 全場暫停／恢復（一筆寫入，連同日落鐘）。回傳的 clocks 跟按下去時畫面上的鐘對不上（快日落、別台剛好動了鐘、暫停中被手動動過）就提醒。
+// 全場暫停／恢復（一筆寫入，連同日落鐘）。結果條照 store 回傳的 clocks（停住或恢復的）、nearSunset（快日落、照常日落不停的）跟按下去時
+// 畫面上的鐘比對（host-model.js 的 pauseReport）：沒停住的提示可以手動暫停；恢復後還停著的手動暫停鐘提醒要自己按繼續。
 function runPause(request) {
   const on = request.kind === 'pause';
-  const room = ctx.latestRoom;
-  const now = serverTime(ctx.session);
-  const running = [1, MATCH_COUNT].filter((match) => {
-    const clock = room?.clock?.[match];
-    return isClock(clock) && !clockPaused(clock) && !clockPassed(clock, now);
-  });
+  const before = ctx.latestRoom;
   command(
     'pause',
     async () => {
-      const { changed, clocks } = await setPause(ctx.session, ctx.code, on, { expectSeq: request.seq });
-      if (!changed) return { ok: true, text: on ? '本來就是全場暫停中' : '本來就沒有全場暫停' };
-      const names = (list) => list.map((match) => matchText(Number(match))).join('、');
-      const done = clocks.map(String);
-      const expected = on ? running.map(String) : request.clocks;
-      const missed = expected.filter((match) => !done.includes(match));
-      let text = on ? `全場暫停了${done.length ? `；${names(done)}日落鐘一起停住` : ''}` : `恢復全場了${done.length ? `；${names(done)}日落鐘接著走` : ''}`;
-      if (missed.length) {
-        text += on
-          ? `；${names(missed)}日落鐘沒有停住（快日落或別台剛動了鐘），要停請在日落鐘面板按暫停`
-          : `；${names(missed)}日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續`;
-      }
-      return { ok: true, warn: missed.length > 0, text };
+      const result = await setPause(ctx.session, ctx.code, on, { expectSeq: request.seq });
+      return pauseReport(on, result, before, ctx.latestRoom, serverTime(ctx.session));
     },
     { describe: (latest) => (latest ? (latest.on === true ? '現在是全場暫停中' : '現在沒有暫停') : '') },
   );

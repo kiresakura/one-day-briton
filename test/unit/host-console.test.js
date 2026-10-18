@@ -138,11 +138,20 @@ test('全部開始：逐桌的結果（開了幾人、別台先開了、錯誤�
   assert.deepEqual(startResult({ ...result, started: false, error: new StoreError('paused', '全場暫停中，沒有開局') }), { ok: false, text: '第 1 桌：全場暫停中，沒有開局' });
 });
 
-test('日落鐘的按鈕：日落後都不能按、累計到上限的那一邊不能按、全場暫停中不能手動暫停或繼續', () => {
+test('日落鐘的按鈕：日落後都不能按、累計到上限的那一邊不能按；全場暫停中照鐘是哪一種寫原因，沒被停住的可以手動暫停', () => {
   const now = 1_000_000;
   const clock = { ...clockStartWrite(75, now - 10 * MINUTE), by: 'a' };
-  assert.deepEqual(clockGuards(clock, now), { toggle: null, minus: null, plus: null });
-  assert.match(clockGuards(clock, now, { paused: true }).toggle, /全場暫停中/);
+  assert.deepEqual(clockGuards(clock, now), { toggle: null, minus: null, plus: null, hold: null });
+  // 全場暫停中：被這次暫停停住的、手動暫停的、快日落的不能按暫停／繼續（各寫各的原因）；在走、沒被停住的可以手動暫停。
+  const pause = { on: true, seq: 1, at: now - 5_000, clocks: { 1: true } };
+  const held = { ...clock, pausedAt: pause.at, seq: 2 };
+  assert.deepEqual(clockGuards(held, now, { pause, match: 1 }), { toggle: '被這次全場暫停停住（恢復時一起繼續）', minus: null, plus: null, hold: 'held' });
+  assert.equal(clockGuards({ ...held, pausedAt: now - 60_000 }, now, { pause, match: 1 }).toggle, '手動暫停的（恢復全場後要自己按繼續）');
+  assert.equal(clockGuards(held, now, { pause, match: 2 }).toggle, '手動暫停的（恢復全場後要自己按繼續）');
+  const soon = { ...clock, remain: clock.remain - 65 * MINUTE + 8_000 }; // 剩 8 秒
+  assert.deepEqual(clockGuards(soon, now, { pause, match: 1 }), { toggle: '快日落・照常日落、不停', minus: null, plus: null, hold: 'near' });
+  assert.deepEqual(clockGuards(clock, now, { pause, match: 1 }), { toggle: null, minus: null, plus: null, hold: 'free' });
+  assert.equal(clockGuards(soon, now, { pause: { ...pause, on: false }, match: 1 }).toggle, null);
   const plus30 = { ...clock, remain: clock.remain + 30 * MINUTE, adjust: 30 * MINUTE };
   assert.equal(clockGuards(plus30, now).minus, null);
   assert.match(clockGuards(plus30, now).plus, /累計已經加了 30 分/);
