@@ -21,6 +21,10 @@ export function selectSeed({ search = '' } = {}, environment = 'prod') {
   return value !== null && /^\d{1,9}$/.test(value) ? Number(value) : null;
 }
 
+// 網頁版本號：主持人控制台的頂列顯示，現場逐台核對每台裝置都重新整理到新版。每次推網頁前＋1；
+// 沒有這個常數的舊網頁（加入控制台之前）算第 1 版。
+export const WEB_VERSION = 2;
+
 const page = globalThis.location ?? {};
 
 export const environments = {
