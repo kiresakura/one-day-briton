@@ -1933,11 +1933,11 @@ body[data-phase='night'] .notice-card {
   border-right: 4px solid currentColor;
 }
 
-/* 暫停層蓋住整個畫面（含動作列與分頁列）；深藍底、米白字（對比 ≥ 17:1），廣播用金色字（≥ 11:1）。 */
+/* 暫停層蓋住整個畫面（含動作列與分頁列，也高過截斷文字的彈出框 .popover 的 60）；深藍底、米白字（對比 ≥ 17:1），廣播用金色字（≥ 11:1）。 */
 .pause-layer {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 61;
   display: flex;
   flex-direction: column;
   align-items: center;
