@@ -26,7 +26,7 @@ function timed(promise, what) {
 }
 
 // 讀一次房間的資料（玩家端的 watchRoom，拿到第一筆就停）：房間不存在是 null。
-function readRoomOnce(store, session, code) {
+function readRoomOnce(watchRoom, session, code) {
   return new Promise((resolve, reject) => {
     let finished = false;
     let stop = null;
@@ -36,7 +36,7 @@ function readRoomOnce(store, session, code) {
       queueMicrotask(() => stop?.());
       settle();
     };
-    stop = store.watchRoom(
+    stop = watchRoom(
       session,
       code,
       (room) => finish(() => resolve(room)),
@@ -119,11 +119,9 @@ async function main() {
   const project = config.firebase.projectId;
   console.log(`連線：${wanted === 'prod' ? '正式站' : '本機模擬器'}（專案 ${project}）`);
 
-  const [{ loadGameData }, store, { startBot }] = await Promise.all([
-    import('../../play/js/gamedata.js'),
-    import('../../play/js/store.js'),
-    import('./bot.mjs'),
-  ]);
+  const { loadGameData } = await import('../../play/js/gamedata.js');
+  const { connect, disconnect, watchRoom } = await import('../../play/js/store.js');
+  const { startBot } = await import('./bot.mjs');
   const cardDir = new URL('../../play/data/', import.meta.url);
   const { data, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`${kind}.json`, cardDir), 'utf8')));
   if (errors.length > 0) {
@@ -142,13 +140,13 @@ async function main() {
   // 每個機器人一個匿名身分（slot 不同就是不同玩家）。先用第一個讀房間、排座位，排得成才讓其他機器人登入、入座。
   const slot = (index) => `bot-${options.room}-${index + 1}`;
   const sessions = [];
-  const closeAll = (list) => Promise.all(list.map((session) => store.disconnect(session).catch(() => {})));
+  const closeAll = (list) => Promise.all(list.map((session) => disconnect(session).catch(() => {})));
   let room;
   try {
-    const first = await unlessHalted(timed(store.connect(slot(0)), '登入'));
+    const first = await unlessHalted(timed(connect(slot(0)), '登入'));
     if (first === HALTED) return halt.code;
     sessions.push(first);
-    room = await unlessHalted(timed(readRoomOnce(store, first, options.room), '讀房間'));
+    room = await unlessHalted(timed(readRoomOnce(watchRoom, first, options.room), '讀房間'));
   } catch (error) {
     await closeAll(sessions);
     console.error(`${reachProblem(error, options.emulator)}。資料庫沒有寫入任何東西。`);
@@ -168,7 +166,7 @@ async function main() {
     return 1;
   }
   for (const note of plan.notes) console.log(note);
-  const others = await unlessHalted(Promise.allSettled(plan.names.slice(1).map((_, index) => timed(store.connect(slot(index + 1)), '登入'))));
+  const others = await unlessHalted(Promise.allSettled(plan.names.slice(1).map((_, index) => timed(connect(slot(index + 1)), '登入'))));
   if (others === HALTED) {
     await closeAll(sessions);
     return halt.code;
@@ -227,7 +225,7 @@ async function main() {
     let timer;
     await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, RECHECK_MS))));
     clearTimeout(timer);
-    const latest = halt ? null : await timed(readRoomOnce(store, sessions[0], options.room), '讀房間').catch(() => null);
+    const latest = halt ? null : await timed(readRoomOnce(watchRoom, sessions[0], options.room), '讀房間').catch(() => null);
     if (latest?.meta) {
       const capacity = capacityOf(data);
       const crowd = crowdedOut(latest, plan.table, capacity, new Set(bots.map((bot) => bot.uid)));

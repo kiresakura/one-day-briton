@@ -1,5 +1,5 @@
-// 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只用玩家端函式；
-// 模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同
+// 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只匯入玩家端函式
+// （白名單）；模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同
 // --fast），兩場都跑到終局、算出分數，出牌沒有因為不合法被退回；主持端退回的請求由機器人自己吸收；機器人自己結束時離線，開局前
 // 結束的離開玩家名單、開了局的留著；坐在進行中的一局裡不因等太久離開；指令列在房間不存在或已經開局時什麼都不寫；入座途中、
 // 入座後按 Ctrl-C（直接跑，與 npm run bots 對整個程序群組送）都乾淨結束（npm run test:sync）。
@@ -7,7 +7,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { combineScores, dayStatus, duskStage, nightStage, overLimit, seededRandom } from '../../play/js/game.js';
@@ -193,41 +193,126 @@ test('the choices are legal: cards it can afford, responses that fit, votes with
   assert.equal(chooseDiscard(hand.slice(0, 2), { table: '1', round: 1 }, quick.settings, { random }), null, 'not over the limit');
 });
 
-// 機器人只能用玩家端的函式：scripts/bots/ 底下從 store.js 拿的名字（靜態匯入，與動態匯入後的 store.xxx(…) 呼叫）都要在這張表上。
-test('the bots use player functions of the store only', async () => {
-  const player = new Set([
-    'StoreError',
-    'connect',
-    'disconnect',
-    'joinRoom',
-    'leaveRoom',
-    'serverTime',
-    'trackPresence',
-    'watchConnection',
-    'watchRoom',
-    'watchPrivate',
-    'watchRequest',
-    'watchVote',
-    'watchNight',
-    'watchDiscard',
-    'requestPlay',
-    'requestPass',
-    'requestRespond',
-    'requestVote',
-    'requestNight',
-    'requestDiscard',
-  ]);
-  const dir = new URL('../../scripts/bots/', import.meta.url);
-  const used = new Set();
-  for (const file of (await readdir(dir)).filter((name) => name.endsWith('.mjs'))) {
-    const source = await readFile(new URL(file, dir), 'utf8');
-    for (const [, names] of source.matchAll(/import\s*\{([^}]*)\}\s*from\s*'[./]*play\/js\/store\.js'/g)) {
-      for (const name of names.split(',').map((item) => item.trim()).filter(Boolean)) used.add(name);
+// 機器人只能用玩家端的函式。scripts/bots/ 底下（遞迴，.js／.mjs／.cjs）能匯入的只有：node:* 內建模組、scripts/bots/ 裡的模組、
+// play/js 的規則與資料模組（rules、game、gamedata、config、data），以及 store.js 這張表上的玩家端函式；store.js 只能具名匯入
+// （import { … } from，或 const { … } = await import(…)）。其他寫法（命名空間匯入、預設匯入、拿模組物件、算出來的路徑、re-export、
+// require、直接匯入 firebase/…）一律算問題。回傳 { problems, store }：store 是從 store.js 拿的名字。
+const PLAYER_FUNCTIONS = new Set([
+  'StoreError',
+  'connect',
+  'disconnect',
+  'joinRoom',
+  'leaveRoom',
+  'serverTime',
+  'trackPresence',
+  'watchConnection',
+  'watchRoom',
+  'watchPrivate',
+  'watchRequest',
+  'watchVote',
+  'watchNight',
+  'watchDiscard',
+  'requestPlay',
+  'requestPass',
+  'requestRespond',
+  'requestVote',
+  'requestNight',
+  'requestDiscard',
+]);
+const PLAY_MODULES = new Set(['rules.js', 'game.js', 'gamedata.js', 'config.js', 'data.js']);
+const botsDir = fileURLToPath(new URL('../../scripts/bots/', import.meta.url));
+const playJsDir = fileURLToPath(new URL('../../play/js/', import.meta.url));
+
+function importProblems(source, file) {
+  const problems = [];
+  const store = new Set();
+  const kindOf = (spec) => {
+    if (spec.startsWith('node:')) return 'node';
+    if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
+    const target = resolve(dirname(file), spec);
+    if (target.startsWith(botsDir)) return 'bots';
+    if (dirname(target) + sep !== playJsDir) return null;
+    if (basename(target) === 'store.js') return 'store';
+    return PLAY_MODULES.has(basename(target)) ? 'play' : null;
+  };
+  const allowed = (spec) => {
+    const kind = kindOf(spec);
+    if (kind === null) problems.push(`不准匯入 ${spec}`);
+    return kind;
+  };
+  const named = (list, spec) => {
+    for (const item of list.split(',').map((part) => part.trim()).filter(Boolean)) {
+      const name = item.split(/\s+as\s+|\s*:\s*/)[0];
+      store.add(name);
+      if (!PLAYER_FUNCTIONS.has(name)) problems.push(`${spec} 的 ${name} 不是玩家端函式`);
     }
-    for (const [, name] of source.matchAll(/\bstore\.(\w+)\(/g)) used.add(name);
+  };
+  // 靜態的 import … from、export … from（單引號、雙引號都算）
+  for (const [, keyword, clause, , spec] of source.matchAll(/\b(import|export)\b([^;'"`()]*?)\bfrom\s*(['"`])([^'"`]*)\3/g)) {
+    if (allowed(spec) !== 'store') continue;
+    const names = keyword === 'import' ? /^\s*\{([^}]*)\}\s*$/.exec(clause) : null;
+    if (names) named(names[1], spec);
+    else problems.push(`${spec} 只能用 import { … } from 具名匯入，收到「${keyword}${clause}」`);
   }
-  assert.ok(used.has('requestPlay') && used.has('watchRoom') && used.has('connect'), 'the scan finds the imports');
-  assert.deepEqual([...used].filter((name) => !player.has(name)), []);
+  // 只有路徑的 import '…'
+  for (const [, , spec] of source.matchAll(/\bimport\s*(['"`])([^'"`]*)\1/g)) allowed(spec);
+  // 動態匯入：路徑要是寫死的字串；store.js 要當場拆出名字
+  for (const found of source.matchAll(/\bimport\s*\(/g)) {
+    const rest = source.slice(found.index + found[0].length);
+    const literal = /^\s*(['"])([^'"`$]*)\1\s*\)/.exec(rest);
+    if (!literal) {
+      problems.push(`動態匯入的路徑要是寫死的字串：import(${rest.slice(0, 40)}`);
+      continue;
+    }
+    if (allowed(literal[2]) !== 'store') continue;
+    const names = /const\s*\{([^}]*)\}\s*=\s*await\s*$/.exec(source.slice(0, found.index));
+    if (names) named(names[1], literal[2]);
+    else problems.push(`${literal[2]} 的動態匯入要寫成 const { … } = await import(…)`);
+  }
+  if (/\brequire\s*\(|\bcreateRequire\b|\beval\s*\(|\bnew\s+Function\b/.test(source)) problems.push('不准用 require、createRequire、eval、new Function');
+  return { problems, store };
+}
+
+test('the bots import only node built-ins, their own modules, the rules and data of play/js, and player functions of the store by name', async () => {
+  // 檢查本身抓得到各種繞過的寫法（含先前漏掉的七種：雙引號、命名空間、動態匯入拆名字、拿模組物件後拆名字、.call、['…']、直接寫 firebase）。
+  const fake = join(botsDir, 'sneaky.mjs');
+  const sneaky = {
+    'a host function by name': "import { startTable } from '../../play/js/store.js';",
+    'double quotes': 'import { startTable } from "../../play/js/store.js";',
+    'a namespace import': "import * as s from '../../play/js/store.js'; await s.startTable(a);",
+    'a default import': "import store from '../../play/js/store.js';",
+    'a dynamic import taken apart': "const { startTable } = await import('../../play/js/store.js'); await startTable(a);",
+    'the module object taken apart later': "const [store] = await Promise.all([import('../../play/js/store.js')]); const { startTable } = store; await startTable(a);",
+    'the module object with .call': "const store = await import('../../play/js/store.js'); await store.startTable.call(null, a);",
+    "the module object with ['…']": "const store = await import('../../play/js/store.js'); await store['startTable'](a);",
+    'a computed path': "const { joinRoom } = await import(`../../play/js/${'store'}.js`);",
+    'a re-export': "export { startTable } from '../../play/js/store.js';",
+    'firebase directly': "import { remove, ref } from 'firebase/database'; await remove(ref(session.db, 'rooms/' + code));",
+    'firebase dynamically': "const { remove } = await import('firebase/database');",
+    'require': "const store = require('../../play/js/store.js');",
+    'another play module': "import { enterRoom } from '../../play/js/app.js';",
+    'outside scripts/bots': "import { run } from '../data-import.mjs';",
+  };
+  for (const [label, source] of Object.entries(sneaky)) assert.notDeepEqual(importProblems(source, fake).problems, [], label);
+  const fine = [
+    "import { joinRoom, requestPlay as play } from '../../play/js/store.js';",
+    "const { connect, watchRoom } = await import('../../play/js/store.js');",
+    "import { readFile } from 'node:fs/promises';",
+    "import { planSeats } from './plan.mjs';",
+    "import { activeKey } from '../../play/js/rules.js';",
+    "const { config } = await import('../../play/js/config.js');",
+  ].join('\n');
+  assert.deepEqual(importProblems(fine, fake).problems, []);
+  // scripts/bots/ 底下每一個檔
+  const files = (await readdir(botsDir, { recursive: true })).filter((name) => /\.(?:m|c)?js$/.test(name)).map((name) => join(botsDir, name));
+  assert.ok(files.length >= 6, files.join(', '));
+  const used = new Set();
+  for (const file of files) {
+    const { problems, store } = importProblems(await readFile(file, 'utf8'), file);
+    assert.deepEqual(problems, [], file);
+    for (const name of store) used.add(name);
+  }
+  for (const name of ['connect', 'joinRoom', 'leaveRoom', 'requestPlay', 'watchRoom']) assert.ok(used.has(name), `the scan finds ${name}`);
 });
 
 // ---- 模擬器上跑完整的兩場 ----
