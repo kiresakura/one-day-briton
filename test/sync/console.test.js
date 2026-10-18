@@ -564,7 +564,10 @@ test('the full pause stops the running clocks in the same write and resumes only
   assert.deepEqual(await setPause(host, code, false, { expectSeq: 3 }), { changed: true, seq: 4, clocks: ['1'] });
   await assert.rejects(setPause(host, code, true, { expectSeq: 3 }), codeOf('conflict'));
   await watchers.p1.until((value) => value.display?.pause?.seq === 4, 'the player sees the resume');
+  // 不是主持端：等一次伺服器的現況就回 permission-denied，不會再不帶鐘重送一次（那樣要多等約 3 秒）。
+  const refusedAt = Date.now();
   await assert.rejects(setPause(p1, code, true), codeOf('permission-denied'));
+  assert.ok(Date.now() - refusedAt < 4500, `answered in ${Date.now() - refusedAt} ms`);
   // 已經日落的鐘不會被暫停帶走（規則也不准暫停它，store 不把它放進那一筆）。
   const other = await createRoom(host);
   await startClock(host, other, 1, 10);

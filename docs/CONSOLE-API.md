@@ -62,7 +62,7 @@
 - 被拒之後只等約 0.5 秒就判斷的那條捷徑（房間裡還沒有任何控制台節點時），前提是控制台一直開著 `watchRoom`（別台的那一筆會在被拒的回覆之前傳到這台）。
 - 錯誤一律是 `StoreError`（`error.code`、`error.message` 是給人看的中文），代碼見第 6 節；`conflict` 另外帶 `error.latest`（那一筆最新的內容，沒有是 `null`）。
 - 寫入被拒時會等伺服器的現況再判斷原因，每等一次：這間房已經有控制台的節點時最多約 3 秒，還沒有任何控制台節點時（舊規則一定是這樣）約 0.5 秒，
-  所以「規則還沒更新」約 0.5 秒就回來。大多數指令只等一次；`setPause` 例外：暫停被拒、伺服器上也沒變時不帶鐘再寫一次（再等一次，最壞約 6 秒；
+  所以「規則還沒更新」約 0.5 秒就回來。大多數指令只等一次；`setPause` 例外：暫停被拒、伺服器上也沒變、原因不明（`rejected`）時不帶鐘再寫一次（再等一次，最壞約 6 秒；
   只有這台估的伺服器時間差了 10 秒以上才會走到這裡），鐘被別台改動時看到變化就重讀再試（不用等滿，一次指令最多試 5 次）。
 - 「目前那一筆」讀的是這台的本機快取：別台剛寫的那一筆還沒傳到時，這台的指令會被規則拒、回 `conflict`（`latest` 已經是最新的），
   畫面照 `latest` 重畫、讓主持人再按一次即可，不用自動重試。
@@ -74,7 +74,7 @@
 | `hideBroadcast(session, code, { expectSeq } = {})` | 收回目前那一則（同一則加 `hidden: true`）；沒有廣播或已經收回就不寫 | `{ changed, seq }` |
 | `playSfx(session, code, id)` | 投影端播一次音效：`id` 是 `bell` 或 `gavel`；離上一次不到 1 秒丟 `too-soon`（送出時就在 1 秒的邊界、被規則拒的也立刻回 `too-soon`，不等伺服器） | `{ seq }` |
 | `setMusic(session, code, on, { track = 'opening', expectSeq } = {})` | 背景音樂播放／停止；已經是這個狀態就不寫 | `{ changed, seq }` |
-| `setPause(session, code, on, { expectSeq } = {})` | 全場暫停／恢復，一筆寫入。暫停：同一筆停住正在走、離日落還有 10 秒以上（`PAUSE_NEAR_SUNSET_MS`，照這台估的伺服器時間）的鐘，記在 `pause.clocks`；離日落不到 10 秒的鐘第一次就不帶（照常日落；停了也沒有意義，帶了反而可能讓整筆被拒、要等好幾秒）。暫停那一筆一定要寫得進去：還是被拒、伺服器上也沒變時，一個鐘都不帶再寫一次。恢復：只恢復 `pause.clocks` 記的、而且還是被這一次暫停停住的鐘（`pausedAt` 等於 `pause.at`；原本就手動暫停的、暫停中被手動繼續又暫停的都不動）；恢復不放寬：被拒、伺服器上也沒變就丟 `rejected`，不會不帶鐘只寫 `pause.on = false`（那樣被暫停停住的鐘會一直停著）。已經是這個狀態就不寫 | `{ changed, seq, clocks }`（`clocks`＝這次一起停住或恢復的場次，例 `['1']`；正在走卻不在裡面的鐘就是沒停住的） |
+| `setPause(session, code, on, { expectSeq } = {})` | 全場暫停／恢復，一筆寫入。暫停：同一筆停住正在走、離日落還有 10 秒以上（`PAUSE_NEAR_SUNSET_MS`，照這台估的伺服器時間）的鐘，記在 `pause.clocks`；離日落不到 10 秒的鐘第一次就不帶（照常日落；停了也沒有意義，帶了反而可能讓整筆被拒、要等好幾秒）。暫停那一筆一定要寫得進去：還是被拒、伺服器上也沒變、原因不明（不是 `permission-denied`）時，一個鐘都不帶再寫一次。恢復：只恢復 `pause.clocks` 記的、而且還是被這一次暫停停住的鐘（`pausedAt` 等於 `pause.at`；原本就手動暫停的、暫停中被手動繼續又暫停的都不動）；恢復不放寬：被拒、伺服器上也沒變就丟 `rejected`，不會不帶鐘只寫 `pause.on = false`（那樣被暫停停住的鐘會一直停著）。已經是這個狀態就不寫 | `{ changed, seq, clocks }`（`clocks`＝這次一起停住或恢復的場次，例 `['1']`；正在走卻不在裡面的鐘就是沒停住的） |
 | `startClock(session, code, match, minutes)` | 開第 `match` 場（1 或 2）的全場日落鐘，`minutes` 是 10–180 的整數（照 `settings.sunsetMinutes`）。已經開了就不寫；第 2 場還沒開（還沒有任何 `tables/{n}-2`）時開第 2 場的鐘丟 `invalid-command`（先開走的話，第 2 場各桌開局時已經被吃掉一段）；全場暫停中丟 `paused`（暫停中開的鐘會一路走、恢復時也不會被照顧到） | `{ started, clock }`（`clock` 是寫入後或原本的那一筆） |
 | `pauseClock(session, code, match, { expectSeq } = {})` | 暫停這一場的鐘；已經暫停就不寫；日落後丟 `clock-passed` | `{ changed, clock }` |
 | `resumeClock(session, code, match, { expectSeq } = {})` | 繼續；沒暫停就不寫 | `{ changed, clock }` |
