@@ -1,6 +1,6 @@
 // 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只用玩家端函式；
 // 模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同
-// --fast），兩場都跑到終局、算出分數；主持端退回的請求由機器人自己吸收；機器人自己結束時離線，開局前
+// --fast），兩場都跑到終局、算出分數，出牌沒有因為不合法被退回；主持端退回的請求由機器人自己吸收；機器人自己結束時離線，開局前
 // 結束的離開玩家名單、開了局的留著；坐在進行中的一局裡不因等太久離開；指令列在房間不存在或已經開局時什麼都不寫；入座途中、
 // 入座後按 Ctrl-C（直接跑，與 npm run bots 對整個程序群組送）都乾淨結束（npm run test:sync）。
 import test, { after, before } from 'node:test';
@@ -384,6 +384,9 @@ function assertBothMatches({ room, table, uids, results, finals }) {
 }
 
 const total = (results, field) => results.reduce((sum, result) => sum + result.stats[field], 0);
+// 被退回的原因裡，只有跟別人搶快造成的才算正常（別人先響應了、響應窗口剛好截止、那張牌剛好結算了）。
+const RACES = new Set(['beaten', 'too-late', 'wrong-pending', 'no-pending']);
+const rejectionsOf = (results) => results.flatMap((result) => result.rejections);
 
 test('three bots play both matches to the end with response windows, answering whenever they can', GAME_TIMEOUT, async (t) => {
   const game = await playBots(t, { count: null, data: quick, policy: { respondChance: 1 }, seed: 3 });
@@ -394,6 +397,8 @@ test('three bots play both matches to the end with response windows, answering w
   // 第 1 回合黑夜手牌超過 4 張的人挑了棄牌（每場都有第 1 回合黑夜）。
   assert.ok(total(game.results, 'discards') > 0, 'someone over the hand limit picked cards to discard');
   assert.ok(game.lines.some((line) => /第 2 桌第 2 場｜.*入座：座位/.test(line)), 'seated again in match 2');
+  // 出牌、結束這一輪都沒被退回；響應只會因為跟別人搶快被退回（不會因為付不起、不是這張牌能響應的…）。
+  assert.deepEqual(rejectionsOf(game.results).filter(({ reason }) => !RACES.has(reason)), [], 'only races are sent back');
   assert.deepEqual(game.hostErrors, []);
 });
 
@@ -403,6 +408,9 @@ test('five bots play both matches to the end when cards settle at once', GAME_TI
   assertBothMatches(game);
   assert.ok(total(game.results, 'plays') > 0, 'cards were played');
   assert.equal(total(game.results, 'responses'), 0, 'no window, no responses');
+  // 沒有響應窗口就沒有搶快：一筆都不會被退回、送不出去（出牌前都照規則查過）。
+  assert.deepEqual(rejectionsOf(game.results), [], 'nothing sent back');
+  assert.equal(total(game.results, 'failed'), 0, 'everything got through');
   assert.deepEqual(game.hostErrors, []);
 });
 

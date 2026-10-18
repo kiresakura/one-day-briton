@@ -71,9 +71,9 @@ function within(promise, ms) {
 //   log(text)    印一行
 //   onFinal(room, key)   看到一局終局（印結算摘要用；同一局每個機器人都會叫一次，由呼叫的一端去重）
 // 先入座（joinRoom，失敗就丟出去），成功後回傳 { uid, done, stop }：done 在結束時 resolve 成
-// { reason, detail, stats, left, abandoned }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、
-// left 不在名單上了、stopped、error；left＝離開了玩家名單；abandoned＝丟下一局還沒結束的遊戲）。stop(detail) 叫它提早結束
-// （detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。
+// { reason, detail, stats, rejections, left, abandoned }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、
+// left 不在名單上了、stopped、error；rejections 是每次被退回的 { kind, reason }；left＝離開了玩家名單；abandoned＝丟下一局還沒結束的
+// 遊戲）。stop(detail) 叫它提早結束（detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。
 export async function startBot(options) {
   const { session, code, name, table, data } = options;
   const policy = { ...DEFAULT_POLICY, ...options.policy };
@@ -188,6 +188,7 @@ export async function startBot(options) {
   };
 
   const stats = { plays: 0, passes: 0, responses: 0, votes: 0, nights: 0, discards: 0, rejected: 0, failed: 0 };
+  const rejections = []; // 每次被退回：{ kind（play、pass、respond）, reason（REJECT_REASONS 的鍵，沒收到是 null） }
   const say = (m, text) => print(actionLine({ name, key: m?.key ?? null, round: m?.state?.round ?? null, phase: m?.state?.phase ?? null, text }));
   const said = new Set();
   const once = (tag, m, text) => {
@@ -267,8 +268,9 @@ export async function startBot(options) {
     hands: { [uid]: m.hand },
   });
 
-  const rejected = (m, what, reason) => {
+  const rejected = (m, kind, what, reason) => {
     stats.rejected += 1;
+    rejections.push({ kind, reason: reason ?? null });
     say(m, `被退回（${what}）：${reason ? (REJECT_REASONS[reason] ?? reason) : '沒有收到原因'}，改做別的`);
   };
 
@@ -316,7 +318,7 @@ export async function startBot(options) {
         turn.handledAt ??= Date.now();
         if (Date.now() - turn.handledAt < NOTICE_WAIT_MS) return null;
       }
-      rejected(m, sent.type === 'play' ? `出牌 ${cardName(sent.card)}` : '結束這一輪', reason);
+      rejected(m, sent.type, sent.type === 'play' ? `出牌 ${cardName(sent.card)}` : '結束這一輪', reason);
       turn.sent = null;
       turn.handledAt = null;
       if (sent.type === 'play') turn.skip.add(sent.card);
@@ -341,7 +343,7 @@ export async function startBot(options) {
       const notice = seen.mine?.notice;
       if (notice?.seq === answer.seq) {
         answer.reported = true;
-        rejected(m, `響應 ${cardName(answer.card)}`, notice.reason);
+        rejected(m, 'respond', `響應 ${cardName(answer.card)}`, notice.reason);
         continue;
       }
       const entry = m.game?.log?.[id];
@@ -399,19 +401,20 @@ export async function startBot(options) {
     return cards ? { kind: 'discard', key: `${tag}:${count}`, tag, pick: { ...where, cards } } : null;
   };
 
+  // 手牌超過上限的先挑棄牌、再送黑夜選擇：大家都送出選擇後主持端就揭曉、進下一回合，那之後棄牌就送不出去了（規則只收黑夜的）。
   const nightIntent = (m) => {
     const { state, game, key } = m;
-    const stage = nightStage(game.night, state.round);
     const now = serverTime(session);
+    const discard = discardIntent(m, now);
+    if (discard) return discard;
+    const stage = nightStage(game.night, state.round);
     const open = stage === 'choosing' || (stage === 'closing' && now < game.night.revealAt);
-    if (open && !sentFor(seen.night, m)) {
-      const tag = `night:${key}:${state.round}`;
-      const count = attempt(tag);
-      const view = { table: key, round: state.round, phase: state.phase, seats: game.seats, night: game.night };
-      const pick = count === null ? null : chooseNight(view, uid, now, { random });
-      if (pick) return { kind: 'night', key: `${tag}:${count}`, tag, pick };
-    }
-    return discardIntent(m, now);
+    if (!open || sentFor(seen.night, m)) return null;
+    const tag = `night:${key}:${state.round}`;
+    const count = attempt(tag);
+    const view = { table: key, round: state.round, phase: state.phase, seats: game.seats, night: game.night };
+    const pick = count === null ? null : chooseNight(view, uid, now, { random });
+    return pick ? { kind: 'night', key: `${tag}:${count}`, tag, pick } : null;
   };
 
   const decide = (m) => {
@@ -528,7 +531,7 @@ export async function startBot(options) {
     const left = listed && !seatedIn(room) ? (await within(leaveRoom(session, code).then(() => true), CLOSE_MS)) === true : false;
     await within(stopPresence(), CLOSE_MS);
     await within(disconnect(session), CLOSE_MS);
-    return { ...outcome, stats, left, abandoned };
+    return { ...outcome, stats, rejections, left, abandoned };
   };
   const done = run().then(finish, (error) => finish({ reason: 'error', detail: error.message }));
   const stop = (detail = '收到停止') => {
