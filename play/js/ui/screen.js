@@ -14,7 +14,6 @@ import { createAudio } from './screen-audio.js';
 import {
   MEDIA,
   awardPages,
-  bellKey,
   bellsDue,
   clockText,
   creditsSummary,
@@ -245,15 +244,15 @@ function tick() {
   const room = view.room;
   if (room) {
     const now = serverTime(view.session);
-    // 日落自動響鐘：全場鐘到點時在本機播一次鐘聲（每場一次，暫停中不播），不寫資料庫。第一次讀到時已經日落的鐘不補。
+    // 日落自動響鐘：全場鐘到點時在本機播一次鐘聲（每場一次），不寫資料庫。第一次讀到時已經日落的鐘不補；
+    // 全場暫停中到點的先不響、恢復後第一秒補響（bellsDue）。聲音沒開時照樣記下，之後開了聲音也不補。
     if (!view.seen.primed) {
       for (const key of passedClocks(room, now)) view.seen.bells.add(key);
       view.seen.primed = true;
     }
-    for (const match of bellsDue(room, now, view.seen.bells)) {
-      view.seen.bells.add(bellKey(match, room.clock[match]));
-      if (view.audioOn && !view.preview && room.display?.pause?.on !== true) audio.play('bell');
-    }
+    const bells = bellsDue(room, now, view.seen.bells, room.display?.pause?.on === true);
+    for (const key of bells.mark) view.seen.bells.add(key);
+    if (view.audioOn && !view.preview) for (const match of bells.ring) audio.play('bell');
   }
   for (const [key, flash] of view.flashes) if (flash.until <= Date.now()) view.flashes.delete(key);
   if (view.opening.until && view.opening.until <= Date.now()) stopOpening();

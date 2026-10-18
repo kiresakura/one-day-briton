@@ -355,16 +355,21 @@ export function matchLine(room, match) {
 
 // ---- 日落自動響鐘 ----
 
-// 全場鐘到點要響鐘的場次：走著的鐘（不是暫停中）剛好已經日落、而且這一場還沒響過。seen 是這台已經處理過的場次（Set）。
-// 投影端第一次讀到房間時已經日落的鐘不響（不補），由呼叫端先把它們放進 seen。
-export function bellsDue(room, now, seen) {
-  const due = [];
+// 這一秒的日落鐘：{ ring, mark }。ring 是要響鐘的場次，mark 是要記成「響過」的鐘（bellKey）。走著的鐘（鐘本身不是暫停中）
+// 已經日落、而且這一場還沒響過才算；seen 是這台已經處理過的鐘（Set）。paused＝全場暫停中（display/pause）：到點的先不響也不記，
+// 恢復後第一秒補響一次（全場暫停不一定停鐘，快日落的鐘照走），每場恰好一次。
+// 投影端第一次讀到房間時已經日落的鐘不響（不補），由呼叫端先把它們放進 seen（passedClocks）。
+export function bellsDue(room, now, seen, paused = false) {
+  const ring = [];
+  const mark = [];
   for (let match = 1; match <= MATCH_COUNT; match += 1) {
     const clock = room?.clock?.[match];
     if (!isClock(clock) || clockPaused(clock) || seen.has(bellKey(match, clock))) continue;
-    if (clock.anchor + clock.remain <= now) due.push(match);
+    if (clock.anchor + clock.remain > now || paused) continue;
+    ring.push(match);
+    mark.push(bellKey(match, clock));
   }
-  return due;
+  return { ring, mark };
 }
 
 // 一個鐘的識別：同一間房同一場只會開一次鐘（開了之後不能刪、startedAt 不能改），所以場次＋開鐘時間就夠了。

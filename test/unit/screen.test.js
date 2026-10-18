@@ -291,17 +291,57 @@ test('the header clock follows the match being played; without a room clock each
 test('the sunset bell rings once per match when a running room clock reaches sunset, never for a paused one or one already past', () => {
   const r = room({ clock: { 1: clock() } });
   const seen = new Set(passedClocks(r, NOW));
+  const none = { ring: [], mark: [] };
   assert.deepEqual([...seen], []);
-  assert.deepEqual(bellsDue(r, NOW, seen), []);
+  assert.deepEqual(bellsDue(r, NOW, seen), none);
   const sunset = r.clock[1].anchor + r.clock[1].remain;
-  assert.deepEqual(bellsDue(r, sunset - 1, seen), []);
-  assert.deepEqual(bellsDue(r, sunset, seen), [1]);
+  assert.deepEqual(bellsDue(r, sunset - 1, seen), none);
+  assert.deepEqual(bellsDue(r, sunset, seen), { ring: [1], mark: [bellKey(1, r.clock[1])] });
   seen.add(bellKey(1, r.clock[1]));
-  assert.deepEqual(bellsDue(r, sunset + 1000, seen), [], 'only once');
+  assert.deepEqual(bellsDue(r, sunset + 1000, seen), none, 'only once');
   const paused = room({ clock: { 1: clock({ pausedAt: NOW - MINUTE, remain: 0 }) } });
-  assert.deepEqual(bellsDue(paused, NOW, new Set()), [], 'a clock cut to 0 while paused does not ring until it runs');
+  assert.deepEqual(bellsDue(paused, NOW, new Set()), none, 'a clock cut to 0 while paused does not ring until it runs');
   const late = room({ clock: { 2: clock({ remain: MINUTE }) } });
   assert.deepEqual(passedClocks(late, NOW), [bellKey(2, late.clock[2])], 'a clock already past when the screen opens is not rung late');
+  assert.deepEqual(bellsDue(late, NOW, new Set(passedClocks(late, NOW))), none);
+});
+
+test('a sunset reached during a room pause rings once on the first second after the pause, once per match', () => {
+  // 全場暫停不停快日落的鐘：鐘照走、在暫停中日落。暫停中不響也不記，恢復後第一秒補響一次。
+  const r = room({ clock: { 1: clock({ remain: 30 * MINUTE + 8000 }) }, display: { pause: { on: true } } });
+  const seen = new Set(passedClocks(r, NOW));
+  assert.deepEqual([...seen], [], 'not past yet when the screen opens');
+  const sunset = r.clock[1].anchor + r.clock[1].remain;
+  for (const at of [sunset, sunset + 1000, sunset + 60_000]) assert.deepEqual(bellsDue(r, at, seen, true), { ring: [], mark: [] }, 'silent while paused');
+  const resumed = bellsDue(r, sunset + 61_000, seen, false);
+  assert.deepEqual(resumed, { ring: [1], mark: [bellKey(1, r.clock[1])] }, 'rings on the first second after the pause');
+  for (const key of resumed.mark) seen.add(key);
+  assert.deepEqual(bellsDue(r, sunset + 62_000, seen, false), { ring: [], mark: [] }, 'exactly once');
+
+  // 暫停中把鐘減到日落：投影開著時全場暫停、鐘也停住，主持人把鐘減到 0；恢復時從 0 起走 → 恢復後響一次。
+  const cut = room({ clock: { 1: clock() } });
+  const cutSeen = new Set(passedClocks(cut, NOW));
+  cut.display = { pause: { on: true } };
+  cut.clock[1] = clock({ pausedAt: NOW + MINUTE, anchor: NOW + MINUTE, remain: 0 });
+  assert.deepEqual(bellsDue(cut, NOW + 2 * MINUTE, cutSeen, true), { ring: [], mark: [] });
+  cut.clock[1] = clock({ anchor: NOW + 3 * MINUTE, remain: 0 });
+  assert.deepEqual(bellsDue(cut, NOW + 3 * MINUTE, cutSeen, false).ring, [1]);
+
+  // 開頁時已經日落：不補，暫停結束後也不補。
+  const past = room({ clock: { 1: clock({ remain: MINUTE }) }, display: { pause: { on: true } } });
+  const pastSeen = new Set(passedClocks(past, NOW));
+  assert.deepEqual(bellsDue(past, NOW + 1000, pastSeen, false), { ring: [], mark: [] });
+
+  // 兩場各響一次。
+  const two = room({ clock: { 1: clock({ remain: 30 * MINUTE + 1000 }), 2: clock({ startedAt: NOW, anchor: NOW, remain: 2000 }) } });
+  const twoSeen = new Set(passedClocks(two, NOW));
+  const rings = [];
+  for (let at = NOW; at <= NOW + 5000; at += 1000) {
+    const step = bellsDue(two, at, twoSeen, at === NOW + 1000);
+    rings.push(...step.ring);
+    for (const key of step.mark) twoSeen.add(key);
+  }
+  assert.deepEqual(rings, [1, 2], 'match 1 waits out the paused second, then each match rings once');
 });
 
 test('standings list the top three of each finished table and say which tables are still playing', () => {
