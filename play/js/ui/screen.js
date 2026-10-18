@@ -549,6 +549,7 @@ async function fetchMedia(item) {
     entry.status = 'failed';
   } finally {
     if (item.id === 'opening') openingDownloaded();
+    if (item.id === 'music-opening') updateMusic(); // 開場音樂正在播佔位的話，換成檔案
     scheduleRender();
   }
 }

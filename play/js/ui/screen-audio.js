@@ -8,6 +8,7 @@ export function createAudio() {
   let context = null;
   const buffers = new Map(); // 素材解碼好的聲音：bell、gavel
   let music = null; // 正在播的開場音樂 { placeholder, stop() }
+  let brokenUrl = null; // 播不出來的音樂檔（換成佔位之後不再拿它重試）
 
   function output(volume) {
     const gain = context.createGain();
@@ -186,8 +187,10 @@ export function createAudio() {
       return { played: true, placeholder: true };
     },
 
-    // 開場音樂：url 是下載好的素材（沒有就用合成的佔位）。已經在播就不重來。回傳 { playing, placeholder }。
+    // 開場音樂：url 是下載好的素材（沒有就用合成的佔位）。已經在播就不重來；但正在播佔位、檔案後來下載好了，就先停佔位再改播檔案。
+    // 回傳 { playing, placeholder }。
     startMusic(url) {
+      if (music?.placeholder && url && url !== brokenUrl && this.unlocked) this.stopMusic();
       if (music) return { playing: true, placeholder: music.placeholder };
       if (!this.unlocked) return { playing: false, placeholder: false };
       if (url) {
@@ -201,8 +204,10 @@ export function createAudio() {
         };
         music = { placeholder: false, stop };
         element.play().catch(() => {
-          // 播不出來（檔壞了）就換成佔位。
+          // 播不出來（檔壞了）就換成佔位，之後不再拿這個檔重試。
           if (music?.stop !== stop) return;
+          stop();
+          brokenUrl = url;
           music = { placeholder: true, stop: synthMusic() };
         });
         return { playing: true, placeholder: false };
