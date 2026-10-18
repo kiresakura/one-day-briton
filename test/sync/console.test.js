@@ -163,6 +163,14 @@ const stamp = () => serverTimestamp();
 const command = (session, fields, seq) => ({ ...fields, seq, at: stamp(), by: session.uid });
 // 直接開一個全場鐘（規則照收；store 的 startClock 要等第 2 場開了才開第 2 場的鐘，這裡不用先打完第 1 場）。
 const createClock = (session, path, minutes) => put(session, path, { startedAt: stamp(), minutes, anchor: stamp(), remain: minutes * MINUTE, adjust: 0, seq: 1, by: session.uid });
+// 一筆直接寫入（write 是送出它的函式）的結果：'allowed'、'denied'（被規則拒）；其他錯誤（包括送出前就丟的）照原文寫出來，跟預期比一定不符。
+const outcome = (write) =>
+  Promise.resolve()
+    .then(write)
+    .then(
+      () => 'allowed',
+      (error) => (denied.test(`${error?.code} ${error?.message}`) ? 'denied' : `error: ${error?.message ?? error}`),
+    );
 
 test('only the hosts write display and clock; seated players, a signed-in screen and a signed-out connection cannot; everyone signed in reads them', TIMEOUT, async (t) => {
   const { code, watchers } = await consoleRoom(t);
@@ -349,6 +357,78 @@ test('adjusting moves remain and adjust by the same amount, at most 10 minutes a
   await assert.rejects(put(host, second, { ...paused, remain: paused.remain + MINUTE, adjust: paused.adjust + MINUTE, seq: paused.seq + 1 }), denied, 'adding after sunset');
   await assert.rejects(adjustClock(host, code, 2, MINUTE), codeOf('clock-passed'));
   await assert.rejects(remove(ref(host.db, second)), denied, 'cannot be deleted');
+});
+
+// 下面兩個測試不經過 store、直接寫，只靠規則擋（store 在送出前就會擋掉的情況也一樣要被規則拒）。每一列記下預期與實際，
+// 最後一起比對：規則被放寬時，失敗訊息會列出所有被放行的寫入。
+test('the rules alone: a resume cannot change adjust, not even back to 0 after an adjustment, and a running clock past sunset can be neither adjusted nor paused', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  const other = await createRoom(host);
+  const path = (room, m) => `rooms/${room}/clock/${m}`;
+  const rows = [];
+  const check = async (label, want, write) => rows.push([label, want, await outcome(write)]);
+  const resume = (clock, fields = {}) => {
+    const { pausedAt, ...running } = clock;
+    return { ...running, anchor: stamp(), remain: clock.remain - (pausedAt - clock.anchor), seq: clock.seq + 1, by: host.uid, ...fields };
+  };
+  const adjust = (clock, change) => ({ ...clock, remain: clock.remain + change, adjust: clock.adjust + change, seq: clock.seq + 1, by: host.uid });
+  // 暫停中的鐘：繼續時順便改 adjust 不行（clock/1）；先合法地 +10 分、再在繼續時把 adjust 歸 0（想繞過累計 ±30 分）也不行（clock/2）。
+  // 每一種各用一個鐘：規則被放寬、前一列被放行時，不會連帶讓後面的列看不出來。
+  await startClock(host, code, 1, 75);
+  await pauseClock(host, code, 1);
+  const first = await read(host, path(code, 1));
+  await check('clock 1: resume that also adds 1 minute to adjust', 'denied', () => put(host, path(code, 1), resume(first, { adjust: first.adjust + MINUTE })));
+  await check('clock 1: the same resume with adjust left alone', 'allowed', () => put(host, path(code, 1), resume(first)));
+  await createClock(host, path(code, 2), 75);
+  await pauseClock(host, code, 2);
+  const second = await read(host, path(code, 2));
+  await check('clock 2: +10 minutes while paused', 'allowed', () => put(host, path(code, 2), adjust(second, 10 * MINUTE)));
+  const added = await read(host, path(code, 2));
+  await check('clock 2: resume that sets adjust back to 0 after the +10 minutes', 'denied', () => put(host, path(code, 2), resume(added, { adjust: 0 })));
+  await check('clock 2: the same resume with adjust left alone', 'allowed', () => put(host, path(code, 2), resume(added)));
+  // 走著的鐘（另一間房）：減到只剩約 1.5 秒（store 留的餘裕），等伺服器那邊日落 0.3 秒之後，加減、暫停都被拒。
+  // 加的 1 分比已經超過的多：放行的話，日落了的鐘又會走起來（加時復活）。
+  await startClock(host, other, 1, 10);
+  await adjustClock(host, other, 1, -10 * MINUTE);
+  const running = await read(host, path(other, 1));
+  await untilServerTime(host, running.anchor + running.remain + 300);
+  await check('past sunset: +1 minute to a running clock', 'denied', () => put(host, path(other, 1), adjust(running, MINUTE)));
+  await check('past sunset: -1 minute to a running clock', 'denied', () => put(host, path(other, 1), adjust(running, -MINUTE)));
+  await check('past sunset: pausing a running clock', 'denied', () => put(host, path(other, 1), { ...running, pausedAt: stamp(), seq: running.seq + 1, by: host.uid }));
+  assert.deepEqual(rows.filter(([, want, got]) => want !== got), [], 'every write ends as expected');
+  assert.equal((await read(host, path(other, 1))).seq, running.seq, 'nothing went into the clock past sunset');
+});
+
+test('the rules alone: scene, broadcast, sound, music and pause each refuse a skipped seq, the seq already there, a time that is not the server time and someone else as the writer', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  // 每一種節點的第 1 筆、第 2 筆合法內容。每一列只改一個欄位、其他照合法的寫，被拒只會是因為改的那一個欄位；
+  // 最後照合法的寫一次，要寫得進去（也是下一輪的前一筆）。
+  const contents = {
+    scene: [{ id: 'rules' }, { id: 'awards', page: 1 }],
+    broadcast: [{ text: '第一則' }, { text: '第一則', hidden: true }],
+    sfx: [{ id: 'bell' }, { id: 'gavel' }],
+    music: [{ track: 'opening', on: true }, { track: 'opening', on: false }],
+    pause: [{ on: true }, { on: false }],
+  };
+  const changes = [
+    ['a skipped seq', (seq) => ({ seq: seq + 2 })],
+    ['the seq already there', (seq) => ({ seq })],
+    ['a time that is not the server time', () => ({ at: Date.now() - 5000 })],
+    ['someone else as the writer', () => ({ by: backup.uid })],
+  ];
+  const rows = [];
+  for (const [part, writes] of Object.entries(contents)) {
+    const path = `rooms/${code}/display/${part}`;
+    for (const [seq, fields] of writes.entries()) {
+      // 音效一秒最多一次：第 2 筆等過了一秒再寫，被拒就只會是因為改的那一個欄位。
+      if (part === 'sfx' && seq > 0) await untilServerTime(host, (await read(host, path)).at + 1100);
+      const legal = { ...fields, seq: seq + 1, at: stamp(), by: host.uid };
+      for (const [name, change] of changes) rows.push([`${part} #${seq + 1}: ${name}`, 'denied', await outcome(() => put(host, path, { ...legal, ...change(seq) }))]);
+      rows.push([`${part} #${seq + 1}: nothing changed`, 'allowed', await outcome(() => put(host, path, legal))]);
+    }
+  }
+  assert.equal(rows.length, 5 * 2 * 5);
+  assert.deepEqual(rows.filter(([, want, got]) => want !== got), [], 'only the untouched writes go in');
 });
 
 test('the store commands: scene, broadcast and take back, sounds, music, clock pause and resume; each writes seq + 1 and by', TIMEOUT, async (t) => {
