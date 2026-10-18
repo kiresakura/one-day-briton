@@ -10,6 +10,7 @@
     "fonts:check": "node scripts/fonts/check.mjs",
     "data:import": "node scripts/data-import.mjs",
     "dev": "scripts/with-java.sh firebase emulators:start --only auth,database,hosting --project demo-one-day-briton",
+    "bots": "node scripts/bots/cli.mjs",
     "vendor": "node scripts/vendor-firebase.mjs"
   },
   "devDependencies": {
