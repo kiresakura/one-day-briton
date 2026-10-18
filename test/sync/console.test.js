@@ -636,15 +636,20 @@ test('waiting for: the host sees who has not voted or chosen yet, the same count
   await assert.rejects(read(other, `nights/${code}/${first.uid}`), denied);
 });
 
-test('start all opens every table that can start and then the room clock; advance all moves only the tables that can go, and holds the scoring step', TIMEOUT, async (t) => {
+test('start all opens every table that can start and then the room clock; advance all moves only the tables that can go, and holds the scoring step; a progress callback that throws stops neither', TIMEOUT, async (t) => {
   const { code, watchers } = await consoleRoom(t);
   await joinRoom(outsider, code, 'Solo', 4);
   let room = await watchers.host.until((value) => Object.keys(value.players ?? {}).length === 4, 'four players');
   const plan = startPlan(room, data);
   assert.deepEqual(plan.start.map(({ key, count }) => [key, count]), [['2', 3], ['4', 1]]);
   assert.equal(plan.skip.length, 4, 'tables 1, 3, 5 and 6 have nobody');
+  // 畫面的進度回呼丟錯（例如畫到一半出錯）：批次照做完，每一桌的結果照樣回傳。
   const progress = [];
-  const started = await startAll(host, code, plan, data, { random: seededRandom(11), clock: true, onProgress: (step) => progress.push([step.done, step.total, step.key]) });
+  const failing = (step) => {
+    progress.push([step.done, step.total, step.key]);
+    throw new Error('the progress bar failed to draw');
+  };
+  const started = await startAll(host, code, plan, data, { random: seededRandom(11), clock: true, onProgress: failing });
   assert.deepEqual(started.results.map(({ key, started: ok, error }) => [key, ok, error]), [['2', true, null], ['4', true, null]]);
   assert.deepEqual(started.clock, { started: true, error: null });
   assert.deepEqual(progress, [[1, 2, '2'], [2, 2, '4']]);
@@ -657,7 +662,8 @@ test('start all opens every table that can start and then the room clock; advanc
   // 能推的全推：兩桌都在日出、已發牌 → 白晝；第 4 桌 1 人，白晝出完才推。
   const plan1 = advancePlan(room, data.settings, serverTime(host));
   assert.deepEqual(plan1.advance.map(({ key, to }) => [key, to.phase]), [['2', 'day'], ['4', 'day']]);
-  const moved = await advanceAll(host, code, plan1, data, { random: seededRandom(12) });
+  const moved = await advanceAll(host, code, plan1, data, { random: seededRandom(12), onProgress: failing });
+  assert.deepEqual(progress.slice(2), [[1, 2, '2'], [2, 2, '4']], 'called for every table even though it threw');
   assert.deepEqual(moved.results.map(({ key, advanced, error }) => [key, advanced, error]), [['2', true, null], ['4', true, null]]);
   // 同一份計畫再執行一次：局面已經變了，沒有動。
   const stale = await advanceAll(host, code, plan1, data);

@@ -1851,10 +1851,19 @@ export function trackScreen(session, code, initial = {}) {
   };
 }
 
+// 批次動作的進度回呼（畫面給的）：丟錯不影響批次，剩下的桌照做、做完的桌照樣回傳。
+function reportProgress(onProgress, step) {
+  try {
+    onProgress(step);
+  } catch {
+    // 畫面自己的錯，這裡不處理
+  }
+}
+
 // 「全部開始」「全部開始第 2 場」：照 game.js 的 startPlan／startMatch2Plan 逐桌呼叫 startTable（等同單桌「開始」，每桌各自洗牌；
 // 第 2 場帶各桌的 include），一桌失敗不影響別桌；中途斷掉時已開的保留，再照新的計畫做一次只會開剩下的。clock 是 true、計畫說那一場的
 // 全場鐘還沒開、而且至少有一桌已經開局時，最後開全場日落鐘（startClock）。全場暫停中的桌不開（回 paused）。
-// onProgress({ done, total, key, result }) 每做完一桌呼叫一次。回傳 { results: [{ key, table, started, error }], clock: { started, error } | null }。
+// onProgress({ done, total, key, result }) 每做完一桌呼叫一次（見 reportProgress）。回傳 { results: [{ key, table, started, error }], clock: { started, error } | null }。
 export async function startAll(session, code, plan, data, { random, clock = false, onProgress = () => {} } = {}) {
   const results = [];
   for (const item of plan.start) {
@@ -1868,7 +1877,7 @@ export async function startAll(session, code, plan, data, { random, clock = fals
       result = { ...result, error };
     }
     results.push(result);
-    onProgress({ done: results.length, total: plan.start.length, key: item.key, result });
+    reportProgress(onProgress, { done: results.length, total: plan.start.length, key: item.key, result });
   }
   let clockResult = null;
   const anyStarted = plan.started.length > 0 || results.some((result) => result.started);
@@ -1903,7 +1912,7 @@ export async function advanceAll(session, code, plan, data, { random, onProgress
       result = { ...result, error };
     }
     results.push(result);
-    onProgress({ done: results.length, total: plan.advance.length, key: item.key, result });
+    reportProgress(onProgress, { done: results.length, total: plan.advance.length, key: item.key, result });
   }
   return { results };
 }
