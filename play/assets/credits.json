@@ -1330,13 +1330,13 @@
     "files": [
       {
         "path": "ui/card-back-a.webp",
-        "bytes": 51430,
-        "sha256": "0a494cb98696887a1dcd5a87a9e36dc3d6ebdfd99936f21238ee0026ff5f7b1b"
+        "bytes": 4450,
+        "sha256": "d7891a460d208f9b82ed9fa9aa27e9a0bb52cd70c05e42a1c67fed0df93c18c7"
       },
       {
         "path": "ui/card-back-b.webp",
-        "bytes": 57576,
-        "sha256": "c3752fbba70ba70413e13be46b0cf9dfd8f70956bf17125e6aff82149c9e742e"
+        "bytes": 4762,
+        "sha256": "4d46b07bbb94b27974f970ee7426f61f6ccdc37de59ab2edc9b88d741515ae74"
       }
     ],
     "title": "Textile, Strawberry Thief (designed 1883, printed ca. 1934)",
