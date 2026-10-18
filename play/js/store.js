@@ -1503,9 +1503,18 @@ async function deniedReason(session, code, what) {
   return new StoreError('rejected', `${what}沒有寫進去，請再按一次`);
 }
 
+// 這間房還沒有任何控制台的節點（舊規則下一定是這樣）時，寫入被拒後只等這麼久（毫秒）就判斷原因：別台主持端同時寫的第一筆，
+// 伺服器會在回覆「被拒」之前先傳過來（同一條連線照順序），不用等滿 SETTLE_MS；「要等規則更新」也不會讓主持人等好幾秒。
+const FIRST_WRITE_WAIT_MS = 500;
+
+async function deniedWait(session, code) {
+  const room = await readRoom(session, code).catch(() => null);
+  return room && !room.display && !room.clock && !room.screens ? FIRST_WRITE_WAIT_MS : SETTLE_MS;
+}
+
 // 寫 path（rooms/{code} 底下）被拒之後：等伺服器的現況，那一筆的 seq 變了＝別台剛改過（conflict，帶最新的那一筆），沒變再看 deniedReason。
 async function commandDenied(session, code, path, seq, what) {
-  const seen = await waitFor(session, `rooms/${code}/${path}`, (value) => (value?.seq ?? 0) !== seq);
+  const seen = await waitFor(session, `rooms/${code}/${path}`, (value) => (value?.seq ?? 0) !== seq, await deniedWait(session, code));
   if (seen !== undefined) return conflictError(seen);
   return deniedReason(session, code, what);
 }
@@ -1611,7 +1620,7 @@ export async function setPause(session, code, on, { expectSeq } = {}) {
       if (!isPermissionDenied(error)) throw error;
       const pauseSeq = (value) => value?.display?.pause?.seq ?? 0;
       const moved = (value) => pauseSeq(value) !== seq || clocks.some((match) => (value?.clock?.[match]?.seq ?? 0) !== room.clock[match].seq);
-      const seen = await waitFor(session, `rooms/${code}`, moved);
+      const seen = await waitFor(session, `rooms/${code}`, moved, await deniedWait(session, code));
       if (seen !== undefined && pauseSeq(seen) !== seq) {
         if ((seen.display.pause.on === true) === on) return { changed: false, seq: pauseSeq(seen), clocks: [] };
         throw conflictError(seen.display.pause);
@@ -1662,7 +1671,7 @@ export async function startClock(session, code, match, minutes) {
     await set(ref(session.db, path), { ...clockStartWrite(minutes, serverTimestamp()), by: session.uid });
   } catch (error) {
     if (!isPermissionDenied(error)) throw error;
-    const seen = await waitFor(session, path, (value) => value !== null);
+    const seen = await waitFor(session, path, (value) => value !== null, await deniedWait(session, code));
     if (seen !== undefined) return { started: false, clock: seen };
     throw await deniedReason(session, code, '開始全場日落鐘');
   }
