@@ -182,13 +182,23 @@ function onRoom(room) {
   clearTimeout(view.retryTimer);
   view.room = room;
   view.roomState = 'found';
-  if (!view.preview && !view.screen) {
-    const field = sceneField(room);
-    view.reported.scene = field.scene ?? null;
-    view.screen = trackScreen(view.session, view.code, { audio: view.audioOn, ...field });
-  }
   react(room);
   render();
+  reportScene(room);
+}
+
+// 投影端回報（trackScreen）：畫好之後才報，scene 是投影上已經在顯示的 display/scene seq（控制台拿它對照）。第一次讀到房間時開始
+// 回報，之後只在換場景時更新（規則沒有限制多久能寫一次，每寫一次都會推給全房的手機）。預覽框不回報。
+function reportScene(room) {
+  if (view.preview) return;
+  const field = sceneField(room);
+  if (!view.screen) {
+    view.reported.scene = field.scene ?? null;
+    view.screen = trackScreen(view.session, view.code, { audio: view.audioOn, ...field });
+  } else if (field.scene !== undefined && field.scene !== view.reported.scene) {
+    view.reported.scene = field.scene;
+    view.screen.update(field).catch(() => false);
+  }
 }
 
 function sceneField(room) {
@@ -196,7 +206,7 @@ function sceneField(room) {
   return seq > 0 ? { scene: seq } : {};
 }
 
-// 房間一有變化：音效、開場影片、背景音樂、迷霧越過門檻、投影端回報的場景。
+// 房間一有變化：音效、開場影片、背景音樂、迷霧越過門檻（回報場景在畫完之後，見 reportScene）。
 function react(room) {
   const now = serverTime(view.session);
   const display = room.display ?? {};
@@ -211,12 +221,6 @@ function react(room) {
   if (opening.play) playOpening(scene.seq);
   if (scene.id !== 'opening') stopOpening();
   updateMusic();
-  // 投影端回報：只在換場景時更新（規則沒有限制多久能寫一次，每寫一次都會推給全房的手機）。
-  const field = sceneField(room);
-  if (view.screen && field.scene !== undefined && field.scene !== view.reported.scene) {
-    view.reported.scene = field.scene;
-    view.screen.update(field).catch(() => false);
-  }
   watchFog(room);
 }
 

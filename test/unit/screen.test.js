@@ -124,6 +124,9 @@ test('the projector address takes the room code like the join page and knows the
   assert.equal(projectorParams('?view=screen&room=QX7M4', isRoomCode, normalizeRoomCode).valid, false);
   assert.equal(projectorParams('?view=screen&room=QX7M40', isRoomCode, normalizeRoomCode).valid, false, '0 is not in the alphabet');
   assert.equal(projectorParams('?view=screen', isRoomCode, normalizeRoomCode).valid, false);
+  // 控制台開的兩種網址：小預覽框（preview=1、slot=preview）與「開投影畫面」的新視窗（slot=screen），env 照帶。
+  assert.deepEqual(projectorParams('?view=screen&room=QX7M4K&preview=1&slot=preview&env=emu', isRoomCode, normalizeRoomCode), { code: 'QX7M4K', valid: true, preview: true });
+  assert.deepEqual(projectorParams('?view=screen&room=QX7M4K&slot=screen&env=emu', isRoomCode, normalizeRoomCode), { code: 'QX7M4K', valid: true, preview: false });
   assert.deepEqual(joinAddress({ protocol: 'https:', host: 'kiresakura.github.io', pathname: '/one-day-briton/play/index.html', search: '?view=screen&room=QX7M4K&slot=screen' }), {
     text: 'kiresakura.github.io/one-day-briton/play/',
     full: 'https://kiresakura.github.io/one-day-briton/play/',
