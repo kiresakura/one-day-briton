@@ -359,11 +359,14 @@ test('a sunset reached during a room pause rings once on the first second after 
 });
 
 // 突變測試抓不到的地方各補一條：版面門檻的邊界、開頁時暫停中的鐘、剛好日落、第 2 場的全場鐘、排行最多 5 人、排隊中的素材。
-test('layout boundaries: a 1.50 window (1024×768 projector in a window) is 4:3, 16:10 and 16:9 are 16:9', () => {
+test('layout boundaries: 1.50 and 1.559 windows are 4:3, from 1.58 on (16:10, 16:9) it is 16:9', () => {
   assert.equal(stageLayout(1024, 683).layout, '4x3', '1.50');
   assert.equal(stageLayout(1500, 1000).layout, '4x3', '1.50 exactly');
   assert.equal(stageLayout(1280, 800).layout, '16x9', '1.6');
   assert.equal(stageLayout(1920, 1080).layout, '16x9', '1.778');
+  assert.equal(stageLayout(800, 513).layout, '4x3', '1.559: an 800×600 projector in a window');
+  assert.equal(stageLayout(1579, 1000).layout, '4x3', 'just under 1.58');
+  assert.equal(stageLayout(1580, 1000).layout, '16x9', '1.58 and up is 16:9');
 });
 
 test('a clock paused before sunset is not taken as past when the screen opens, one exactly at sunset is', () => {
