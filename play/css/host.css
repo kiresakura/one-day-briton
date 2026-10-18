@@ -15,6 +15,17 @@ body.has-drawer {
   overflow: hidden;
 }
 
+/* 主持畫面整頁固定一屏：頂端的錯誤提示條、斷線提示條改成浮在頂列中間，不佔高度（不然 1280×800 會多出那一條而要捲動）；
+   提示條本身不攔滑鼠，底下頂列的按鈕照樣按得到。 */
+body:has(> #screen-host:not([hidden])) > .topbar {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  width: min(560px, calc(100% - 24px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 /* ---- 頂列 ---- */
 
 .host-top {
@@ -560,6 +571,16 @@ body.has-drawer {
   width: 112px;
 }
 
+/* 黑夜：結果欄的短句比較長（「— 沒送出・要棄 1 張」「豪賭 1 層 +5・已挑棄牌」），英鎊、影響欄收成 30px，寬度讓給結果欄。 */
+.tc-table.is-night th:nth-child(2),
+.tc-table.is-night th:nth-child(3) {
+  width: 30px;
+}
+
+.tc-table.is-night th:nth-child(6) {
+  width: 148px;
+}
+
 .tc-table td {
   height: 18px;
   padding: 0 3px;
@@ -621,11 +642,11 @@ body.has-drawer {
 
 /* 第 2 場・未開局的座位預覽（座位｜玩家｜第 1 場 → 第 2 場｜參加）。 */
 .tc-table.is-seats th:first-child {
-  width: 34px;
+  width: 28px;
 }
 
 .tc-table.is-seats th:nth-child(2) {
-  width: 84px;
+  width: 72px;
 }
 
 .tc-table.is-seats th:nth-child(3) {
@@ -638,6 +659,25 @@ body.has-drawer {
 
 .tc-table.is-seats tr.is-off td {
   color: var(--ink-3);
+}
+
+/* 「第 1 場 → 第 2 場」：放不下時只縮第 1 場的階層，第 2 場的階層不縮。 */
+.tc-pass {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tc-table .tc-pass-from {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  color: var(--ink-3);
+}
+
+.tc-pass-arrow,
+.tc-pass-to {
+  flex: none;
 }
 
 .tc-table .tc-yes {
@@ -1346,6 +1386,10 @@ body.has-drawer {
 .entry-match {
   font-size: 14px;
   line-height: 1.55;
+}
+
+.entry-match .keep {
+  white-space: nowrap;
 }
 
 .entry-note {

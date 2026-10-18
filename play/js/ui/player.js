@@ -402,15 +402,17 @@ function roomFoot() {
 
 function header(m) {
   const { me, state, game } = m;
-  const where = state.phase === 'end' ? `第 ${me.table} 桌・第 ${game?.final?.round ?? state.round} 回合結束` : `第 ${me.table} 桌・第 ${state.round} 回合`;
-  const tag = m.prep ? `${matchText(m.match)}・準備中` : matchText(m.match);
+  // 第 2 場準備中：桌況已經是新一場的第 1 回合日出，但還沒開局，標頭寫「準備中」，不寫回合、不放迷霧值，免得像已經開始了。
+  let where = state.phase === 'end' ? `第 ${me.table} 桌・第 ${game?.final?.round ?? state.round} 回合結束` : `第 ${me.table} 桌・第 ${state.round} 回合`;
+  if (m.prep) where = `第 ${me.table} 桌・還沒開局`;
+  const phase = m.prep ? { key: 'prep', name: '準備中', latin: 'NEXT MATCH' } : { key: state.phase, name: PHASE_NAMES[state.phase] ?? state.phase, latin: PHASE_LATIN[state.phase] ?? '' };
   return [
-    h('div', { class: 'head-top' }, h('span', { class: `tag tag-match${m.match === 1 ? '' : ' is-second'}`, text: tag }), h('span', { class: 'head-where', text: where }), connPill(connected)),
+    h('div', { class: 'head-top' }, h('span', { class: `tag tag-match${m.match === 1 ? '' : ' is-second'}`, text: matchText(m.match) }), h('span', { class: 'head-where', text: where }), connPill(connected)),
     h(
       'div',
       { class: 'head-main' },
-      h('div', { class: 'head-phase phase-in', data: { key: `phase-${state.phase}` } }, phaseIcon(state.phase), h('h1', { class: 'phase-name', text: PHASE_NAMES[state.phase] ?? state.phase }), h('span', { class: 'phase-latin', text: PHASE_LATIN[state.phase] ?? '', attrs: { lang: 'en' } })),
-      state.phase === 'end' ? null : fogMeter(state.fog, game?.fogFired ?? []),
+      h('div', { class: 'head-phase phase-in', data: { key: `phase-${phase.key}` } }, phaseIcon(state.phase), h('h1', { class: 'phase-name', text: phase.name }), h('span', { class: 'phase-latin', text: phase.latin, attrs: { lang: 'en' } })),
+      state.phase === 'end' || m.prep ? null : fogMeter(state.fog, game?.fogFired ?? []),
     ),
   ];
 }

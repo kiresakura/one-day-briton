@@ -117,7 +117,14 @@ export function renderHostEntry() {
   $('entry-tables').textContent = String(MAX_TABLES);
   const minutes = ctx.cardData ? scoreRules().sunsetMinutes : null;
   $('entry-sunset').textContent = minutes ? `${minutes} 分` : ctx.cardsFailed ? '讀不到設定' : '讀取中…';
-  $('entry-match').textContent = `兩場制：${matchText(1)}結束後，在主持畫面各桌按「開${matchText(2)}」，同一間房接著打`;
+  // 「第 1 場」「開第 2 場」中間有空格，1280 寬時會在空格斷行，拆成兩行：這兩段不准斷行（host.css 的 .keep）。
+  $('entry-match').replaceChildren(
+    '兩場制：',
+    h('span', { class: 'keep', text: matchText(1) }),
+    '結束後，在主持畫面各桌按',
+    h('span', { class: 'keep', text: `「開${matchText(2)}」` }),
+    '，同一間房接著打',
+  );
   const capacity = Math.min(MAX_SEATS, ctx.cardData?.data.roles.length ?? MAX_SEATS);
   $('entry-seats').textContent = `1 到 ${capacity} 人`;
   $('entry-seats-hint').textContent = `建議至少 ${SUGGESTED_SEATS} 人；人少也能開始`;
@@ -378,6 +385,15 @@ function passText(t, row) {
   return `${roleName(row.before)} → ${roleName(row.role)}（${from}）`;
 }
 
+// 桌卡座位預覽那一格：第 2 場的階層一定整個看得到；放不下時只縮第 1 場的階層（「…」點一下看全文，全文含誰交過來）。
+// 誰交過來另外寫在「勾選參加」抽屜。
+function passCell(t, row) {
+  const full = passText(t, row);
+  if (!row.include) return trunc('span', 'tc-state', `〈${roleName(row.role)}〉沒有人坐`, full);
+  if (row.from === row.uid) return trunc('span', 'tc-state', `${roleName(row.role)}（照舊）`, full);
+  return h('span', { class: 'tc-pass' }, trunc('span', 'tc-pass-from', roleName(row.before), full), h('span', { class: 'tc-pass-arrow', text: '→' }), h('b', { class: 'tc-pass-to', text: roleName(row.role) }));
+}
+
 // 第 2 場・未開局（第 ① 步之後、第 ② 步之前）：玩家手機上已經看得到自己的新階層，現場交接角色卡；按「開始第 2 場」照座位預覽開局。
 function seatsStep(t) {
   const { include } = seatPlan(t);
@@ -527,7 +543,8 @@ function playerTable(t, limits) {
   const unseatedLabel = t.match === 1 ? '未入座' : `${matchText(t.match)}沒座位`;
   return h(
     'table',
-    { class: 'tc-table' },
+    // 黑夜的結果欄字比較長（「— 沒送出・要棄 1 張」「豪賭 1 層 +5・已挑棄牌」），黑夜時把數字欄的寬度讓給它（host.css 的 is-night）。
+    { class: `tc-table${t.state.phase === 'night' ? ' is-night' : ''}` },
     h(
       'thead',
       {},
@@ -626,7 +643,7 @@ function seatPreview(t) {
           { class: row.include ? '' : 'is-off', data: { key: row.uid } },
           h('td', { class: 'num', text: row.order + 1 }),
           h('td', {}, nameCell(row.uid)),
-          h('td', {}, trunc('span', 'tc-state', passText(t, row))),
+          h('td', {}, passCell(t, row)),
           h('td', { class: row.include ? 'tc-yes' : 'tc-no', text: row.include ? '✓ 參加' : '不參加' }),
         ),
       ),
@@ -693,7 +710,9 @@ function infoLines(t, limits, { compact = false } = {}) {
       }
     }
   }
-  if (limits.text) lines.unshift({ label: '手牌', text: limits.text, full: limits.text, problem: limits.problem });
+  // 黑夜揭曉後，手牌上限那句已經寫在狀態列的副標（nightStep），這裡就不再寫一次。
+  const inStatus = state.phase === 'night' && nightStage(game.night, state.round) === 'revealed';
+  if (limits.text && !inStatus) lines.unshift({ label: '手牌', text: limits.text, full: limits.text, problem: limits.problem });
   return lines.slice(0, compact ? 1 : 2);
 }
 
