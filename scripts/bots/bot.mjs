@@ -47,7 +47,9 @@ const RESENDS = 2; // 同一個請求最多再送幾次
 const RETRY_MS = 2000; // 送不出去之後隔多久再試
 const AGAIN_MS = 30_000; // 這一輪送不出去（放棄了）之後，隔多久再送一次「結束這一輪」
 const AGAINS = 2; // 放棄之後最多再送幾次「結束這一輪」
-const REMIND_MS = 5 * 60_000; // 坐在進行中的一局裡、房間一直沒有變動時，最多隔多久印一行「還在等」
+const REMIND_MS = 5 * 60_000; // 坐在進行中的一局裡（或坐過第 1 場、等第 2 場）、房間一直沒有變動時，最多隔多久印一行「還在等」
+// 坐過第 1 場、等第 2 場時隔一陣子印的那一行。
+export const SECOND_WAIT_TEXT = '還在等主持端開第 2 場（不想讓機器人參加第 2 場，開第 2 場時在「勾選參加」把它取消）；要結束請按 Ctrl-C';
 const CLOSE_MS = 5000; // 結束時離開玩家名單、移除上線狀態、斷線各最多等多久
 
 // promise 最多等 ms 毫秒（計時器不留住程式）。
@@ -66,14 +68,14 @@ function within(promise, ms) {
 //   data         卡牌資料（gamedata.js 讀到、檢查過的；牌名、規則判斷用）
 //   delay        [最少, 最多]：每個動作前隨機等多久（毫秒）
 //   policy       DEFAULT_POLICY 的覆寫    random  亂數來源（同 game.js）
-//   waitMs       還沒開局、等第 2 場時，局面這麼久沒有進展就結束（坐在進行中的一局裡不結束，只隔一陣子印一行「還在等」）
+//   waitMs       還沒開局時，局面這麼久沒有進展就結束（坐在進行中的一局裡、坐過第 1 場等第 2 場時不結束，只隔一陣子印一行「還在等」）
 //   waitLabel    印出來的分鐘數（指令列給的 --wait；沒給就從 waitMs 換算）
 //   log(text)    印一行
 //   onFinal(room, key)   看到一局終局（印結算摘要用；同一局每個機器人都會叫一次，由呼叫的一端去重）
 // 先入座（joinRoom，失敗就丟出去），成功後回傳 { uid, done, stop }：done 在結束時 resolve 成
-// { reason, detail, stats, rejections, left, abandoned }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、
-// left 不在名單上了、stopped、error；rejections 是每次被退回的 { kind, reason }；left＝離開了玩家名單；abandoned＝丟下一局還沒結束的
-// 遊戲）。stop(detail) 叫它提早結束（detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。leave(detail) 是入座後的重查請它
+// { reason, detail, stats, rejections, left, abandoned, beforeSecond }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、
+// room-gone、left 不在名單上了、stopped、error；rejections 是每次被退回的 { kind, reason }；left＝離開了玩家名單；abandoned＝丟下一局
+// 還沒結束的遊戲；beforeSecond＝坐過第 1 場、第 2 場還沒開局就結束：留在名單上，主持端開第 2 場時預設會把它排進座位）。stop(detail) 叫它提早結束（detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。leave(detail) 是入座後的重查請它
 // 離開（多出來的）：自己那一桌還沒開局、自己也還沒有座位才離開（同 stop），回傳 true；開了局就不走，回傳 false。
 export async function startBot(options) {
   const { session, code, name, table, data } = options;
@@ -202,9 +204,19 @@ export async function startBot(options) {
   const playing = (m) => Boolean(m.game && m.seat) && !(m.state?.phase === 'end' && m.game.final);
   // 房間裡有沒有任何一局（第 1 場、第 2 場）有自己的座位：有的話成績表要用，結束時不離開玩家名單。
   const seatedIn = (room) => Object.values(room?.games ?? {}).some((game) => Boolean(game?.seats?.[uid]));
+  // 坐過第 1 場、第 1 場結束了，第 2 場還沒開局（主持端還沒開、或開了還沒按開始）。
+  const awaitingSecond = (m) => {
+    if (!m.me) return false;
+    const first = matchKey(m.me.table);
+    return (
+      Boolean(m.room.games?.[first]?.seats?.[uid] && m.room.games[first].final && m.room.tables?.[first]?.phase === 'end') &&
+      !m.room.games?.[matchKey(m.me.table, MATCH_COUNT)]
+    );
+  };
 
-  // 該結束了嗎：回傳 { reason, detail } 或 null。等太久只用在還沒開局、等第 2 場（沒座位的直接結束）；坐在進行中的一局裡不走，
-  // 走了座位就沒人動、也回不來，只隔一陣子印一行「還在等」。
+  // 該結束了嗎：回傳 { reason, detail } 或 null。等太久只用在還沒開局（沒座位的直接結束）。坐在進行中的一局裡不走：走了座位就沒人動、
+  // 也回不來。坐過第 1 場、等第 2 場時也不走：第 1 場有成績，留在名單上，主持端開第 2 場時預設還是會把它排進座位。這兩段只隔一陣子
+  // 印一行「還在等」，要結束就按 Ctrl-C。
   const ending = (m) => {
     if (failure) return { reason: 'error', detail: `讀不到房間的資料（${failure.message}）` };
     if (m.room === undefined) return null;
@@ -215,11 +227,12 @@ export async function startBot(options) {
     }
     if (m.state?.phase === 'end' && m.game?.final && m.match >= MATCH_COUNT) return { reason: 'done', detail: '兩場都結束了' };
     const quiet = Date.now() - lastChange;
-    if (playing(m)) {
+    const inGame = playing(m);
+    if (inGame || awaitingSecond(m)) {
       if (quiet >= remindMs && Date.now() - remindedAt >= remindMs) {
         remindedAt = Date.now();
         const minutes = Number((quiet / 60_000).toFixed(1));
-        say(m, `還在等主持端或其他玩家（房間 ${minutes} 分鐘沒有變動）；這一局還沒結束，機器人不會自己離開`);
+        say(m, inGame ? `還在等主持端或其他玩家（房間 ${minutes} 分鐘沒有變動）；這一局還沒結束，機器人不會自己離開` : SECOND_WAIT_TEXT);
       }
       return null;
     }
@@ -526,13 +539,15 @@ export async function startBot(options) {
   const finish = async (outcome) => {
     if (seen.room === undefined) await within(roomKnown, CLOSE_MS);
     const { room } = seen;
-    const abandoned = outcome.reason !== 'done' && playing(model());
+    const last = model();
+    const abandoned = outcome.reason !== 'done' && playing(last);
+    const beforeSecond = awaitingSecond(last);
     for (const stop of stops) stop();
     const listed = room === undefined || Boolean(room?.meta && room.players?.[uid]);
     const left = listed && !seatedIn(room) ? (await within(leaveRoom(session, code).then(() => true), CLOSE_MS)) === true : false;
     await within(stopPresence(), CLOSE_MS);
     await within(disconnect(session), CLOSE_MS);
-    return { ...outcome, stats, rejections, left, abandoned };
+    return { ...outcome, stats, rejections, left, abandoned, beforeSecond };
   };
   const done = run().then(finish, (error) => finish({ reason: 'error', detail: error.message }));
   const stop = (detail = '收到停止') => {

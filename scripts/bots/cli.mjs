@@ -258,6 +258,9 @@ async function main() {
         `響應 ${stats.responses}、表決 ${stats.votes}、黑夜 ${stats.nights}、挑棄牌 ${stats.discards}、被退回 ${stats.rejected}、送不出去 ${stats.failed}`,
     );
   });
+  // 坐過第 1 場、第 2 場還沒開局就停下的：第 1 場有成績，留在名單上；主持端開第 2 場時預設會把它排進座位，變成不會動的座位。
+  const benched = bots.filter((_, index) => results[index].beforeSecond).map((bot) => bot.name);
+  if (benched.length > 0) console.log(`開第 2 場時請在「勾選參加」把離線的機器人取消（${benched.join('、')}）`);
   if (halt) return halt.code;
   // 讀不到房間的資料，或丟下一局還沒結束的遊戲（例如房間被刪了）：不算正常結束。
   return results.some((result) => result.reason === 'error' || result.abandoned) ? 1 : 0;

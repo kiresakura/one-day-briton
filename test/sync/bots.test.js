@@ -22,6 +22,7 @@ import {
   joinRoom,
   openMatch,
   processSunrise,
+  setEndAfterRound,
   startSettling,
   startTable,
   watchRoom,
@@ -361,8 +362,9 @@ test('the bots import only node built-ins, their own modules, the rules and data
 
 // 測試當主持端：startSettling 自動結算，另外照主持畫面的「下一階段」推進：日出發完牌 → 白晝；大家都出完 → 黃昏；黃昏揭曉
 // （或休會）→ 黑夜；黑夜揭曉 → 下一回合日出（再發牌）或終局；第 1 場終局 → 開第 2 場、開局。第 2 場終局時 done 拿到房間。
-// 20 秒都沒有進展就把卡在哪裡寫進錯誤（不讓測試白等到逾時）。
-function autoHost(session, code, table, data, random) {
+// 20 秒都沒有進展就把卡在哪裡寫進錯誤（不讓測試白等到逾時）。pauseMatch2 是第 1 場終局後、開第 2 場與第 2 場開局之前各停多久
+// （講解、休息）；last 是主持到第幾場為止（1：第 1 場終局時 done 就拿到房間，不開第 2 場）。
+function autoHost(session, code, table, data, random, { pauseMatch2 = 0, last = MATCH_COUNT } = {}) {
   const errorsSeen = [];
   const stopSettling = startSettling(session, code, data, { random, onError: (error) => errorsSeen.push(error) });
   let room = null;
@@ -383,6 +385,7 @@ function autoHost(session, code, table, data, random) {
     if (!state) return false;
     if (!game) {
       if (parseKey(key).match === 1) return false; // 第 1 場由測試開局
+      if (pauseMatch2 > 0) await delay(pauseMatch2);
       await startTable(session, code, key, data, random);
       return true;
     }
@@ -408,7 +411,8 @@ function autoHost(session, code, table, data, random) {
       return true;
     }
     if (!game.final) return false;
-    if (parseKey(key).match < MATCH_COUNT) {
+    if (parseKey(key).match < last) {
+      if (pauseMatch2 > 0) await delay(pauseMatch2);
       await openMatch(session, code, table);
       return true;
     }
@@ -459,8 +463,8 @@ function autoHost(session, code, table, data, random) {
 
 // 開一個 2 桌的房間，先讓一位真人坐第 1 桌，再照指令列的做法排座位（沒指定桌號：選第 2 桌）、放機器人，測試當主持端開局、
 // 一路主持到第 2 場終局。botData 是機器人用的卡牌資料（沒給就跟主持端一樣）；waitMs 同 --wait；hostPause 是主持端開局後
-// 停著不動多久才開始推進。
-async function playBots(t, { count, data, botData = data, policy, seed, waitMs, hostPause = 0 }) {
+// 停著不動多久才開始推進；pauseMatch2 同 autoHost。
+async function playBots(t, { count, data, botData = data, policy, seed, waitMs, hostPause = 0, pauseMatch2 = 0 }) {
   const code = await createRoom(host, 2);
   await joinRoom(person, code, '真人', 1);
   const seating = planSeats(await roomOnce(host, code), botData, { count, prefix: DEFAULT_PREFIX });
@@ -490,7 +494,7 @@ async function playBots(t, { count, data, botData = data, policy, seed, waitMs, 
   bots.forEach((bot, index) => assert.deepEqual([joined.players[bot.uid].name, joined.players[bot.uid].table], [seating.names[index], seating.table]));
   assert.deepEqual(await startTable(host, code, seating.table, data, seededRandom(seed)), { started: true });
   if (hostPause > 0) await delay(hostPause);
-  const hosting = autoHost(host, code, seating.table, data, seededRandom(seed));
+  const hosting = autoHost(host, code, seating.table, data, seededRandom(seed), { pauseMatch2 });
   t.after(hosting.stop);
   const [room, results] = await Promise.all([hosting.done, Promise.all(bots.map((bot) => bot.done))]);
   return { code, table: seating.table, uids: bots.map((bot) => bot.uid), room, results, lines, finals, hostErrors: hosting.errors };
@@ -547,6 +551,18 @@ test('seated bots in a started match wait for the host however short the wait is
   assertBothMatches(game);
   assert.ok(game.lines.some((line) => line.includes('還在等主持端或其他玩家') && line.includes('不會自己離開')), 'said it is still waiting');
   assert.ok(game.results.every((result) => !result.left && !result.abandoned));
+  assert.deepEqual(game.hostErrors, []);
+});
+
+// 第 1 場結束後主持端講解、休息，比 --wait 還久才開第 2 場、按開始：坐過第 1 場的機器人不走（走了也還在名單上，第 2 場預設會排進
+// 座位），隔一陣子印一行「還在等主持端開第 2 場」，第 2 場照常打完。
+test('bots seated in match 1 wait for match 2 however short the wait is, say so now and then, and play it', GAME_TIMEOUT, async (t) => {
+  const game = await playBots(t, { count: 3, data: quick, seed: 6, waitMs: 2000, pauseMatch2: 5000 });
+  assertBothMatches(game);
+  const reminders = game.lines.filter((line) => line.includes('還在等主持端開第 2 場（不想讓機器人參加第 2 場，開第 2 場時在「勾選參加」把它取消）'));
+  assert.ok(reminders.some((line) => line.includes('第 2 桌第 1 場｜終局｜')), 'said so after match 1 ended');
+  assert.ok(reminders.some((line) => line.includes('第 2 桌第 2 場｜')), 'and after match 2 was opened, before its start');
+  assert.ok(game.results.every((result) => !result.left && !result.abandoned && !result.beforeSecond));
   assert.deepEqual(game.hostErrors, []);
 });
 
@@ -797,6 +813,27 @@ test('bots stopped before the start leave the player list, so a later run and th
   assert.equal(count(again.output(), /結束：收到停止（Ctrl-C）｜/g), 2, again.output());
   const after = await roomOnce(host, code);
   for (const uid of botSeats) assert.ok(after.players[uid], 'kept on the player list once seated (the score sheet needs the names)');
+  assert.equal(after.presence, undefined, 'offline');
+});
+
+// 第 1 場結束、主持端還沒開第 2 場時按 Ctrl-C：機器人留在名單上（第 1 場有成績），提醒主持端開第 2 場時在「勾選參加」把它們取消。
+test('Ctrl-C between the matches keeps the bots on the list and reminds the host to untick them for match 2', { timeout: 60_000 }, async () => {
+  const code = await createRoom(host, 1);
+  const run = launch(['--emulator', '--room', code, '--count', '2', '--fast']);
+  await run.until('都入座了');
+  await roomUntil(host, code, (room) => Object.keys(room.presence ?? {}).length === 2, 'both bots online');
+  assert.deepEqual(await startTable(host, code, 1, instant, seededRandom(8)), { started: true });
+  await setEndAfterRound(host, code, '1', true);
+  const hosting = autoHost(host, code, 1, instant, seededRandom(8), { last: 1 });
+  const ended = await hosting.done;
+  assert.equal(ended.tables['1'].phase, 'end');
+  await run.until((output) => count(output, /這一場結束了/g) === 2, 20_000);
+  run.child.kill('SIGINT');
+  assert.deepEqual(await run.exited, { code: 130, signal: null });
+  assert.equal(count(run.output(), /結束：收到停止（Ctrl-C）｜/g), 2, run.output());
+  assert.match(run.output(), /開第 2 場時請在「勾選參加」把離線的機器人取消（機器人1、機器人2）/);
+  const after = await roomOnce(host, code);
+  assert.equal(Object.keys(after.players ?? {}).length, 2, 'both stay on the player list: match 1 has their scores');
   assert.equal(after.presence, undefined, 'offline');
 });
 
