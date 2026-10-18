@@ -1,9 +1,10 @@
 // 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只用玩家端函式；
 // 模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同 --fast），
-// 兩場都跑到終局、算出分數；主持端退回的請求由機器人自己吸收；指令列在房間不存在或已經開局時什麼都不寫（npm run test:sync）。
+// 兩場都跑到終局、算出分數；主持端退回的請求由機器人自己吸收；機器人自己結束時離線；指令列在房間不存在或已經開局時什麼都不寫、
+// 按 Ctrl-C 時讓機器人離線再結束（npm run test:sync）。
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { combineScores, dayStatus, duskStage, nightStage, overLimit, seededRandom } from '../../play/js/game.js';
@@ -416,7 +417,7 @@ test('a bot leaves by itself when it has no seat, when nothing happens for too l
   }
 });
 
-// ---- 指令列：房間不存在、已經開局時，印出原因就結束，什麼都不寫 ----
+// ---- 指令列：房間不存在、已經開局時，印出原因就結束，什麼都不寫；按 Ctrl-C 時機器人離線再結束 ----
 
 const cli = fileURLToPath(new URL('../../scripts/bots/cli.mjs', import.meta.url));
 
@@ -441,4 +442,28 @@ test('the command refuses a missing room and a started table without writing any
   assert.equal(anyTable.code, 1);
   assert.match(anyTable.stderr, /沒有可以加入的桌/);
   assert.deepEqual(Object.keys((await roomOnce(host, code)).players), [person.uid], 'no bot joined');
+});
+
+test('the command seats the bots it was asked for and leaves cleanly on Ctrl-C', TIMEOUT, async () => {
+  const code = await createRoom(host, 1);
+  const child = spawn(process.execPath, [cli, '--emulator', '--room', code, '--count', '2', '--fast'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  const seated = new Promise((resolve) => {
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+      if (output.includes('都入座了')) resolve();
+    });
+  });
+  child.stderr.on('data', (chunk) => (output += chunk));
+  const exited = new Promise((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
+  await seated;
+  const room = await roomUntil(host, code, (value) => Object.keys(value.presence ?? {}).length === 2, 'both bots online');
+  assert.deepEqual(Object.values(room.players).map((player) => [player.name, player.table]).sort(), [['機器人1', 1], ['機器人2', 1]]);
+  child.kill('SIGINT');
+  assert.equal(await exited, 130);
+  assert.match(output, /收到 Ctrl-C：機器人斷線中/);
+  assert.equal(output.match(/結束：收到停止（Ctrl-C）/g)?.length, 2);
+  const after = await roomOnce(host, code);
+  assert.equal(after.presence, undefined, 'both offline');
+  assert.equal(Object.keys(after.players).length, 2, 'still on the player list');
 });
