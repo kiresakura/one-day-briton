@@ -1,7 +1,7 @@
 // 湊人數機器人：把幾個機器人玩家放進主持端已經開好的房間，用玩家端的流程入座，之後每個階段照規則隨機做合法的動作。
 // 用法：npm run bots -- --room <房號> [--count N] [--table T] [--delay 1500-4000] [--fast] [--emulator] [--name-prefix 機器人] [--wait 分鐘]
 // （說明見 docs/BOTS.md）。開局、推進、算分、開第 2 場照常由主持端做；機器人只當玩家，結束時印結算摘要、自己斷線。
-// 房間不存在、已經開局、坐滿時印出原因就結束，資料庫裡什麼都不寫。
+// 房間不存在、已經開局、坐滿時印出原因就結束，資料庫裡什麼都不寫。正式站先倒數幾秒才開始寫入，連錯了還來得及按 Ctrl-C。
 import { readFile } from 'node:fs/promises';
 import { MATCH_COUNT, parseKey } from '../../play/js/rules.js';
 import { ArgsError, USAGE, parseArgs } from './args.mjs';
@@ -10,6 +10,8 @@ import { combinedSummary, finalSummary } from './text.mjs';
 
 // 連不上（模擬器沒開、沒有網路）時，登入與讀房間各最多等這麼久。
 const CONNECT_MS = 20_000;
+// 正式站：印出專案之後、第一次登入（開始寫入）之前等這麼久。
+const COUNTDOWN_MS = 5000;
 // 這麼短的時間內又收到停止訊號不算第二次：npm run 會把終端機送來的同一次 Ctrl-C 再轉送一次。
 const REPEAT_MS = 1000;
 
@@ -40,6 +42,16 @@ function readRoomOnce(store, session, code) {
     );
     if (finished) stop();
   });
+}
+
+// 登入、讀房間失敗時給使用者看的說明（後面由呼叫的一端接「資料庫沒有寫入任何東西」）。
+function reachProblem(error, emulator) {
+  if (error?.code === 'auth/too-many-requests') {
+    return '登入被 Firebase 暫時擋下：同一個網路一小時內新開的匿名帳號太多（每個 IP 每小時最多 100 個）。隔一段時間再試；反覆測試請用 --emulator';
+  }
+  const where = emulator ? '本機模擬器' : '正式站';
+  const hint = emulator ? '模擬器要先在另一個終端機跑 npm run dev' : '請確認網路';
+  return `連不上${where}（${error?.message ?? error}）；${hint}`;
 }
 
 async function main() {
@@ -117,6 +129,12 @@ async function main() {
     return 1;
   }
 
+  if (wanted === 'prod' && !halt) {
+    console.log(`${COUNTDOWN_MS / 1000} 秒後開始寫入正式站（專案 ${project}），按 Ctrl-C 取消`);
+    let timer;
+    await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, COUNTDOWN_MS))));
+    clearTimeout(timer);
+  }
   if (halt) return halt.code;
 
   // 每個機器人一個匿名身分（slot 不同就是不同玩家）。先用第一個讀房間、排座位，排得成才讓其他機器人登入、入座。
@@ -131,8 +149,7 @@ async function main() {
     room = await unlessHalted(timed(readRoomOnce(store, first, options.room), '讀房間'));
   } catch (error) {
     await closeAll(sessions);
-    const hint = options.emulator ? '模擬器要先在另一個終端機跑 npm run dev' : '請確認網路';
-    console.error(`連不上${wanted === 'prod' ? '正式站' : '本機模擬器'}（${error.message}）；${hint}。沒有寫入任何東西。`);
+    console.error(`${reachProblem(error, options.emulator)}。資料庫沒有寫入任何東西。`);
     return 1;
   }
   if (room === HALTED) {
@@ -145,11 +162,22 @@ async function main() {
   } catch (error) {
     await closeAll(sessions);
     if (!(error instanceof PlanError)) throw error;
-    console.error(`${error.message}。沒有寫入任何東西。`);
+    console.error(`${error.message}。資料庫沒有寫入任何東西。`);
     return 1;
   }
   for (const note of plan.notes) console.log(note);
-  sessions.push(...(await Promise.all(plan.names.slice(1).map((_, index) => store.connect(slot(index + 1))))));
+  const others = await unlessHalted(Promise.allSettled(plan.names.slice(1).map((_, index) => timed(store.connect(slot(index + 1)), '登入'))));
+  if (others === HALTED) {
+    await closeAll(sessions);
+    return halt.code;
+  }
+  sessions.push(...others.filter((item) => item.status === 'fulfilled').map((item) => item.value));
+  const refused = others.find((item) => item.status === 'rejected');
+  if (refused) {
+    await closeAll(sessions);
+    console.error(`${reachProblem(refused.reason, options.emulator)}。資料庫沒有寫入任何東西。`);
+    return 1;
+  }
   console.log(`房間 ${options.room}：放 ${plan.names.length} 個機器人到第 ${plan.table} 桌（${plan.names.join('、')}），每個動作前等 ${options.delay.join('–')} 毫秒`);
 
   // 同一局每個機器人都會看到終局：結算摘要只印一次；第 2 場結束時接著印兩場合計。
