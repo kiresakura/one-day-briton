@@ -15,12 +15,14 @@ html {
 }
 
 /* ---- 階段色調：<body data-phase> 決定標頭、頁面底與強調色 ---- */
+/* --head-sub 是標頭英文小字與階段圖示的顏色：比各階段的強調色深一階（淺底）或淺一階（深底），照實際場景圖（A、B 兩版）算過，
+   標頭下方 40%（小字與圖示那一排）最差的 1% 像素上 ≥ 4.5:1。 */
 
 body {
   --page: var(--paper);
   --head-bg: var(--day-head);
   --head-ink: var(--day-ink);
-  --head-sub: #7a5a1a;
+  --head-sub: #654600;
   --head-line: #c9a35a;
   --head-veil: rgba(236, 223, 191, 0.72), rgba(236, 223, 191, 0.88);
   --phase-accent: var(--day-accent);
@@ -46,7 +48,7 @@ body[data-phase='dawn'] {
   --page: var(--dawn-page);
   --head-bg: var(--dawn-head);
   --head-ink: var(--dawn-ink);
-  --head-sub: var(--dawn-accent);
+  --head-sub: #84341f;
   --head-line: #d9a48c;
   --head-veil: rgba(242, 215, 198, 0.72), rgba(242, 215, 198, 0.88);
   --phase-accent: var(--dawn-accent);
@@ -56,7 +58,7 @@ body[data-phase='dusk'] {
   --page: var(--dusk-page);
   --head-bg: var(--dusk-head);
   --head-ink: var(--dusk-ink);
-  --head-sub: var(--dusk-accent);
+  --head-sub: #f5b66a;
   --head-line: #b5653f;
   --head-veil: rgba(110, 38, 34, 0.72), rgba(110, 38, 34, 0.88);
   --phase-accent: var(--accent);
@@ -85,7 +87,7 @@ body[data-phase='end'] {
   --page: var(--end-page);
   --head-bg: var(--end-head);
   --head-ink: var(--end-ink);
-  --head-sub: var(--end-accent);
+  --head-sub: #cfa960;
   --head-line: var(--end-accent);
   --head-veil: rgba(42, 32, 24, 0.72), rgba(42, 32, 24, 0.88);
   --phase-accent: var(--gold);
