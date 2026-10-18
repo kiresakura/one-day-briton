@@ -27,6 +27,8 @@ import {
   mediaFilesIn,
   mediaProgressText,
   musicOn,
+  openingMode,
+  openingWaitText,
   pageIndex,
   passedClocks,
   projectorParams,
@@ -67,7 +69,7 @@ const view = {
   wake: { supported: 'wakeLock' in navigator, lock: null, noteUntil: 0 },
   seen: { sfx: null, scene: null, bells: new Set(), primed: false, fog: new Map() },
   flashes: new Map(), // 局號 → { text, until }
-  opening: { until: 0, node: null }, // 正在播的開場影片或佔位，until 是最晚收掉的時間
+  opening: { until: 0, node: null, mode: null, seq: null }, // 正在播的開場：mode＝video｜wait（等下載）｜placeholder，seq 是那一次的場景 seq，until 是最晚收掉的時間
   loop: { key: '', node: null }, // 正在播的背景影片：key＝場景＋網址
   media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null }])),
   preloading: false,
@@ -208,7 +210,7 @@ function react(room) {
   if (view.seen.scene === null) view.seen.scene = scene.seq;
   else if (scene.seq !== view.seen.scene) {
     view.seen.scene = scene.seq;
-    if (scene.id === 'opening' && view.started && !view.preview) playOpening();
+    if (scene.id === 'opening' && view.started && !view.preview) playOpening(scene.seq);
   }
   if (scene.id !== 'opening') stopOpening();
   updateMusic();
@@ -271,6 +273,7 @@ function render() {
   view.root.dataset.scene = room ? scene.id : 'message';
   patch(view.layers.scene, sceneNodes(room, scene, now));
   updateLoop(room && view.valid ? scene.id : null);
+  if (view.opening.mode === 'wait') patch(view.opening.node, [waitNote(view.media.get('opening'))]);
   const broadcast = display.broadcast && display.broadcast.hidden !== true && typeof display.broadcast.text === 'string' ? display.broadcast : null;
   const paused = display.pause?.on === true;
   view.root.classList.toggle('has-broadcast', Boolean(broadcast && room && !paused));
@@ -497,6 +500,7 @@ async function preload() {
       queue.push(item);
     }
   }
+  openingDownloaded(); // 清單上沒有開場影片：等著的那一次改用佔位
   render();
   const worker = async () => {
     while (queue.length) await fetchMedia(queue.shift());
@@ -544,6 +548,7 @@ async function fetchMedia(item) {
   } catch {
     entry.status = 'failed';
   } finally {
+    if (item.id === 'opening') openingDownloaded();
     scheduleRender();
   }
 }
@@ -576,15 +581,18 @@ function loadCredits() {
 
 // ---- 開場影片與背景音樂 ----
 
-// 播開場：有素材播影片（播完或出錯回到標題頁），沒有就用終局場景圖慢慢放大＋標題當佔位。
-function playOpening() {
+// 播開場（display/scene 換成開場時；seq 是那一次的 seq）：有素材播影片（播完或出錯回到標題頁）。素材還在下載時先寫
+// 「開場影片下載中（x／y MB）」，下載完時還是同一次開場就接著播（openingDownloaded）；下載失敗、沒有素材才用佔位
+// （終局場景圖慢慢放大＋標題）。
+function playOpening(seq) {
   stopOpening();
-  const url = mediaUrl('opening');
+  const entry = view.media.get('opening');
+  const mode = openingMode(entry, view.preloading);
   const layer = view.layers.video;
   let node;
-  if (url) {
+  if (mode === 'video') {
     node = h('video', { class: 'projector-video-media', attrs: { playsinline: true, preload: 'auto' } });
-    node.src = url;
+    node.src = entry.url;
     // 播完或出錯回到標題頁（還是這一支的話）；重畫一次，標題頁的背景影片接著播。
     const end = () => {
       if (view.opening.node !== node) return;
@@ -599,6 +607,10 @@ function playOpening() {
       node.play().catch(end);
     });
     view.opening.until = Date.now() + OPENING_MAX_MS;
+  } else if (mode === 'wait') {
+    // 等下載：標題頁照常顯示，上面蓋一層寫進度（render 每次更新數字）。不設最晚收掉的時間，換場景才收。
+    node = h('div', { class: 'projector-opening-wait' }, waitNote(entry));
+    view.opening.until = 0;
   } else {
     node = h(
       'div',
@@ -610,22 +622,38 @@ function playOpening() {
     );
     view.opening.until = Date.now() + OPENING_PLACEHOLDER_MS;
   }
-  view.opening.node = node;
+  Object.assign(view.opening, { node, mode, seq });
+  layer.classList.toggle('is-wait', mode === 'wait');
   layer.replaceChildren(node);
   layer.hidden = false;
+}
+
+function waitNote(entry) {
+  return h('p', { class: 'projector-opening-wait-text', attrs: { role: 'status' }, text: openingWaitText(entry) });
+}
+
+// 開場影片下載完、失敗，或確定沒有這個檔：還在等的那一次開場（場景還是開場、seq 沒變）就接著播影片（或退回佔位）；已經換掉就收起來。
+function openingDownloaded() {
+  if (view.opening.mode !== 'wait') return;
+  const entry = view.media.get('opening');
+  if (openingMode(entry, view.preloading) === 'wait') return;
+  const scene = sceneOf(view.room?.display);
+  if (scene.id === 'opening' && scene.seq === view.opening.seq) playOpening(scene.seq);
+  else stopOpening();
+  render();
 }
 
 function stopOpening() {
   if (!view.opening.node) return;
   const node = view.opening.node;
-  view.opening.node = null;
-  view.opening.until = 0;
+  Object.assign(view.opening, { node: null, mode: null, seq: null, until: 0 });
   if (node.tagName === 'VIDEO') {
     node.pause();
     node.removeAttribute('src');
     node.load();
   }
   view.layers.video.replaceChildren();
+  view.layers.video.classList.remove('is-wait');
   view.layers.video.hidden = true;
 }
 

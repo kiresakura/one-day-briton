@@ -463,6 +463,21 @@ export function mediaProgressText(items, started) {
   return `素材已下載 ${megabytes(loaded)} MB${missing ? `・${missing} 個用佔位` : ''}`;
 }
 
+// 開場影片這次怎麼播：素材下載好了 'video'；已經開始下載、這個檔還在排隊或下載中 'wait'（先寫進度，下載完再播）；
+// 沒有素材、下載失敗、或沒按「開始投影」（不下載）'placeholder'。entry 是 view.media 裡 opening 那一筆。
+export function openingMode(entry, preloading) {
+  if (entry?.status === 'ready' && entry.url) return 'video';
+  if (preloading && (entry?.status === 'waiting' || entry?.status === 'loading')) return 'wait';
+  return 'placeholder';
+}
+
+// 等開場影片下載時蓋在標題頁上的那一句：「開場影片下載中（3.2／18 MB）」；還不知道大小時只寫已下載的。
+export function openingWaitText(entry) {
+  const loaded = entry?.loaded ?? 0;
+  const total = entry?.total ?? 0;
+  return total > 0 ? `開場影片下載中（${megabytes(loaded)}／${megabytes(Math.max(total, loaded))} MB）` : `開場影片下載中（${megabytes(loaded)} MB）`;
+}
+
 // 位元組 → MB（小於 10 留一位小數）。
 export function megabytes(bytes) {
   const mb = (Number(bytes) || 0) / 1_000_000;

@@ -26,6 +26,8 @@ import {
   megabytes,
   musicOn,
   nightCounts,
+  openingMode,
+  openingWaitText,
   pageIndex,
   pageText,
   passedClocks,
@@ -432,6 +434,18 @@ test('the media table lists the expected files under play/media only, and the do
     '素材已下載 1.0 MB・1 個用佔位',
   );
   assert.equal(megabytes(12_600_000), '13');
+});
+
+test('the opening video waits for its download with a progress line, and falls back to the placeholder only without the file', () => {
+  const ready = { status: 'ready', loaded: 18_000_000, total: 18_000_000, url: 'blob:x' };
+  assert.equal(openingMode(ready, true), 'video');
+  assert.equal(openingMode({ status: 'loading', loaded: 3_200_000, total: 18_000_000, url: null }, true), 'wait');
+  assert.equal(openingMode({ status: 'waiting', loaded: 0, total: 0, url: null }, true), 'wait', 'queued behind the other files');
+  assert.equal(openingMode({ status: 'waiting', loaded: 0, total: 0, url: null }, false), 'placeholder', 'nothing is downloading (先看畫面)');
+  for (const status of ['missing', 'failed']) assert.equal(openingMode({ status, loaded: 0, total: 0, url: null }, true), 'placeholder', status);
+  assert.equal(openingWaitText({ status: 'loading', loaded: 3_240_000, total: 18_000_000 }), '開場影片下載中（3.2／18 MB）');
+  assert.equal(openingWaitText({ status: 'loading', loaded: 3_240_000, total: 0 }), '開場影片下載中（3.2 MB）');
+  assert.equal(openingWaitText({ status: 'waiting', loaded: 0, total: 0 }), '開場影片下載中（0.0 MB）');
 });
 
 test('background loops belong to the title, rules, standings and awards scenes and are media files', () => {

@@ -304,6 +304,30 @@ html.is-projector body {
   background: #000;
 }
 
+/* 等開場影片下載：標題頁照常看得到，蓋一層半透明、正中寫進度。 */
+.projector-video.is-wait {
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+
+.projector-opening-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.projector-opening-wait-text {
+  padding: 18px 40px;
+  border: 2px solid color-mix(in srgb, var(--gold) 60%, transparent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--night-head) 88%, transparent);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 1.3;
+  color: var(--night-cta);
+}
+
 .projector-video-media {
   width: 100%;
   height: 100%;
