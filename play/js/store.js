@@ -1680,8 +1680,9 @@ async function writeClock(session, code, match, record, seq, current, what) {
 }
 
 // 開第 match 場（1 或 2）的全場日落鐘，minutes 是 CLOCK_MINUTES_MIN–CLOCK_MINUTES_MAX 的整數（照 settings.sunsetMinutes）。
-// 開了之後那一場所有桌的日落都照它。已經開了就不寫（兩台同時開只成一筆）；第 2 場還沒開（沒有任何 tables/{n}-2）丟 invalid-command
-// （先開走的話，第 2 場各桌開局時已經被吃掉一段）；全場暫停中丟 paused。回傳 { started, clock }：clock 是寫入後或原本的那一筆。
+// 開了之後那一場所有桌的日落都照它。已經開了就不寫（兩台同時開只成一筆）；第 2 場還沒有任何一桌開局（沒有任何 games/{n}-2，同 startAll
+// 的 anyStarted；只開了 tables/{n}-2 還不算）丟 invalid-command（先開走的話，第 2 場各桌開局時已經被吃掉一段）；全場暫停中丟 paused。
+// 回傳 { started, clock }：clock 是寫入後或原本的那一筆。
 export async function startClock(session, code, match, minutes) {
   const key = clockMatch(match);
   if (!Number.isInteger(minutes) || minutes < CLOCK_MINUTES_MIN || minutes > CLOCK_MINUTES_MAX) {
@@ -1689,8 +1690,8 @@ export async function startClock(session, code, match, minutes) {
   }
   const { room, current } = await commandBase(session, code, `clock/${key}`);
   if (current) return { started: false, clock: current };
-  if (key === String(MATCH_COUNT) && !Object.keys(room.tables ?? {}).some((table) => parseKey(table)?.match === MATCH_COUNT)) {
-    throw new StoreError('invalid-command', `第 ${MATCH_COUNT} 場還沒開，開了之後才能開第 ${MATCH_COUNT} 場的全場日落鐘`);
+  if (key === String(MATCH_COUNT) && !Object.keys(room.games ?? {}).some((game) => parseKey(game)?.match === MATCH_COUNT)) {
+    throw new StoreError('invalid-command', `第 ${MATCH_COUNT} 場還沒有桌開局，有一桌開局之後才能開第 ${MATCH_COUNT} 場的全場日落鐘`);
   }
   // 全場暫停中開的鐘會一路走、也不在 pause.clocks 裡（恢復時不會被照顧到）：恢復之後再開。
   if (room.display?.pause?.on === true) throw new StoreError('paused', '全場暫停中，恢復之後再開全場日落鐘');

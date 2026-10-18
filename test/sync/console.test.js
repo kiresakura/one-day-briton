@@ -477,7 +477,7 @@ test('the store commands: scene, broadcast and take back, sounds, music, clock p
   await assert.rejects(pauseClock(host, code, 1), codeOf('no-clock'));
   await assert.rejects(startClock(host, code, 3, 75), codeOf('invalid-command'));
   await assert.rejects(startClock(host, code, 1, 0.0001), codeOf('invalid-command'));
-  // 第 2 場的鐘要等第 2 場開了（有 tables/{n}-2）：開了之後照樣開得起來，見「全部開始第 2 場」那個測試。
+  // 第 2 場的鐘要等第 2 場有一桌開局（有 games/{n}-2）：只開了還不行、開局之後開得起來，見下面第 2 場的鐘那個測試。
   await assert.rejects(startClock(host, code, 2, 75), codeOf('invalid-command'), 'the second match is not open yet');
   assert.equal(await read(host, `rooms/${code}/clock/2`), null);
   const opened = await startClock(host, code, 1, 75);
@@ -895,6 +895,21 @@ test('no room clock starts during the full pause, not by hand and not as the las
   assert.equal(await read(host, `rooms/${code}/clock/1`), null, 'no clock is running through the pause');
   await setPause(host, code, false);
   assert.equal((await startClock(host, code, 1, 75)).started, true, 'after resuming it starts');
+});
+
+test('the room clock of the second match starts once a table has started the second match, not when the match is only open', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await dayTable(code, data);
+  await nightRevealed(code, 1);
+  await setEndAfterRound(host, code, 2, true);
+  assert.equal((await advanceOrEnd(host, code, 2, { round: 1, phase: 'night' }, data)).ended, true);
+  assert.deepEqual(await openMatch(host, code, 2), { opened: true, key: '2-2' });
+  // 開了第 2 場（有 tables/2-2）、還沒有桌開局：這時開鐘的話，各桌開局時已經被吃掉一段。
+  await assert.rejects(startClock(host, code, 2, 75), codeOf('invalid-command'), 'open, but no table has started the second match');
+  assert.equal(await read(host, `rooms/${code}/clock/2`), null);
+  assert.deepEqual(await startTable(host, code, '2-2', data, seededRandom(41)), { started: true });
+  const started = await startClock(host, code, 2, 75);
+  assert.deepEqual([started.started, started.clock.minutes, started.clock.seq], [true, 75, 1], 'a table has started the second match');
 });
 
 test('advance all scores only the tables the confirm box showed as scoring; a table that reaches sunset after the plan is held', TIMEOUT, async (t) => {
