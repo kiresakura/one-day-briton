@@ -533,7 +533,7 @@ function stepOf(t, limits) {
   return pauseGuard(t, nightStep(t, limits));
 }
 
-// 全場暫停中：「開始」「下一階段」「開第 2 場」「提前揭曉」停用（host-model.js 的 pausedWhy）。
+// 全場暫停中：「開始」「下一階段」「開第 2 場」「提前揭曉」停用，本來就停用的原因前面加「全場暫停中・」（host-model.js 的 pausedWhy）。
 function isPaused(room) {
   return room?.display?.pause?.on === true;
 }

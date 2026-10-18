@@ -136,10 +136,11 @@ export function planSignature(kind, room, settings = null, now = 0) {
 // 替還沒送出的人棄權或睡覺）。自動結算照常跑，已經在倒數的響應窗口與揭曉照樣收尾；沒有人能推進，就不會開新的階段。
 export const PAUSE_BLOCKED = new Set(['start', 'next', 'open-match', 'reveal-dusk', 'reveal-night']);
 
-// 每桌按鈕 act 的停用原因：全場暫停中、在上面那一組的寫「全場暫停中」（本來就停用的照原本的原因）；其他照原本的 why。
+// 每桌按鈕 act 的停用原因：全場暫停中、在上面那一組的寫「全場暫停中」，本來就因別的原因停用的在原因前面加「全場暫停中・」
+// （例「全場暫停中・響應結算後才能按」）；其他照原本的 why。
 export function pausedWhy(act, why, paused) {
   if (!paused || !PAUSE_BLOCKED.has(act)) return why ?? null;
-  return why ?? PAUSED_TEXT;
+  return why ? `${PAUSED_TEXT}・${why}` : PAUSED_TEXT;
 }
 
 // 全場動作四顆鈕的停用原因（null＝可以按）與兩格說明：{ advance, advanceNote, start, open, second, status }。advance、start、second 是

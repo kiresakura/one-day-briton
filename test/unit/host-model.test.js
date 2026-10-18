@@ -200,7 +200,7 @@ test('局面的指紋：「這回合結束後算分」、兩個全場鐘的序�
   assert.equal(planSignature('advance-all', null), '');
 });
 
-test('全場暫停中每桌的按鈕：開始、下一階段、開第 2 場、提前揭曉停用；其他照原本', () => {
+test('全場暫停中每桌的按鈕：開始、下一階段、開第 2 場、提前揭曉停用（本來就停用的加前綴）；其他照原本', () => {
   assert.equal(PAUSED_TEXT, '全場暫停中');
   for (const act of ['start', 'next', 'open-match', 'reveal-dusk', 'reveal-night']) {
     assert.equal(pausedWhy(act, null, true), '全場暫停中');
@@ -209,6 +209,9 @@ test('全場暫停中每桌的按鈕：開始、下一階段、開第 2 場、�
   assert.equal(pausedWhy('redeal', null, true), null);
   assert.equal(pausedWhy('end-toggle', '只有黑夜之前能按', true), '只有黑夜之前能按');
   assert.equal(pausedWhy('next', '響應結算後才能按', false), '響應結算後才能按');
+  // 本來就因別的原因停用的：前面加「全場暫停中・」。
+  assert.equal(pausedWhy('next', '響應結算後才能按', true), '全場暫停中・響應結算後才能按');
+  assert.equal(pausedWhy('start', '還沒有玩家', true), '全場暫停中・還沒有玩家');
 });
 
 test('全場動作的停用原因：離線、全場暫停、卡牌資料讀取中、處理中；只剩要算分的桌也能按「能推的全推」', () => {
