@@ -857,6 +857,8 @@ test('the full pause leaves out a clock less than 10 seconds before sunset at on
 test('a refused resume of the full pause is reported, not written without its clocks: the pause and the clocks it stopped stay as they were', TIMEOUT, async (t) => {
   // 只有這台的快取出錯才會這樣。做法：離線時先寫一筆一定被拒的鐘（同一個 seq、remain 多 1 毫秒），快取先照它改；
   // 恢復照快取組好、排在它後面，連上之後兩筆都被規則拒，伺服器上什麼都沒變。
+  // 這個測試比契約嚴：契約只要求不能不帶鐘只寫 pause.on = false，這裡連「重讀之後帶著鐘再送一次」也排除了（要求丟 rejected）。
+  // 將來改成被拒、沒變時先重讀一次再送（快取一時不一致就不用讓主持人再按），這裡的預期要跟著改。
   const solo = await connect('c-resume');
   const code = await createRoom(solo);
   const watcher = watch(solo, code); // 有訂閱時 get() 讀本機快取（包括還沒送到的寫入）
