@@ -417,6 +417,13 @@ export const MEDIA = [
   { id: 'bg-rules', file: 'bg-rules.webp', kind: 'image', use: '規則頁底圖', limit: 400_000 },
 ];
 
+// 各場景的背景影片（MEDIA 的 id）：標題頁、規則說明、排行、頒獎有；總覽與其他沒有（null）。
+const LOOPS = { opening: 'loop-1', rules: 'loop-2', standings: 'loop-3', awards: 'loop-3' };
+
+export function loopFor(sceneId) {
+  return LOOPS[sceneId] ?? null;
+}
+
 // 影音素材的清單：play/media/credits.json（素材來源，每筆的 files 列出檔名與大小，格式同 play/assets/credits.json）。
 // 投影端先讀它，只下載裡面列到、而且在 MEDIA 表上的檔，其他的直接用佔位（不去要不存在的檔）。回傳 Map(檔名 → 位元組數或 null)；
 // 清單裡完全沒有檔名時回傳 null（呼叫端就逐一試 MEDIA 表上的檔）。

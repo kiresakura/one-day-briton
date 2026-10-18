@@ -19,6 +19,7 @@ import {
   headerMatch,
   horizonProgress,
   joinAddress,
+  loopFor,
   matchLine,
   mediaFilesIn,
   mediaProgressText,
@@ -391,6 +392,14 @@ test('the media table lists the expected files under play/media only, and the do
     '素材已下載 1.0 MB・1 個用佔位',
   );
   assert.equal(megabytes(12_600_000), '13');
+});
+
+test('background loops belong to the title, rules, standings and awards scenes and are media files', () => {
+  assert.deepEqual(
+    ['opening', 'rules', 'standings', 'awards', 'overview', 'nope'].map(loopFor),
+    ['loop-1', 'loop-2', 'loop-3', 'loop-3', null, null],
+  );
+  for (const id of ['loop-1', 'loop-2', 'loop-3']) assert.equal(MEDIA.find((item) => item.id === id)?.kind, 'video', id);
 });
 
 test('the media list in media/credits.json names the files to download, with or without sizes', () => {

@@ -23,6 +23,7 @@ import {
   headerClock,
   headerClockText,
   joinAddress,
+  loopFor,
   matchLine,
   mediaFilesIn,
   mediaProgressText,
@@ -68,6 +69,7 @@ const view = {
   seen: { sfx: null, scene: null, bells: new Set(), primed: false, fog: new Map() },
   flashes: new Map(), // 局號 → { text, until }
   opening: { until: 0, node: null }, // 正在播的開場影片或佔位，until 是最晚收掉的時間
+  loop: { key: '', node: null }, // 正在播的背景影片：key＝場景＋網址
   media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null }])),
   preloading: false,
   mediaNoteUntil: 0,
@@ -129,7 +131,8 @@ function buildRoot() {
   document.getElementById('screen-loading')?.setAttribute('hidden', '');
   document.documentElement.classList.add('is-projector');
   const layer = (name) => h('div', { class: `projector-layer projector-${name}` });
-  view.layers = { scene: layer('scene'), video: layer('video'), broadcast: layer('broadcast'), pause: layer('pause'), start: layer('start'), corner: layer('corner') };
+  // 背景影片的層在場景底下（場景的底圖用 z-index 墊在它下面，遮罩與文字在它上面）。
+  view.layers = { loop: layer('loop'), scene: layer('scene'), video: layer('video'), broadcast: layer('broadcast'), pause: layer('pause'), start: layer('start'), corner: layer('corner') };
   view.layers.video.hidden = true;
   view.stage = h('div', { class: 'projector-stage' }, Object.values(view.layers));
   view.root = h('section', { class: `projector${view.preview ? ' is-preview' : ''}`, attrs: { id: 'screen-projector', 'aria-label': '投影畫面' } }, view.stage);
@@ -268,6 +271,7 @@ function render() {
   const scene = sceneOf(display);
   view.root.dataset.scene = room ? scene.id : 'message';
   patch(view.layers.scene, sceneNodes(room, scene, now));
+  updateLoop(room && view.valid ? scene.id : null);
   const broadcast = display.broadcast && display.broadcast.hidden !== true && typeof display.broadcast.text === 'string' ? display.broadcast : null;
   const paused = display.pause?.on === true;
   view.root.classList.toggle('has-broadcast', Boolean(broadcast && room && !paused));
@@ -279,9 +283,41 @@ function render() {
   patch(view.layers.corner, cornerLayer(cornerModel()));
 }
 
-// 場景元件回傳的是一層包一層的陣列（可能有 null）：拉平後交給 patchChildren 就地更新，換場景以外不重建節點（動畫、影片不會重來）。
+// 場景元件回傳的是一層包一層的陣列（可能有 null）：拉平後交給 patchChildren 就地更新，換場景以外不重建節點（動畫不會重來）。
+// 場景樹裡不放 <video>／<audio>：每次重畫都會先建一整棵新的離線樹，媒體元素一設 src 就開始載入與播放，而且不會被回收。
 function patch(layer, nodes) {
   patchChildren(layer, [nodes].flat(Infinity).filter(Boolean));
+}
+
+// 背景影片（標題、規則、排行、頒獎）由這裡管：（場景, 網址）變了才建一次 <video>。先用屬性設靜音、重複播、不全螢幕
+// （setAttribute('muted') 不會真的靜音），再設 src、播放；換場景或拿掉時停掉、清掉 src、移除，不留在背景解碼。開場影片蓋著時先不播。
+function updateLoop(sceneId) {
+  const id = sceneId && view.opening.node?.tagName !== 'VIDEO' ? loopFor(sceneId) : null;
+  const url = id ? mediaUrl(id) : null;
+  const key = url ? `${sceneId} ${url}` : '';
+  if (key === view.loop.key) return;
+  stopLoop();
+  if (!url) return;
+  const node = document.createElement('video');
+  node.className = 'projector-bg-video';
+  node.setAttribute('aria-hidden', 'true');
+  node.muted = true;
+  node.loop = true;
+  node.playsInline = true;
+  node.src = url;
+  view.loop = { key, node };
+  view.layers.loop.append(node);
+  node.play().catch(() => {});
+}
+
+function stopLoop() {
+  const { node } = view.loop;
+  view.loop = { key: '', node: null };
+  if (!node) return;
+  node.pause();
+  node.removeAttribute('src');
+  node.load();
+  node.remove();
 }
 
 function sceneNodes(room, scene, now) {
@@ -296,10 +332,10 @@ function sceneNodes(room, scene, now) {
     const index = pageIndex(scene.page, pages.length);
     const page = pages[index];
     const tipImage = page?.kind === 'tip' ? sceneImage(SCENE_IMAGES[page.phase] ?? 'day') : sceneImage('dawn');
-    return rulesScene({ pages, index, bg: mediaUrl('bg-rules') ?? tipImage, loop: mediaUrl('loop-2') });
+    return rulesScene({ pages, index, bg: mediaUrl('bg-rules') ?? tipImage });
   }
   if (scene.id === 'overview') return overviewScene(overviewModel(room, now));
-  if (scene.id === 'standings') return standingsScene({ columns: standingsView(room), loop: mediaUrl('loop-3') });
+  if (scene.id === 'standings') return standingsScene({ columns: standingsView(room) });
   if (scene.id === 'awards') {
     loadCredits();
     const pages = awardPages(room);
@@ -311,11 +347,10 @@ function sceneNodes(room, scene, now) {
       credits: creditsSummary(view.credits.images),
       mediaCredits: creditsSummary(view.credits.media),
       creditsUrl: `${joinAddress(location).text}credits.html`,
-      loop: mediaUrl('loop-3'),
     });
   }
   const join = joinAddress(location);
-  return titleScene({ code: view.code, join, qr: qrSvg(join.full), bg: mediaUrl('bg-title') ?? sceneImage('finale'), loop: mediaUrl('loop-1') });
+  return titleScene({ code: view.code, join, qr: qrSvg(join.full), bg: mediaUrl('bg-title') ?? sceneImage('finale') });
 }
 
 function overviewModel(room, now) {
@@ -551,12 +586,18 @@ function playOpening() {
   if (url) {
     node = h('video', { class: 'projector-video-media', attrs: { playsinline: true, preload: 'auto' } });
     node.src = url;
-    node.addEventListener('ended', stopOpening, { once: true });
-    node.addEventListener('error', stopOpening, { once: true });
+    // 播完或出錯回到標題頁（還是這一支的話）；重畫一次，標題頁的背景影片接著播。
+    const end = () => {
+      if (view.opening.node !== node) return;
+      stopOpening();
+      render();
+    };
+    node.addEventListener('ended', end, { once: true });
+    node.addEventListener('error', end, { once: true });
     node.play().catch(() => {
       // 聲音還沒解鎖時改成靜音播（瀏覽器准靜音自動播放）。
       node.muted = true;
-      node.play().catch(stopOpening);
+      node.play().catch(end);
     });
     view.opening.until = Date.now() + OPENING_MAX_MS;
   } else {

@@ -23,14 +23,9 @@ function art(kind, id, extra = '') {
   );
 }
 
-// 場景底圖；loop 是下載好的背景影片（靜音、重複播），有就疊在底圖上面。
-function backdrop(url, key, loop = null) {
-  return [h('div', { class: 'projector-bg', data: { key: `bg-${key}` }, style: url ? { 'background-image': `url("${url}")` } : {} }), loopVideo(loop, key)];
-}
-
-function loopVideo(url, key) {
-  if (!url) return null;
-  return h('video', { class: 'projector-bg-video', data: { key: `loop-${key}` }, attrs: { src: url, autoplay: true, muted: true, loop: true, playsinline: true, 'aria-hidden': 'true' } });
+// 場景底圖。背景影片不在這裡：screen.js 另外放在場景底下的一層（場景樹每秒重建，媒體元素不能放進來）。
+function backdrop(url, key) {
+  return h('div', { class: 'projector-bg', data: { key: `bg-${key}` }, style: url ? { 'background-image': `url("${url}")` } : {} });
 }
 
 function pageNumber(index, total) {
@@ -39,10 +34,10 @@ function pageNumber(index, total) {
 
 // ---- 標題頁（開場影片播完停在這裡） ----
 
-// m：{ code, join: { text }, qr（SVG 節點或 null）, bg, loop }
+// m：{ code, join: { text }, qr（SVG 節點或 null）, bg }
 export function titleScene(m) {
   return [
-    backdrop(m.bg, 'title', m.loop),
+    backdrop(m.bg, 'title'),
     h('div', { class: 'projector-veil projector-veil-title', data: { key: 'veil' } }),
     h(
       'div',
@@ -67,14 +62,14 @@ export function titleScene(m) {
 
 // ---- 規則說明 ----
 
-// m：{ pages, index, bg, loop }
+// m：{ pages, index, bg }
 export function rulesScene(m) {
   const page = m.pages[m.index];
   const key = `rules-${m.index}`;
   if (!page) return [];
   if (page.kind === 'flow') {
     return [
-      backdrop(m.bg, 'rules', m.loop),
+      backdrop(m.bg, 'rules'),
       h('div', { class: 'projector-veil', data: { key: 'veil' } }),
       h(
         'div',
@@ -101,7 +96,7 @@ export function rulesScene(m) {
     ];
   }
   return [
-    backdrop(m.bg, 'rules', m.loop),
+    backdrop(m.bg, 'rules'),
     h('div', { class: 'projector-veil', data: { key: 'veil' } }),
     h(
       'div',
@@ -257,11 +252,10 @@ const STATUS_TEXT = { playing: '比賽中', idle: '還沒開局' };
 const BASIS_TEXT = { combined: '兩場合計', first: '第 1 場' };
 const RANK_MARK = { 1: 'Ⅰ', 2: 'Ⅱ', 3: 'Ⅲ' };
 
-// m：{ columns, loop }
+// m：{ columns }
 export function standingsScene(m) {
   return [
     h('div', { class: 'projector-night', data: { key: 'bg-night' } }),
-    loopVideo(m.loop, 'standings'),
     h(
       'div',
       { class: 'projector-safe projector-standings projector-reveal', data: { key: 'standings' } },
@@ -305,14 +299,13 @@ export function standingsScene(m) {
 
 // ---- 頒獎 ----
 
-// m：{ pages, index, credits: { full, others, total }, mediaCredits, creditsUrl, reveal, loop }
+// m：{ pages, index, credits: { full, others, total }, mediaCredits, creditsUrl, reveal }
 export function awardsScene(m) {
   const page = m.pages[m.index];
   const key = `awards-${m.index}-${page?.kind}`;
   const body = page ? awardPage(page, m) : [];
   return [
     h('div', { class: 'projector-night projector-night-awards', data: { key: 'bg-awards' } }),
-    loopVideo(m.loop, 'awards'),
     h('div', { class: `projector-safe projector-awards is-${page?.kind ?? 'none'}${m.reveal ? ' projector-reveal' : ''}`, data: { key } }, body, pageNumber(m.index, m.pages.length)),
   ];
 }
