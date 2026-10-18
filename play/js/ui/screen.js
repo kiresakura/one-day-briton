@@ -8,7 +8,7 @@ import { isRoomCode, normalizeRoomCode } from '../rules.js';
 import { serverTime, trackScreen, watchConnection, watchRoom } from '../store.js';
 import { ART } from './art.js';
 import { h, patchChildren } from './dom.js';
-import { qrSvg } from './qr.js';
+import { qrSvgOrNull } from './qr.js';
 import { createAudio } from './screen-audio.js';
 import {
   MEDIA,
@@ -349,7 +349,7 @@ function sceneNodes(room, scene, now) {
     });
   }
   const join = joinAddress(location);
-  return titleScene({ code: view.code, join, qr: qrSvg(join.full), bg: mediaUrl('bg-title') ?? sceneImage('finale') });
+  return titleScene({ code: view.code, join, qr: qrSvgOrNull(join.full), bg: mediaUrl('bg-title') ?? sceneImage('finale') });
 }
 
 function overviewModel(room, now) {

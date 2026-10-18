@@ -329,6 +329,15 @@ function qrPath(text) {
   return result;
 }
 
+// 標題頁每秒重畫時用這個：網址放不進 QR 碼（超過版本 10、約 213 位元組）或畫不出來時回傳 null，標題頁只寫文字網址，重畫不會丟錯。
+export function qrSvgOrNull(text) {
+  try {
+    return qrSvg(text);
+  } catch {
+    return null;
+  }
+}
+
 export function qrSvg(text) {
   const { size, path } = qrPath(text);
   const ns = 'http://www.w3.org/2000/svg';

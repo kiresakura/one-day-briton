@@ -42,7 +42,7 @@ import {
   tableCard,
   wallClock,
 } from '../../play/js/ui/screen-model.js';
-import { formatBits, qrMatrix } from '../../play/js/ui/qr.js';
+import { formatBits, qrMatrix, qrSvgOrNull } from '../../play/js/ui/qr.js';
 
 const MINUTE = 60_000;
 const NOW = 1_800_000_000_000;
@@ -617,4 +617,20 @@ test('the QR code picks the smallest version, draws the function patterns and ca
   assert.equal((formatBits(qr.mask) ^ 0x5412) >>> 10, qr.mask);
   assert.deepEqual(qrMatrix(url, { mask: qr.mask }).modules, modules, 'deterministic');
   assert.equal(qrMatrix('x'.repeat(150)).version, 8, 'version info area is used from version 7');
+});
+
+test('a join address too long for a QR code leaves the title page with the text address instead of throwing every second', () => {
+  assert.equal(qrSvgOrNull(`https://example.test/${'x'.repeat(300)}`), null);
+  // 放得進的網址照樣畫（Node 沒有 DOM：借一個只記呼叫的 document）。
+  const made = [];
+  const node = (tag) => ({ tag, attrs: {}, kids: [], setAttribute(key, value) { this.attrs[key] = value; }, append(...kids) { this.kids.push(...kids); } });
+  globalThis.document = { createElementNS: (ns, tag) => (made.push(tag), node(tag)) };
+  try {
+    const svg = qrSvgOrNull('https://kiresakura.github.io/one-day-briton/play/');
+    assert.equal(svg.tag, 'svg');
+    assert.equal(svg.attrs.viewBox, '0 0 41 41', 'version 4 (33 modules) plus the quiet zone');
+    assert.deepEqual(made, ['svg', 'rect', 'path']);
+  } finally {
+    delete globalThis.document;
+  }
 });
