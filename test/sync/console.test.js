@@ -596,14 +596,27 @@ test('with a room clock, sunset follows it: the night ends the game when it is u
   assert.deepEqual([await read(host, `rooms/${code}/tables/2/phase`), await read(host, `rooms/${code}/games/2/final/reason`)], ['end', 'sunset']);
 });
 
-test('a running room clock that is not up yet keeps the game going even when the table clock alone would have ended it', TIMEOUT, async (t) => {
+test('a running room clock that is not up yet keeps the game going even when the table clock alone would have ended it; the second match follows its own table clock, not the clock of the first match', TIMEOUT, async (t) => {
   const { code } = await consoleRoom(t);
   await dayTable(code, data);
-  await startClock(host, code, 1, 75);
+  await startClock(host, code, 1, 10);
   await nightRevealed(code, 1);
   const moved = await advanceOrEnd(host, code, 2, { round: 1, phase: 'night' }, sunset);
-  assert.deepEqual([moved.ended, moved.table.round], [false, 2], 'the room clock has 75 minutes left');
-  // 第 2 場有自己的鐘：沒開第 2 場的鐘時，第 2 場照舊各桌自己算（clock/1 只管第 1 場）。
+  assert.deepEqual([moved.ended, moved.table.round], [false, 2], 'the room clock has 10 minutes left');
+  // clock/1 減到日落：第 1 場這一回合結束就算分（各桌從開局起算的 75 分還沒到）。
+  assert.equal((await processSunrise(host, code, 2, data)).dealt, true);
+  await adjustClock(host, code, 1, -10 * MINUTE);
+  const clock = await read(host, `rooms/${code}/clock/1`);
+  await untilServerTime(host, clock.anchor + clock.remain + 100);
+  await nightRevealed(code, 2, { from: 'sunrise' });
+  const ended = await advanceOrEnd(host, code, 2, { round: 2, phase: 'night' }, data);
+  assert.deepEqual([ended.ended, ended.reason], [true, 'sunset']);
+  // 第 2 場沒有自己的鐘（clock/2）：照第 2 場各桌自己從開局起算，已經日落的 clock/1 不算數。
+  assert.deepEqual(await openMatch(host, code, 2), { opened: true, key: '2-2' });
+  assert.deepEqual(await startTable(host, code, '2-2', data, seededRandom(31)), { started: true });
+  await nightRevealed(code, 1, { from: 'sunrise', key: '2-2' });
+  const second = await advanceOrEnd(host, code, '2-2', { round: 1, phase: 'night' }, data);
+  assert.deepEqual([second.advanced, second.ended, second.table.round, second.table.phase], [true, false, 2, 'sunrise'], 'clock/1 is up, but the second match goes on');
   assert.equal(await read(host, `rooms/${code}/clock/2`), null);
 });
 
