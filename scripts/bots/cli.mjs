@@ -3,9 +3,9 @@
 // （說明見 docs/BOTS.md）。開局、推進、算分、開第 2 場照常由主持端做；機器人只當玩家，結束時印結算摘要、自己斷線。
 // 房間不存在、已經開局、坐滿時印出原因就結束，資料庫裡什麼都不寫。正式站先倒數幾秒才開始寫入，連錯了還來得及按 Ctrl-C。
 import { readFile } from 'node:fs/promises';
-import { MATCH_COUNT, parseKey } from '../../play/js/rules.js';
+import { MATCH_COUNT, matchKey, parseKey } from '../../play/js/rules.js';
 import { ArgsError, USAGE, parseArgs } from './args.mjs';
-import { PlanError, capacityOf, crowdedOut, planSeats } from './plan.mjs';
+import { PlanError, capacityOf, crowdedOut, planSeats, playersAt } from './plan.mjs';
 import { combinedSummary, finalSummary } from './text.mjs';
 
 // 連不上（模擬器沒開、沒有網路）時，登入與讀房間各最多等這麼久。
@@ -231,14 +231,19 @@ async function main() {
   // 多出來的（較晚加入的）機器人離開。那一桌已經開局、或機器人已經有座位就不請走（走了座位就沒人動），只印一行提醒。
   let crowdedOff = 0;
   if (bots.length > 0 && !halt) {
-    let timer;
-    await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, RECHECK_MS))));
-    clearTimeout(timer);
-    const latest = halt ? null : await timed(readRoomOnce(watchRoom, sessions[0], options.room), '讀房間').catch(() => null);
+    // 隔 RECHECK_MS 用 session 讀一次房間（停了、讀不到是 null）。
+    const reread = async (session) => {
+      let timer;
+      await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, RECHECK_MS))));
+      clearTimeout(timer);
+      return halt ? null : timed(readRoomOnce(watchRoom, session, options.room), '讀房間').catch(() => null);
+    };
+    const latest = await reread(sessions[0]);
     if (latest?.meta) {
       const capacity = capacityOf(data);
       const crowd = crowdedOut(latest, plan.table, capacity, new Set(bots.map((bot) => bot.uid)));
       const kept = crowd.kept.map(({ uid }) => bots.find((item) => item.uid === uid));
+      const leaving = [];
       for (const { uid, why } of crowd.out) {
         const bot = bots.find((item) => item.uid === uid);
         if (!bot.leave(why)) {
@@ -246,13 +251,23 @@ async function main() {
           continue;
         }
         console.log(`注意：${bot.name} ${why}，離開（同一個房間請一次只跑一個指令）`);
+        leaving.push(bot);
         crowdedOff += 1;
       }
       if (kept.length > 0) {
         console.log(`注意：第 ${plan.table} 桌已經開局，${kept.map((bot) => bot.name).join('、')} 不離開，有座位的照常玩（同一個房間請一次只跑一個指令）`);
       }
-      if (crowd.seated > capacity) {
-        console.log(`注意：第 ${plan.table} 桌名單上有 ${crowd.seated} 人，超過一桌 ${capacity} 人，主持端開不了局；請有人換桌或按「離開」`);
+      // 同時在跑的另一個指令也會請走它自己多出來的機器人（這邊算不到）：等這邊的離開、隔一下用還在的機器人再數一次，
+      // 還超過一桌（也還沒開局）才提醒。
+      const staying = bots.filter((bot) => !leaving.includes(bot));
+      const started = Boolean(latest.games?.[matchKey(plan.table)]) || kept.length > 0;
+      if (crowd.seated > capacity && !started && staying.length > 0) {
+        await unlessHalted(Promise.all(leaving.map((bot) => bot.done)));
+        const again = await reread(sessions[bots.indexOf(staying[0])]);
+        const crowded = again?.meta && !again.games?.[matchKey(plan.table)] ? playersAt(again, plan.table).length : 0;
+        if (crowded > capacity) {
+          console.log(`注意：第 ${plan.table} 桌名單上有 ${crowded} 人，超過一桌 ${capacity} 人，主持端開不了局；請有人換桌或按「離開」`);
+        }
       }
     }
   }
