@@ -1,12 +1,14 @@
 // 主持人控制台的判斷（play/js/ui/host-model.js）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條的字、確認框打開後局面變了沒、全場暫停中每桌按鈕的停用原因。
+// 結果條的字、確認框打開後局面變了沒、全場動作與全場暫停中每桌按鈕的停用原因。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { clockStartWrite } from '../../play/js/game.js';
 import { PAUSE_NEAR_SUNSET_MS } from '../../play/js/store.js';
 import {
   CLOCK_MARGIN_MS,
+  OFFLINE_TEXT,
   PAUSED_TEXT,
+  actionWhy,
   clockUnderPause,
   heldByPause,
   manualPausedMatches,
@@ -207,4 +209,62 @@ test('全場暫停中每桌的按鈕：開始、下一階段、開第 2 場、�
   assert.equal(pausedWhy('redeal', null, true), null);
   assert.equal(pausedWhy('end-toggle', '只有黑夜之前能按', true), '只有黑夜之前能按');
   assert.equal(pausedWhy('next', '響應結算後才能按', false), '響應結算後才能按');
+});
+
+test('全場動作的停用原因：離線、全場暫停、卡牌資料讀取中、處理中；只剩要算分的桌也能按「能推的全推」', () => {
+  const plans = {
+    advance: { advance: [{ table: 2 }, { table: 5 }], skip: [] },
+    start: { start: [{ table: 1 }], started: [], skip: [] },
+    second: { start: [], started: [], skip: [] },
+    open: null,
+  };
+  const base = { off: false, paused: false, noData: null, working: false };
+  assert.deepEqual(actionWhy(base, plans), {
+    advance: null,
+    advanceNote: '第 2、5 桌；按了會先列出來確認',
+    start: null,
+    open: '還沒有桌打完第 1 場',
+    second: '還沒有桌開第 2 場',
+    status: '可以一起開全場日落鐘',
+  });
+  for (const [flags, text] of [
+    [{ off: true }, OFFLINE_TEXT],
+    [{ paused: true }, PAUSED_TEXT],
+    [{ off: true, paused: true }, OFFLINE_TEXT],
+  ]) {
+    const why = actionWhy({ ...base, ...flags }, plans);
+    assert.deepEqual([why.advance, why.advanceNote, why.start, why.open, why.second, why.status], [text, text, text, text, text, text]);
+  }
+  const loading = actionWhy({ ...base, noData: '卡牌資料讀取中…' }, { open: null });
+  assert.deepEqual([loading.advance, loading.start, loading.open, loading.second, loading.status], Array(5).fill('卡牌資料讀取中…'));
+  const working = actionWhy({ ...base, working: true }, plans);
+  assert.equal(working.advance, '處理中…');
+  assert.equal(working.status, '處理中…');
+  // 只剩這一回合要算分的桌：鈕可以按（在確認框另外勾）。
+  const ending = actionWhy(base, { ...plans, advance: { advance: [], skip: [{ table: 3, reason: 'ending' }, { table: 4, reason: 'playing' }] } });
+  assert.equal(ending.advance, null);
+  assert.equal(ending.advanceNote, '第 3 桌這一回合要算分，在確認框另外勾');
+  assert.equal(actionWhy(base, { ...plans, advance: { advance: [], skip: [{ table: 4, reason: 'playing' }] } }).advance, '沒有可以推的桌');
+});
+
+test('全場動作的停用原因：全部開始、全部開第 2 場（已經在第 2 場的桌不是「還沒打完」）、全部開始第 2 場', () => {
+  const base = { off: false, paused: false, noData: null, working: false };
+  const advance = { advance: [], skip: [] };
+  const none = { start: [], started: [], skip: [] };
+  assert.equal(actionWhy(base, { advance, start: { start: [], started: ['1', '2'], skip: [] }, second: none, open: null }).start, '2 桌都開始了');
+  assert.equal(actionWhy(base, { advance, start: { start: [], started: ['1'], skip: [{ table: 2 }] }, second: none, open: null }).start, '沒有可以開的桌');
+  assert.equal(actionWhy(base, { advance, start: none, second: none, open: null }).start, '第 1 場都結束了');
+  // 有桌已經開了或打完第 2 場：沒有要開的桌了。
+  const inSecond = actionWhy(base, { advance, start: none, second: { start: [], started: ['1-2'], skip: [] }, open: null });
+  assert.equal(inSecond.open, '沒有打完第 1 場、還沒開第 2 場的桌');
+  assert.equal(inSecond.second, '第 2 場都開始了');
+  assert.equal(inSecond.status, '第 1 場都結束了');
+  assert.equal(actionWhy(base, { advance, start: none, second: none, open: { ready: [] } }).open, '天命都要先判定完');
+  const ready = actionWhy(base, { advance, start: none, second: none, open: { ready: [{ table: 1 }] } });
+  assert.equal(ready.open, null);
+  assert.equal(ready.status, '第 1 場結束的桌可以開第 2 場');
+  const second = actionWhy(base, { advance, start: none, second: { start: [{ table: 1 }], started: [], skip: [] }, open: { ready: [] } });
+  assert.equal(second.second, null);
+  assert.equal(second.status, '可以一起開第 2 場的日落鐘');
+  assert.equal(actionWhy(base, { advance, start: none, second: { start: [], started: [], skip: [{ table: 1 }] }, open: { ready: [] } }).second, '沒有可以開的桌');
 });

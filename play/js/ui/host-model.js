@@ -1,5 +1,5 @@
 // 主持人控制台的判斷（只有純函式，不碰畫面）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
-// 結果條怎麼寫、確認框打開後局面變了沒、全場暫停中每桌按鈕的停用原因。畫面在 host.js，測試在 test/unit/host-model.test.js。
+// 結果條怎麼寫、確認框打開後局面變了沒、全場動作與全場暫停中每桌按鈕的停用原因。畫面在 host.js，測試在 test/unit/host-model.test.js。
 import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, endReasonAt, isClock } from '../game.js';
 import { MATCH_COUNT, activeKey, clockOf } from '../rules.js';
 import { PAUSE_NEAR_SUNSET_MS } from '../store.js';
@@ -7,6 +7,7 @@ import { PAUSE_NEAR_SUNSET_MS } from '../store.js';
 // 走著的鐘，store.js 照「現在＋這麼多毫秒」判斷日落與加減（減到底時會剩約 1.5 秒）。同 store.js 的 CLOCK_MARGIN_MS（store.js 還沒有匯出它）。
 export const CLOCK_MARGIN_MS = 1500;
 export const PAUSED_TEXT = '全場暫停中';
+export const OFFLINE_TEXT = '離線中，連回來才能操作';
 const CLOCK_KEYS = ['1', String(MATCH_COUNT)];
 const NEAR_SECONDS = PAUSE_NEAR_SUNSET_MS / 1000;
 
@@ -17,6 +18,10 @@ function matchName(match) {
 
 function namesOf(matches) {
   return matches.map(matchName).join('、');
+}
+
+export function tablesText(items) {
+  return `第 ${items.map((item) => item.table).join('、')} 桌`;
 }
 
 // 加減 delta 毫秒（負的是減）會不會把鐘減到 0（直接日落，日落後加不回來）：照 store.js 的 adjustClock 算，走著的鐘看「現在＋
@@ -135,4 +140,33 @@ export const PAUSE_BLOCKED = new Set(['start', 'next', 'open-match', 'reveal-dus
 export function pausedWhy(act, why, paused) {
   if (!paused || !PAUSE_BLOCKED.has(act)) return why ?? null;
   return why ?? PAUSED_TEXT;
+}
+
+// 全場動作四顆鈕的停用原因（null＝可以按）與兩格說明：{ advance, advanceNote, start, open, second, status }。advance、start、second 是
+// game.js 的 advancePlan、startPlan、startMatch2Plan（卡牌資料還沒讀到時是 null），open 是 host.js 的 openPlan；noData 是卡牌資料還沒讀到
+// 時的字（讀到了是 null），working＝四個裡有一個正在做。status 是下面那一格（最該看的那一個），批次動作的進度由畫面自己蓋上。
+export function actionWhy({ off = false, paused = false, noData = null, working = false }, { advance = null, start = null, second = null, open = null } = {}) {
+  const common = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : noData;
+  // 只剩這一回合要算分的桌時也能按：確認框裡另外勾「連要算分的桌一起推」才會推。
+  const ending = advance ? advance.skip.filter((item) => item.reason === 'ending') : [];
+  const advanceWhy = common ?? (working ? '處理中…' : advance.advance.length || ending.length ? null : '沒有可以推的桌');
+  let advanceNote = advanceWhy;
+  if (!advanceWhy) advanceNote = advance.advance.length ? `${tablesText(advance.advance)}；按了會先列出來確認` : `${tablesText(ending)}這一回合要算分，在確認框另外勾`;
+  let startWhy = common;
+  if (!startWhy && start.start.length === 0) startWhy = start.started.length && start.skip.length === 0 ? `${start.started.length} 桌都開始了` : start.started.length || start.skip.length ? '沒有可以開的桌' : '第 1 場都結束了';
+  let openWhy = common;
+  if (!openWhy && !open) {
+    // 已經有桌在第 2 場（開了或打完）時，不是「還沒打完第 1 場」，而是沒有要開的桌了。
+    const inSecond = second && second.start.length + second.started.length + second.skip.length > 0;
+    openWhy = inSecond ? `沒有打完${matchName(1)}、還沒開${matchName(2)}的桌` : `還沒有桌打完${matchName(1)}`;
+  } else if (!openWhy && open.ready.length === 0) openWhy = '天命都要先判定完';
+  let secondWhy = common;
+  if (!secondWhy && second.start.length === 0) secondWhy = second.started.length ? `${matchName(2)}都開始了` : second.skip.length ? '沒有可以開的桌' : `還沒有桌開${matchName(2)}`;
+  let status;
+  if (working) status = '處理中…';
+  else if (!common && !startWhy) status = '可以一起開全場日落鐘';
+  else if (!common && !openWhy) status = `${matchName(1)}結束的桌可以開${matchName(2)}`;
+  else if (!common && !secondWhy) status = `可以一起開${matchName(2)}的日落鐘`;
+  else status = common ?? (open ? (secondWhy ?? openWhy) : startWhy) ?? '';
+  return { advance: advanceWhy, advanceNote, start: startWhy, open: openWhy, second: secondWhy, status };
 }

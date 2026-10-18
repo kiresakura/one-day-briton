@@ -86,8 +86,10 @@ import {
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
 import {
+  OFFLINE_TEXT,
   PAUSED_TEXT,
   PAUSE_HOLD_TEXT,
+  actionWhy,
   clockUnderPause,
   manualPausedMatches,
   nearSunsetLine,
@@ -95,6 +97,7 @@ import {
   pauseReport,
   pausedWhy,
   planSignature,
+  tablesText,
   undoWhy,
   zeroAfter,
 } from './host-model.js';
@@ -1359,7 +1362,6 @@ function confirmLayer(room) {
 
 export const CONSOLE_MIN_WIDTH = 1360;
 export const CONSOLE_MIN_HEIGHT = 860;
-const OFFLINE_TEXT = '離線中，連回來才能操作';
 const SCENES = [
   ['opening', '開場影片'],
   ['rules', '規則說明'],
@@ -1564,10 +1566,6 @@ function noDataText() {
   return ctx.cardsFailed ? '卡牌資料有問題，請找工作人員' : '卡牌資料讀取中…';
 }
 
-function tablesText(items) {
-  return `第 ${items.map((item) => item.table).join('、')} 桌`;
-}
-
 function panel(key, title, content, extra = '') {
   return h('section', { class: `cs-panel cs-${key}${extra ? ` ${extra}` : ''}`, data: { key }, attrs: { 'aria-label': title } }, h('h2', { class: 'cs-title', text: title }), content);
 }
@@ -1584,59 +1582,35 @@ function csButton(act, label, { why = null, data = {}, className = '', busyKey =
   });
 }
 
-// 全場動作：能推的全推、全部開始、已結束的桌全部開第 2 場、全部開始第 2 場。都先開確認框，確認框列出計畫。
+// 全場動作：能推的全推、全部開始、已結束的桌全部開第 2 場、全部開始第 2 場。都先開確認框，確認框列出計畫。停用原因見 host-model.js 的
+// actionWhy。
 function actionsPanel(view) {
   const { room, now, off, paused } = view;
   const data = ctx.cardData?.data ?? null;
-  const common = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : data ? null : noDataText();
   const advance = data ? advancePlan(room, data.settings, now, { discards: submissions.discards }) : null;
   const start = data ? startPlan(room, data) : null;
   const second = data ? startMatch2Plan(room, data, seatPicks) : null;
   const open = openPlan(room, { kind: 'all' });
   const working = ['advance-all', 'start-all', 'start-all-2', 'open-all'].some((key) => busy.has(key));
-
-  // 只剩這一回合要算分的桌時也能按：確認框裡另外勾「連要算分的桌一起推」才會推。
-  const ending = advance ? advance.skip.filter((item) => item.reason === 'ending') : [];
-  const advanceWhy = common ?? (working ? '處理中…' : advance.advance.length || ending.length ? null : '沒有可以推的桌');
-  let advanceNote = advanceWhy;
-  if (!advanceWhy) {
-    advanceNote = advance.advance.length ? `${tablesText(advance.advance)}；按了會先列出來確認` : `${tablesText(ending)}這一回合要算分，在確認框另外勾`;
-  }
-
-  let startWhy = common;
-  if (!startWhy && start.start.length === 0) startWhy = start.started.length && start.skip.length === 0 ? `${start.started.length} 桌都開始了` : start.started.length || start.skip.length ? '沒有可以開的桌' : '第 1 場都結束了';
-  let openWhy = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : data ? null : noDataText();
-  if (!openWhy && !open) {
-    // 已經有桌在第 2 場（開了或打完）時，不是「還沒打完第 1 場」，而是沒有要開的桌了。
-    const inSecond = second && second.start.length + second.started.length + second.skip.length > 0;
-    openWhy = inSecond ? `沒有打完${matchText(1)}、還沒開${matchText(2)}的桌` : `還沒有桌打完${matchText(1)}`;
-  } else if (!openWhy && open.ready.length === 0) openWhy = '天命都要先判定完';
-  let secondWhy = common;
-  if (!secondWhy && second.start.length === 0) secondWhy = second.started.length ? `${matchText(2)}都開始了` : second.skip.length ? '沒有可以開的桌' : `還沒有桌開${matchText(2)}`;
+  const why = actionWhy({ off, paused, noData: data ? null : noDataText(), working }, { advance, start, second, open });
 
   // 停用的鈕原因寫在滑鼠提示（title），也寫在下面那一格（最該看的那一個）。
-  const small = (act, title, why, count) =>
-    h('button', { class: 'btn cs-btn cs-small', type: 'button', data: { act }, attrs: { title: why ?? undefined }, disabled: Boolean(why) || working, text: why ? title : `${title}・${count} 桌` });
-  let status = '';
-  if (progress) status = `${progress.label} ${progress.done}／${progress.total}`;
-  else if (working) status = '處理中…';
-  else if (!common && !startWhy) status = '可以一起開全場日落鐘';
-  else if (!common && !openWhy) status = `第 1 場結束的桌可以開${matchText(2)}`;
-  else if (!common && !secondWhy) status = `可以一起開${matchText(2)}的日落鐘`;
-  else status = common ?? (open ? (secondWhy ?? openWhy) : startWhy) ?? '';
+  const small = (act, title, reason, count) =>
+    h('button', { class: 'btn cs-btn cs-small', type: 'button', data: { act }, attrs: { title: reason ?? undefined }, disabled: Boolean(reason) || working, text: reason ? title : `${title}・${count} 桌` });
+  const status = progress ? `${progress.label} ${progress.done}／${progress.total}` : why.status;
   return panel('actions', '全場動作', [
     h(
       'button',
-      { class: `btn cs-btn cs-advance${advanceWhy ? '' : ' btn-primary'}`, type: 'button', data: { act: 'advance-all' }, attrs: { title: advanceWhy ?? undefined }, disabled: Boolean(advanceWhy) },
+      { class: `btn cs-btn cs-advance${why.advance ? '' : ' btn-primary'}`, type: 'button', data: { act: 'advance-all' }, attrs: { title: why.advance ?? undefined }, disabled: Boolean(why.advance) },
       advance && advance.advance.length ? `能推的全推下一階段・${advance.advance.length} 桌` : '能推的全推下一階段',
     ),
-    trunc('p', 'cs-note', advanceNote ?? ''),
+    trunc('p', 'cs-note', why.advanceNote ?? ''),
     h(
       'div',
       { class: 'cs-grid2' },
-      small('start-all', '全部開始', startWhy, start?.start.length),
-      small('open-all', `全部開${matchText(2)}`, openWhy, open?.ready.length),
-      small('start-all-2', `全部開始${matchText(2)}`, secondWhy, second?.start.length),
+      small('start-all', '全部開始', why.start, start?.start.length),
+      small('open-all', `全部開${matchText(2)}`, why.open, open?.ready.length),
+      small('start-all-2', `全部開始${matchText(2)}`, why.second, second?.start.length),
       trunc('p', `cs-note cs-busy${progress || working ? ' is-on' : ''}`, status),
     ),
   ]);
