@@ -147,6 +147,38 @@ export function matchOf(room, table) {
   return key === null ? null : parseKey(key).match;
 }
 
+// 局號 key 那一場的全場日落鐘（rooms/{code}/clock/{第幾場}）：第 1 場的局號 → clock/1，"3-2" → clock/2；沒有或局號不對回 null。
+// clock 只有 1、2 兩個鍵，讀回來可能是陣列也可能是物件，這裡只用 [場次]。
+export function clockOf(room, key) {
+  const parsed = parseKey(key);
+  return parsed ? (room?.clock?.[parsed.match] ?? null) : null;
+}
+
+// ---- 主持人控制台：投影與全場指令（rooms/{code}/display）的格式 ----
+// 清單與上限跟資料庫規則一致；store.js 送出前先查，畫面的按鈕與字數提示也用這些。
+export const SCENE_IDS = ['opening', 'rules', 'overview', 'standings', 'awards'];
+export const SCENE_PAGE_MAX = 20;
+export const SFX_IDS = ['bell', 'gavel'];
+// 同一間房的音效至少隔這麼久（毫秒）才能再放一次（防連按）。
+export const SFX_GAP_MS = 1000;
+export const MUSIC_TRACKS = ['opening'];
+export const BROADCAST_MAX_LENGTH = 40;
+
+// 廣播的字：前後空白修剪。長度與規則用同一種算法（UTF-16 長度，同暱稱）：中英文一字算 1，表情符號多半算 2。
+export function normalizeBroadcast(input) {
+  return String(input ?? '').trim();
+}
+
+export function isValidBroadcast(text) {
+  return typeof text === 'string' && text === text.trim() && text.length >= 1 && text.length <= BROADCAST_MAX_LENGTH;
+}
+
+// 投影場景：id 在清單裡，page 沒給或是 0–SCENE_PAGE_MAX 的整數。
+export function isValidScene(id, page) {
+  const pageOk = page === undefined || page === null || (Number.isInteger(page) && page >= 0 && page <= SCENE_PAGE_MAX);
+  return SCENE_IDS.includes(id) && pageOk;
+}
+
 // 房間的主持端：開房的人，加上被核准進主持名單的人。
 export function hostUids(room) {
   const uids = new Set();

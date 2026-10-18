@@ -1,5 +1,6 @@
 // 純函式：開局與日出的計算（牌庫、洗牌、座位與階層、隱藏天命、抽牌、領薪），白晝的輪流出牌、響應卡與結算，黃昏的法案投票，
-// 事件（日出一般事件、迷霧事件），黑夜（豪賭、分贓、睡覺）與手牌上限，以及終局（日落鐘）與計分。
+// 事件（日出一般事件、迷霧事件），黑夜（豪賭、分贓、睡覺）與手牌上限，以及終局（日落鐘）與計分；主持人控制台的全場日落鐘、
+// 批次動作的計畫、在等誰、全場暫停層、投影端的音效與排行。
 // 不碰網路、不碰畫面，瀏覽器與 Node 測試共用同一份。輸入資料檔的內容與目前的局面，輸出要寫入的新局面。
 // 亂數一律從注入的來源拿（預設是 crypto.getRandomValues），測試用固定種子。
 //
@@ -8,7 +9,7 @@
 //   hands      { uid: [牌編號…] }、destinies { uid: 天命編號或 null }   本人與主持端
 //   deck       [牌編號…]（陣列順序＝抽牌順序）、discard [牌編號…]      只有主持端
 import { ROLE_COUNT, SETTINGS } from './data.js';
-import { advanceFog } from './rules.js';
+import { MATCH_COUNT, activeKey, advanceFog, clockOf, matchKey, nextStep, parseKey } from './rules.js';
 
 // 一桌最多幾人：六個階層各一、不重複。少於 SUGGESTED_SEATS 人可以開，但畫面要提醒（企劃 10/15 回覆第 12 題）。
 export const MAX_SEATS = ROLE_COUNT;
@@ -1360,8 +1361,14 @@ export function sunsetClock(startedAt, settings, now) {
 // 這一回合結束時（黑夜揭曉後按「下一階段」）要不要終局：回傳原因 sunset（日落鐘到了）、maxRounds（已經是第 maxRounds 回合）、
 // host（主持端按了「這回合結束後算分」），不用就是 null；同時成立時照這個順序取第一個。state＝{ round, startedAt, endAfterRound }
 // （startedAt、endAfterRound 在 games/{n}），now 是伺服器時間。玩家畫面也用它顯示「這是最後一回合」。
-export function shouldEnd({ round, startedAt, endAfterRound }, settings, now) {
-  if (typeof startedAt === 'number' && sunsetClock(startedAt, settings, now).passed) return 'sunset';
+// clock 是那一場的全場日落鐘（rooms/{code}/clock/{場次}，見下方「主持人控制台」）：有的話日落照它（clockPassed），startedAt 不看；
+// 沒有（null）時照舊從該桌的 startedAt 算。
+export function shouldEnd({ round, startedAt, endAfterRound }, settings, now, clock = null) {
+  if (isClock(clock)) {
+    if (clockPassed(clock, now)) return 'sunset';
+  } else if (typeof startedAt === 'number' && sunsetClock(startedAt, settings, now).passed) {
+    return 'sunset';
+  }
   if (round >= scoreSettings(settings).maxRounds) return 'maxRounds';
   if (endAfterRound === round) return 'host';
   return null;
@@ -1535,4 +1542,405 @@ export function combineScores(final1, final2, seats1) {
 // 教學提示要不要顯示（第 5 題）：只在第 1 場第 1 回合。第 2 場也要顯示的話，拿掉 match 那個條件。
 export function showsTutorial(match, round) {
   return match === 1 && round === 1;
+}
+
+// ---- 主持人控制台：全場日落鐘 ----
+// 全場日落鐘 rooms/{code}/clock/{場次}＝{ startedAt, minutes, anchor, remain, pausedAt, adjust, seq, by }（伺服器時間或毫秒整數）：
+//   走著（沒有 pausedAt）：剩餘(t)＝remain −（t − anchor）；暫停中：剩餘＝remain −（pausedAt − anchor），不會變。
+//   開始：startedAt＝anchor＝伺服器時間、remain＝minutes×60000、adjust＝0。暫停：只多 pausedAt（伺服器時間）。
+//   繼續：拿掉 pausedAt、anchor＝伺服器時間、remain＝舊 remain −（pausedAt − 舊 anchor）。加減 Δ：remain、adjust 都＋Δ，anchor 不動。
+//   已進行＝minutes×60000＋adjust − 剩餘：暫停與加減都不會讓它倒退或跳。剩餘 ≤ 0 就是日落（剛好 0 算到，同 sunsetClock）。
+// 資料庫規則用同樣的式子逐筆驗算（加減單次 ±10 分、累計 ±30 分，日落後不能暫停或加減），所以要寫的欄位一律由這裡算。
+// 那一場有這個鐘時所有桌的日落都照它；沒有時照舊各桌從自己的 startedAt 起算（shouldEnd 的 clock）。
+
+export const CLOCK_MINUTES_MIN = 10;
+export const CLOCK_MINUTES_MAX = 180;
+// 加減的上限：單次與累計（毫秒），同資料庫規則。
+export const CLOCK_STEP_MAX_MS = 10 * MINUTE_MS;
+export const CLOCK_ADJUST_MAX_MS = 30 * MINUTE_MS;
+const CLOCK_FIELDS = ['startedAt', 'minutes', 'anchor', 'remain', 'pausedAt', 'adjust', 'seq'];
+
+// 是不是一筆全場鐘（算得出剩餘）：不是的話當作沒有鐘，照各桌的 startedAt。
+export function isClock(clock) {
+  return Boolean(clock) && typeof clock === 'object' && Number.isInteger(clock.minutes) && typeof clock.anchor === 'number' && typeof clock.remain === 'number';
+}
+
+export function clockPaused(clock) {
+  return typeof clock?.pausedAt === 'number';
+}
+
+// 剩餘（毫秒）；日落之後還在走的鐘是負的。
+function clockLeft(clock, now) {
+  return clock.remain - ((clockPaused(clock) ? clock.pausedAt : now) - clock.anchor);
+}
+
+// 剩餘（毫秒，不小於 0）。
+export function clockRemaining(clock, now) {
+  return Math.max(0, clockLeft(clock, now));
+}
+
+// 目前的總長：設定的分鐘數＋累計加減。
+export function clockLength(clock) {
+  return clock.minutes * MINUTE_MS + (clock.adjust ?? 0);
+}
+
+// 已進行（毫秒）＝總長 − 剩餘：暫停時不動，加減時也不動。
+export function clockElapsed(clock, now) {
+  return clockLength(clock) - clockRemaining(clock, now);
+}
+
+// 日落了沒：剩餘 ≤ 0（剛好 0 算到）。暫停中的鐘不會隨時間到點，但被減到剛好 0 也算到了。
+export function clockPassed(clock, now) {
+  return clockLeft(clock, now) <= 0;
+}
+
+// 走著的鐘的日落時刻（伺服器時間）；暫停中是 null（不會到）。
+export function clockSunsetAt(clock) {
+  return clockPaused(clock) ? null : clock.anchor + clock.remain;
+}
+
+// 寫入用：只留鐘的欄位，by 由寫入的一端補上自己的 uid。
+function clockFields(clock) {
+  return Object.fromEntries(CLOCK_FIELDS.filter((key) => clock[key] !== undefined && clock[key] !== null).map((key) => [key, clock[key]]));
+}
+
+// 開鐘要寫的欄位。stamp 是伺服器時間的佔位（store.js 傳 serverTimestamp()，測試傳數字），startedAt 與 anchor 都是它。
+export function clockStartWrite(minutes, stamp) {
+  if (!Number.isInteger(minutes) || minutes < CLOCK_MINUTES_MIN || minutes > CLOCK_MINUTES_MAX) {
+    throw new RangeError(`全場日落鐘要是 ${CLOCK_MINUTES_MIN}–${CLOCK_MINUTES_MAX} 分的整數：${minutes}`);
+  }
+  return { startedAt: stamp, minutes, anchor: stamp, remain: minutes * MINUTE_MS, adjust: 0, seq: 1 };
+}
+
+// 暫停要寫的整筆（只多 pausedAt＝stamp）；已經暫停回 null。
+export function clockPauseWrite(clock, stamp) {
+  if (clockPaused(clock)) return null;
+  return { ...clockFields(clock), pausedAt: stamp, seq: clock.seq + 1 };
+}
+
+// 繼續要寫的整筆：拿掉 pausedAt、anchor＝stamp、remain＝舊 remain −（pausedAt − 舊 anchor）（規則比對的就是這個式子）；沒暫停回 null。
+export function clockResumeWrite(clock, stamp) {
+  if (!clockPaused(clock)) return null;
+  const { pausedAt, ...rest } = clockFields(clock);
+  return { ...rest, anchor: stamp, remain: clock.remain - (pausedAt - clock.anchor), seq: clock.seq + 1 };
+}
+
+// 加減 delta 毫秒要寫的整筆，delta 先夾好：單次 ±CLOCK_STEP_MAX_MS、累計 ±CLOCK_ADJUST_MAX_MS、加減之後的剩餘（照 now 算）不小於 0。
+// 日落之後（剩餘 ≤ 0）不能調，回 null；夾完是 0（已經到累計上限、或已經是 0 還要減）也回 null。實際調了多少＝回傳的 adjust − 原本的 adjust。
+export function clockAdjustWrite(clock, delta, now) {
+  if (!Number.isFinite(delta)) throw new RangeError(`加減要是毫秒數：${delta}`);
+  const left = clockLeft(clock, now);
+  if (left <= 0) return null;
+  const adjust = clock.adjust ?? 0;
+  let step = Math.round(delta);
+  step = Math.min(CLOCK_STEP_MAX_MS, Math.max(-CLOCK_STEP_MAX_MS, step));
+  step = Math.min(CLOCK_ADJUST_MAX_MS - adjust, Math.max(-CLOCK_ADJUST_MAX_MS - adjust, step));
+  step = Math.max(-Math.floor(left), step);
+  if (step === 0) return null;
+  return { ...clockFields(clock), remain: clock.remain + step, adjust: adjust + step, seq: clock.seq + 1 };
+}
+
+// 這一回合是不是最後一回合（這一回合黑夜揭曉後按「下一階段」就算分）：原因或 null。沒開局、終局的桌是 null。
+// clock 是那一場的全場鐘（rules.js 的 clockOf），沒有給 null。玩家端的「這是最後一回合」、主持端的「下一階段（算分）」都看它。
+export function endReasonAt(game, state, settings, now, clock = null) {
+  if (!game?.seats || !state || state.phase === END_PHASE) return null;
+  return shouldEnd({ round: state.round, startedAt: game.startedAt, endAfterRound: game.endAfterRound }, settings, now, clock);
+}
+
+// 一桌的日落鐘：{ global, paused, elapsed, remaining, passed, sunsetAt, length }。有全場鐘照鐘（global: true；暫停中 sunsetAt 是 null），
+// 沒有照該桌的 startedAt（global: false）；沒開局又沒有鐘是 null。sunsetAt 是日落的伺服器時間，畫面用它排「到點重畫」。
+export function sunsetStatus(game, settings, now, clock = null) {
+  if (isClock(clock)) {
+    return {
+      global: true,
+      paused: clockPaused(clock),
+      elapsed: clockElapsed(clock, now),
+      remaining: clockRemaining(clock, now),
+      passed: clockPassed(clock, now),
+      sunsetAt: clockSunsetAt(clock),
+      length: clockLength(clock),
+    };
+  }
+  if (typeof game?.startedAt !== 'number') return null;
+  const length = scoreSettings(settings).sunsetMinutes * MINUTE_MS;
+  const { elapsed, remaining, passed } = sunsetClock(game.startedAt, settings, now);
+  return { global: false, paused: false, elapsed, remaining, passed, sunsetAt: game.startedAt + length, length };
+}
+
+// ---- 主持人控制台：批次動作的計畫 ----
+// 「全部開始」「全部開始第 2 場」「能推的全推」：只讀房間資料、不寫入。畫面拿來畫確認框（要做的桌、跳過的桌與原因、提醒），
+// 確認後原封交給 store.js 的 startAll／advanceAll，逐桌照單桌的同一條路做（每桌各自洗牌、推進帶著確認框當下的回合與階段）。
+
+const tableCountOf = (room) => room?.meta?.tableCount ?? 0;
+
+// 第 table 桌（實體桌號）的玩家 uid，照加入的時間排（同主持端的桌卡）。
+function playersOf(room, table) {
+  return Object.entries(room?.players ?? {})
+    .filter(([, player]) => player?.table === table)
+    .sort(([, a], [, b]) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0))
+    .map(([uid]) => uid);
+}
+
+// 那一場的全場鐘要不要順便開：needed＝還沒開（確認框才出現「同時開始全場日落鐘」），minutes 照設定的 sunsetMinutes。
+function clockPlan(room, match, data) {
+  return { match, needed: !room?.clock?.[match], minutes: data?.settings?.sunsetMinutes ?? null };
+}
+
+// 「全部開始」（第 1 場）：還沒開局的桌。回傳 { match: 1, start, skip, started, clock }：
+//   start   [{ key, table, uids, count, warning }]  要開的桌（warning 是人少的提醒，同單桌「開始」；沒有是 null）
+//   skip    [{ key, table, count, reason }]         跳過的桌：0 人、超過上限（reason 同單桌「開始」的停用原因）
+//   started [局號…]                                 已經開局的桌
+//   clock   { match: 1, needed, minutes }
+// 已經開了第 2 場的桌不在這裡（見 startMatch2Plan）。data 是卡牌資料（階層數決定一桌最多幾人）。
+export function startPlan(room, data) {
+  const plan = { match: 1, start: [], skip: [], started: [], clock: clockPlan(room, 1, data) };
+  for (let table = 1; table <= tableCountOf(room); table += 1) {
+    const key = activeKey(room, table);
+    if (key === null || parseKey(key).match !== 1 || !room.tables?.[key]) continue;
+    if (room.games?.[key]) {
+      plan.started.push(key);
+      continue;
+    }
+    const uids = playersOf(room, table);
+    const { error, warning } = checkSeating(uids.length, data.roles.length);
+    if (error) plan.skip.push({ key, table, count: uids.length, reason: error });
+    else plan.start.push({ key, table, uids, count: uids.length, warning });
+  }
+  return plan;
+}
+
+// picks（{ 局號: [uid…] } 或 Map，值可以是 Set）裡這一桌的勾選；沒有是 null。
+function picksFor(picks, key) {
+  const value = picks instanceof Map ? picks.get(key) : picks?.[key];
+  return value === undefined || value === null ? null : new Set(value);
+}
+
+// 「全部開始第 2 場」：已經開了第 2 場（openMatch）、還沒開局的桌。picks 是這台裝置的勾選（主持端的「勾選參加」），沒有那一桌就照預設：
+// 第 1 場有座位、而且現在還選這一桌的人（同 store.js 的 startTable）。回傳 { match: 2, start, skip, started, clock }：
+//   start   [{ key, table, include, count, absent, warning }]  include＝要入座的 uid（照第 1 場的座位號）；absent＝第 1 場坐這一桌、
+//           這場沒參加的人 [{ uid, why }]，why 是 left（已離開房間）、moved（換到別桌）或 unchecked（被勾掉）
+//   skip    [{ key, table, count, reason }]  一個都沒勾、或人數超過上限
+//   started、clock 同 startPlan（clock.match 是 2）
+export function startMatch2Plan(room, data, picks = {}) {
+  const plan = { match: MATCH_COUNT, start: [], skip: [], started: [], clock: clockPlan(room, MATCH_COUNT, data) };
+  for (let table = 1; table <= tableCountOf(room); table += 1) {
+    const key = matchKey(table, MATCH_COUNT);
+    if (!room.tables?.[key]) continue;
+    if (room.games?.[key]) {
+      plan.started.push(key);
+      continue;
+    }
+    const seats1 = room.games?.[matchKey(table)]?.seats ?? {};
+    const here = (uid) => room.players?.[uid]?.table === table;
+    const chosen = picksFor(picks, key) ?? new Set(Object.keys(seats1).filter(here));
+    const include = [];
+    const absent = [];
+    for (const [uid] of seatsInOrder(seats1)) {
+      if (chosen.has(uid)) include.push(uid);
+      else absent.push({ uid, why: !room.players?.[uid] ? 'left' : here(uid) ? 'unchecked' : 'moved' });
+    }
+    const { error, warning } = checkSeating(include.length, data.roles.length);
+    const reason = include.length === 0 ? `第 ${MATCH_COUNT} 場至少要勾 1 人參加` : error;
+    if (reason) plan.skip.push({ key, table, count: include.length, reason });
+    else plan.start.push({ key, table, include, count: include.length, absent, warning });
+  }
+  return plan;
+}
+
+// 黑夜時手牌超過上限、還沒挑好棄牌的人 [uid…]（照座位）：挑的要是這一局、這一回合，張數剛好是超過的張數（同主持端桌卡的判斷；
+// 挑的牌在不在手上要到發牌時才查）。discards 是 { uid: 挑的棄牌 }（store.js 的 watchSubmissions）。不是黑夜是 []。
+export function missingDiscards(key, game, state, settings, discards) {
+  const limit = settings?.handLimit;
+  if (!limit || !game?.seats || state?.phase !== 'night') return [];
+  return seatsInOrder(game.seats)
+    .filter(([uid, seat]) => {
+      if (!(seat.handCount > limit)) return false;
+      const pick = discards?.[uid];
+      const count = Object.keys(pick?.cards ?? {}).length;
+      return !(pick && String(pick.table) === String(key) && pick.round === state.round && count === seat.handCount - limit);
+    })
+    .map(([uid]) => uid);
+}
+
+// 「能推的全推」：只收這一步是「下一階段」、而且已經可以推的桌——日出已發牌、白晝都出完了、黃昏已揭曉或休會、黑夜已揭曉。
+// 不推的桌與原因 reason：not-started（沒開局、第 2 場未開局）、ended（已算分）、paused（全場暫停中）、not-dealt（日出還沒發牌）、
+// responding（響應窗口中）、playing（白晝還有人沒出完：不替還在出牌的人結束白晝）、not-open（黃昏或黑夜還沒開始）、voting（黃昏還沒揭曉）、
+// choosing（黑夜還沒揭曉）、ending（這一回合要算分，includeEnding 沒勾；另帶 ending＝原因）。settings 是卡牌資料的設定，now 是伺服器時間；
+// 要不要算分照 endReasonAt（帶那一場的全場鐘）。discards 給了的話，黑夜推進時沒挑棄牌的人寫進提醒。回傳 { paused, includeEnding, advance, skip }
+// （includeEnding 原樣帶著，store.js 的 advanceAll 照它決定要不要替要算分的桌算分）：
+//   advance [{ key, table, match, round, phase, to: { round, phase }, ending, deal, note }]  round、phase 是這一刻的回合與階段（執行時拿來比對）；
+//           to 是推完之後（算分是 phase: 'end'）；ending 是算分的原因或 null；deal＝推進到新回合日出（接著發牌）；note 是提醒或 null
+//   skip    [{ key, table, match, round, phase, reason, text }]
+export function advancePlan(room, settings, now, { includeEnding = false, discards = null } = {}) {
+  const paused = room?.display?.pause?.on === true;
+  const plan = { paused, includeEnding, advance: [], skip: [] };
+  for (let table = 1; table <= tableCountOf(room); table += 1) {
+    const key = activeKey(room, table);
+    const state = key === null ? null : room.tables?.[key];
+    if (!state) continue;
+    const { match } = parseKey(key);
+    const game = room.games?.[key];
+    const base = { key, table, match, round: state.round, phase: state.phase };
+    const skip = (reason, text, extra = {}) => plan.skip.push({ ...base, reason, text, ...extra });
+    if (!game?.seats) {
+      skip('not-started', match === 1 ? '還沒開局' : `第 ${match} 場還沒開局`);
+      continue;
+    }
+    if (state.phase === END_PHASE) {
+      skip('ended', '已經算分了');
+      continue;
+    }
+    if (paused) {
+      skip('paused', '全場暫停中');
+      continue;
+    }
+    let ending = null;
+    if (state.phase === 'sunrise') {
+      if ((room.deals?.[key] ?? 0) < state.round) {
+        skip('not-dealt', '日出還沒發牌');
+        continue;
+      }
+    } else if (state.phase === 'day') {
+      if (game.pending) {
+        skip('responding', '響應窗口中');
+        continue;
+      }
+      const status = dayStatus(game, state.round);
+      if (!status.done) {
+        skip('playing', `白晝還有 ${status.remaining} 人沒出完`);
+        continue;
+      }
+    } else if (state.phase === 'dusk') {
+      const stage = duskStage(game.dusk, state.round);
+      if (stage === 'none') {
+        skip('not-open', '法案還沒翻開');
+        continue;
+      }
+      if (stage === 'voting' || stage === 'closing') {
+        skip('voting', '黃昏還沒揭曉');
+        continue;
+      }
+    } else if (state.phase === 'night') {
+      const stage = nightStage(game.night, state.round);
+      if (stage === 'none') {
+        skip('not-open', '黑夜還沒開始');
+        continue;
+      }
+      if (stage !== 'revealed') {
+        skip('choosing', '黑夜還沒揭曉');
+        continue;
+      }
+      ending = endReasonAt(game, state, settings, now, clockOf(room, key));
+      if (ending && !includeEnding) {
+        skip('ending', '這一回合結束就算分（算分後不能回頭，要另外勾）', { ending });
+        continue;
+      }
+    } else {
+      skip('not-started', '還沒開局');
+      continue;
+    }
+    const to = ending ? { round: state.round, phase: END_PHASE } : nextStep(state);
+    let note = null;
+    if (state.phase === 'night' && !ending && discards) {
+      const missing = missingDiscards(key, game, state, settings, discards);
+      if (missing.length > 0) note = `沒挑棄牌的 ${missing.length} 人會被隨機棄到上限`;
+    }
+    plan.advance.push({ ...base, to, ending, deal: to.phase === 'sunrise', note });
+  }
+  return plan;
+}
+
+// ---- 主持人控制台：在等誰 ----
+
+// 這一局在黃昏表決中或黑夜選擇中時，誰送出了、誰還沒：{ kind: 'dusk' | 'night', submitted: [uid…], missing: [uid…] }（照座位）；
+// 其他時候是 null。votes、nights 是 { uid: 最新一筆 }（store.js 的 watchSubmissions，只有主持端讀得到）。算法跟 dusk.submitted、
+// night.submitted 同一個（countVotes、countChoices：這一桌、這一回合、翻開之後到截止之前的合法票），所以名單與「已送出 x／n」一定對得上。
+export function waitingFor(room, key, { votes = {}, nights = {} } = {}) {
+  const state = room?.tables?.[key];
+  const game = room?.games?.[key];
+  if (!state || !game?.seats) return null;
+  const order = seatsInOrder(game.seats).map(([uid]) => uid);
+  const split = (counted) => ({ submitted: order.filter((uid) => counted[uid]), missing: order.filter((uid) => !counted[uid]) });
+  const view = { table: String(key), round: state.round, phase: state.phase, seats: game.seats };
+  if (state.phase === 'dusk' && ['voting', 'closing'].includes(duskStage(game.dusk, state.round))) {
+    return { kind: 'dusk', ...split(countVotes({ ...view, dusk: game.dusk }, votes)) };
+  }
+  if (state.phase === 'night' && ['choosing', 'closing'].includes(nightStage(game.night, state.round))) {
+    return { kind: 'night', ...split(countChoices({ ...view, night: game.night }, nights)) };
+  }
+  return null;
+}
+
+// ---- 主持人控制台：投影端與玩家端 ----
+
+// 音效（display/sfx）的 at 比伺服器時間舊超過這麼多（毫秒）就不播：斷線重連後不補放舊的鐘聲。
+export const SFX_STALE_MS = 5000;
+
+// 投影端：這一筆音效要不要播。seq 比看過的（lastSeq）大、at 離現在（伺服器時間）不超過 SFX_STALE_MS。
+export function sfxToPlay(sfx, lastSeq, now) {
+  return Boolean(sfx) && Number.isInteger(sfx.seq) && sfx.seq > (lastSeq ?? 0) && typeof sfx.at === 'number' && now - sfx.at <= SFX_STALE_MS;
+}
+
+// 玩家端的全場暫停層（display/pause）：{ covered, until }。covered＝現在要蓋上；暫停中但自己這一桌在暫停開始前就開著的響應窗口或
+// 揭曉倒數還在跑時，先不蓋（covered: false），until＝那些倒數結束的伺服器時間（畫面先寫「這個倒數結束後全場暫停」、到點重畫）。
+// 暫停之後才開的窗口與倒數（只可能來自還開著舊網頁的人）不算。揭曉倒數什麼時候開始的不另外存：截止時間減掉倒數秒數早於暫停，
+// 就算暫停前開的。game、state 是自己那一局的局面與 tables/{局號}；settings 是卡牌資料的設定，now 是伺服器時間。
+export function pauseHold(pause, game, state, settings, now) {
+  if (pause?.on !== true) return { covered: false, until: null };
+  const since = typeof pause.at === 'number' ? pause.at : -Infinity;
+  const ends = [];
+  if (game?.pending && typeof game.pending.openedAt === 'number' && game.pending.openedAt < since) ends.push(responseDeadline(game.pending));
+  const reveals = [
+    ['dusk', Math.min(settings?.duskRevealSeconds ?? 0, DUSK_MAX_REVEAL_SECONDS)],
+    ['night', Math.min(nightSettings(settings).revealSeconds, NIGHT_MAX_REVEAL_SECONDS)],
+  ];
+  for (const [kind, seconds] of reveals) {
+    const at = game?.[kind];
+    if (state?.phase !== kind || !at || at.round !== state.round || at.result || typeof at.revealAt !== 'number') continue;
+    if (at.revealAt - seconds * 1000 < since) ends.push(at.revealAt);
+  }
+  const until = Math.max(-Infinity, ...ends.filter((end) => end > now));
+  return until > now ? { covered: false, until } : { covered: true, until: null };
+}
+
+// ---- 主持人控制台：排行與頒獎 ----
+
+// 第 table 桌（實體桌號）的排行：{ table, match, status, basis, rows }。status：idle（沒開局）、playing（比賽中，rows 是空的）、ended。
+// basis：combined（第 2 場結束，兩場合計 combineScores）、first（只打完第 1 場、第 2 場還沒開局）。rows＝[{ uid, rank, total, first, second }]
+// 照名次排（同名次照第 1 場的座位；first、second 只有兩場合計才有）。match 是目前第幾場。桌號不存在是 null。
+export function standingsOf(room, table) {
+  const parsed = parseKey(table);
+  if (!parsed || parsed.match !== 1 || !room?.tables?.[matchKey(parsed.table)]) return null;
+  const first = room.games?.[matchKey(parsed.table)];
+  const secondKey = matchKey(parsed.table, MATCH_COUNT);
+  const second = room.games?.[secondKey];
+  const base = { table: parsed.table, match: room.tables?.[secondKey] ? MATCH_COUNT : 1 };
+  if (second?.final) {
+    const rows = Object.entries(combineScores(first?.final, second.final, first?.seats)).map(([uid, row]) => ({ uid, rank: row.rank, total: row.total, first: row.first, second: row.second }));
+    return { ...base, status: 'ended', basis: 'combined', rows };
+  }
+  if (second) return { ...base, status: 'playing', basis: null, rows: [] };
+  if (first?.final) {
+    const seats = first.seats ?? {};
+    const rows = Object.entries(first.final.scores ?? {})
+      .sort(([a, x], [b, y]) => x.rank - y.rank || (seats[a]?.order ?? 0) - (seats[b]?.order ?? 0))
+      .map(([uid, score]) => ({ uid, rank: score.rank, total: score.total }));
+    return { ...base, status: 'ended', basis: 'first', rows };
+  }
+  return { ...base, status: first ? 'playing' : 'idle', basis: null, rows: [] };
+}
+
+// 「全場最高分」趣味獎：{ basis, total, winners: [{ table, uid }] }。各桌對手不同，名次照舊每桌各自排；這裡只是全場分數最高的人。
+// 有桌打完第 2 場時只比打完兩場的桌的兩場合計（basis: combined），不然比打完第 1 場的桌的第 1 場總分（first）；同分都列。沒有桌結束是 null。
+export function topScores(room) {
+  const ended = [];
+  for (let table = 1; table <= tableCountOf(room); table += 1) {
+    const standing = standingsOf(room, table);
+    if (standing?.status === 'ended') ended.push(standing);
+  }
+  const basis = ended.some((standing) => standing.basis === 'combined') ? 'combined' : 'first';
+  const rows = ended.filter((standing) => standing.basis === basis).flatMap((standing) => standing.rows.map((row) => ({ table: standing.table, uid: row.uid, total: row.total })));
+  if (rows.length === 0) return null;
+  const total = Math.max(...rows.map((row) => row.total));
+  return { basis, total, winners: rows.filter((row) => row.total === total).map(({ table, uid }) => ({ table, uid })) };
 }
