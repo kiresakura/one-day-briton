@@ -1681,16 +1681,20 @@ function playersOf(room, table) {
     .map(([uid]) => uid);
 }
 
-// 那一場的全場鐘要不要順便開：needed＝還沒開（確認框才出現「同時開始全場日落鐘」），minutes 照設定的 sunsetMinutes。
+// 那一場的全場鐘要不要順便開：needed＝還沒開（確認框才出現「同時開始全場日落鐘」），minutes 照設定的 sunsetMinutes；
+// error＝這個分鐘數開不了全場鐘（規則只收 CLOCK_MINUTES_MIN–CLOCK_MINUTES_MAX 的整數，資料檔的設定比較寬），沒問題是 null。
 function clockPlan(room, match, data) {
-  return { match, needed: !room?.clock?.[match], minutes: data?.settings?.sunsetMinutes ?? null };
+  const minutes = data?.settings?.sunsetMinutes ?? null;
+  const usable = Number.isInteger(minutes) && minutes >= CLOCK_MINUTES_MIN && minutes <= CLOCK_MINUTES_MAX;
+  const error = usable ? null : `日落鐘的設定（${minutes} 分）不是 ${CLOCK_MINUTES_MIN}–${CLOCK_MINUTES_MAX} 分的整數，開不了全場日落鐘`;
+  return { match, needed: !room?.clock?.[match], minutes, error };
 }
 
 // 「全部開始」（第 1 場）：還沒開局的桌。回傳 { match: 1, start, skip, started, clock }：
 //   start   [{ key, table, uids, count, warning }]  要開的桌（warning 是人少的提醒，同單桌「開始」；沒有是 null）
 //   skip    [{ key, table, count, reason }]         跳過的桌：0 人、超過上限（reason 同單桌「開始」的停用原因）
 //   started [局號…]                                 已經開局的桌
-//   clock   { match: 1, needed, minutes }
+//   clock   { match: 1, needed, minutes, error }（error 見 clockPlan）
 // 已經開了第 2 場的桌不在這裡（見 startMatch2Plan）。data 是卡牌資料（階層數決定一桌最多幾人）。
 export function startPlan(room, data) {
   const plan = { match: 1, start: [], skip: [], started: [], clock: clockPlan(room, 1, data) };

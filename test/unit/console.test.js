@@ -281,8 +281,13 @@ test('startPlan lists the tables to start, the skipped ones with the same reason
     { key: '4', table: 4, count: 7, reason: '一桌最多 6 人，現在有 7 人，請多的人改到別桌' },
   ]);
   assert.deepEqual(plan.started, ['5'], 'a table in its second match is not part of the first-match plan');
-  assert.deepEqual(plan.clock, { match: 1, needed: true, minutes: 75 });
+  assert.deepEqual(plan.clock, { match: 1, needed: true, minutes: 75, error: null });
   assert.equal(startPlan({ ...room, clock: { 1: started(75) } }, data).clock.needed, false);
+  // 資料檔的日落鐘比規則寬（1 分以上就收）：全場鐘只收 10–180 分的整數，計畫先說開不了。
+  for (const minutes of [5, 0.0001, 181]) {
+    const short = startPlan(room, { ...data, settings: { ...settings, sunsetMinutes: minutes } }).clock;
+    assert.equal(short.error, `日落鐘的設定（${minutes} 分）不是 10–180 分的整數，開不了全場日落鐘`, String(minutes));
+  }
   assert.deepEqual(startPlan(roomWith({ tableCount: 2, tables: { 1: { round: 1, phase: 'sunrise' }, 2: { round: 1, phase: 'sunrise' } } }), data).skip.map(({ key }) => key), ['1', '2']);
 });
 
@@ -310,7 +315,7 @@ test('startMatch2Plan takes this device’s picks or the default, and names who 
   ]);
   assert.deepEqual(plan.started, ['2-2']);
   assert.deepEqual(plan.skip, []);
-  assert.deepEqual(plan.clock, { match: 2, needed: true, minutes: 75 });
+  assert.deepEqual(plan.clock, { match: 2, needed: true, minutes: 75, error: null });
   const picked = startMatch2Plan(room, data, { '1-2': ['b', 'c', 'stranger'] });
   assert.deepEqual(picked.start[0].include, ['b', 'c'], 'picks are kept to the first-match seats, in seat order');
   assert.deepEqual(picked.start[0].absent, [

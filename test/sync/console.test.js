@@ -692,3 +692,108 @@ test('start all opens every table that can start and then the room clock; advanc
   room = await watchers.host.until((value) => value.clock?.[2] && value.games?.['2-2'], 'the second match started with its own clock');
   assert.equal(room.clock[2].seq, 1);
 });
+
+// 這台估的伺服器時間偏一點（主持端連上時量的 .info/serverTimeOffset 不準）：只在這一段把 Date.now 挪 shift 毫秒。
+async function skewed(shift, run) {
+  const realNow = Date.now;
+  Date.now = () => realNow() + shift;
+  try {
+    return await run();
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test('the full pause always goes in, even when a clock this host thinks is still running has just set on the server', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await startClock(host, code, 1, 10);
+  await adjustClock(host, code, 1, -10 * MINUTE); // 只剩約 1.5 秒
+  const clock = await read(host, `rooms/${code}/clock/1`);
+  await untilServerTime(host, clock.anchor + clock.remain + 500); // 伺服器那邊已經日落半秒
+  // 這台估的時間慢 3 秒：以為還剩 2.5 秒，把鐘放進暫停那一筆，整筆被規則拒；放寬再試，暫停一定寫得進去。
+  const result = await skewed(-3000, () => setPause(host, code, true));
+  assert.deepEqual(result, { changed: true, seq: 1, clocks: [] }, 'the pause went in without the clock');
+  assert.equal((await read(host, `rooms/${code}/display/pause`)).on, true);
+  assert.equal((await read(host, `rooms/${code}/clock/1`)).seq, 2, 'the clock that had already set was left as it was');
+});
+
+test('no room clock starts during the full pause, not by hand and not as the last step of start all', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await dayTable(code, data); // 第 2 桌已經開局：計畫裡有已開局的桌
+  await setPause(host, code, true);
+  await assert.rejects(startClock(host, code, 1, 75), codeOf('paused'));
+  const plan = startPlan(await read(host, `rooms/${code}`), data);
+  assert.deepEqual([plan.start.length, plan.started, plan.clock.needed], [0, ['2'], true]);
+  const result = await startAll(host, code, plan, data, { clock: true });
+  assert.deepEqual(result.results, []);
+  assert.equal(result.clock.error.code, 'paused');
+  assert.equal(await read(host, `rooms/${code}/clock/1`), null, 'no clock is running through the pause');
+  await setPause(host, code, false);
+  assert.equal((await startClock(host, code, 1, 75)).started, true, 'after resuming it starts');
+});
+
+test('advance all scores only the tables the confirm box showed as scoring; a table that reaches sunset after the plan is held', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await joinRoom(outsider, code, 'Solo', 4);
+  await dayTable(code, data);
+  assert.deepEqual(await startTable(host, code, 4, data, seededRandom(21)), { started: true });
+  await advanceTable(host, code, 4, { round: 1, phase: 'sunrise' });
+  await nightRevealed(code, 1);
+  await nightRevealed(code, 1, { key: 4 });
+  await setEndAfterRound(host, code, 2, true); // 第 2 桌這一回合要算分；第 4 桌不用
+  await startClock(host, code, 1, 10);
+  const plan = advancePlan(await read(host, `rooms/${code}`), data.settings, serverTime(host), { includeEnding: true });
+  assert.deepEqual(plan.advance.map(({ key, ending, to }) => [key, ending, to.phase]), [['2', 'host', 'end'], ['4', null, 'sunrise']]);
+  // 確認框打開之後全場鐘才到點：第 4 桌在框上寫的是「→ 日出」，不能替它算分。
+  await adjustClock(host, code, 1, -10 * MINUTE);
+  const clock = await read(host, `rooms/${code}/clock/1`);
+  await untilServerTime(host, clock.anchor + clock.remain + 100);
+  const { results } = await advanceAll(host, code, plan, data);
+  assert.deepEqual(
+    results.map(({ key, advanced, ended, held, reason, error }) => [key, advanced, ended, held, reason, error]),
+    [
+      ['2', true, true, false, 'sunset', null],
+      ['4', false, false, true, 'sunset', null],
+    ],
+  );
+  assert.deepEqual([await read(host, `rooms/${code}/tables/4/phase`), await read(host, `rooms/${code}/games/4/final`)], ['night', null]);
+});
+
+test('resuming the full pause leaves alone a clock that was resumed and paused again by hand during the pause', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await startClock(host, code, 1, 75);
+  assert.deepEqual((await setPause(host, code, true)).clocks, ['1']);
+  assert.equal((await resumeClock(host, code, 1)).changed, true, 'by hand during the pause');
+  assert.equal((await pauseClock(host, code, 1)).changed, true, 'and paused again by hand');
+  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [] });
+  assert.equal(typeof (await read(host, `rooms/${code}/clock/1`)).pausedAt, 'number', 'still paused: the host paused it');
+});
+
+test('a sound refused at the one-second edge comes back as too-soon at once, even when this host thought a second had passed', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await playSfx(host, code, 'bell');
+  const { at } = await read(host, `rooms/${code}/display/sfx`);
+  await untilServerTime(host, at + 600);
+  // 這台估的時間快 0.6 秒：以為已經過了 1.2 秒，送出去被規則拒（伺服器那邊才 0.6 秒）。
+  const startedAt = Date.now();
+  await skewed(600, () => assert.rejects(playSfx(host, code, 'gavel'), codeOf('too-soon')));
+  assert.ok(Date.now() - startedAt < 1500, 'answered without waiting for the server');
+  assert.equal((await read(host, `rooms/${code}/display/sfx`)).seq, 1);
+});
+
+test('the screen puts its report back when the server removes it for an older connection', TIMEOUT, async (t) => {
+  const { code, watchers } = await consoleRoom(t);
+  const screenSession = await connect('c-screen2');
+  const screen = trackScreen(screenSession, code, { audio: true });
+  // 先停回報、再關連線（連線關掉之後再對它下指令會一直等不到回應）。
+  t.after(async () => {
+    await screen.stop();
+    await disconnect(screenSession);
+  });
+  const first = await watchers.host.until((room) => room.screens?.[screenSession.uid]?.audio === true, 'the console sees the screen');
+  const before = first.screens[screenSession.uid].at;
+  // 同一個身分較早的連線斷開時，伺服器代為刪除的會是同一筆：直接刪掉來模擬。
+  await remove(ref(screenSession.db, `rooms/${code}/screens/${screenSession.uid}`));
+  const back = await watchers.host.until((room) => room.screens?.[screenSession.uid]?.at > before, 'the report is back');
+  assert.equal(back.screens[screenSession.uid].audio, true);
+});
