@@ -1,0 +1,2225 @@
+/* 投影畫面（play/?view=screen）：只在投影網址由 js/ui/screen.js 載入，手機與主持端不載。
+   固定大小的舞台（16:9＝1920×1080；視窗接近 4:3 時換成 1440×1080 的 4:3 版面，data-layout="4x3"），整個舞台用 transform: scale() 縮到視窗。
+   1080 高時最小字 22px（4:3 版 23px，1024×768 時約 16px）、主要資訊 28px 以上；四邊留 64px 安全邊（投影機會吃邊）。
+   顏色只用 tokens.css 的變數（夜色底＋羊皮紙卡）；狀態都有字或記號，不只靠顏色。 */
+
+html.is-projector,
+html.is-projector body {
+  overflow: hidden;
+  background: var(--night-head);
+}
+
+.projector {
+  --pj-safe: 64px;
+  --pj-min: 22px;
+  --pj-broadcast: 70px;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  background: #0a0f19;
+  color: var(--night-ink);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.projector[data-layout='4x3'] {
+  --pj-min: 23px;
+}
+
+.projector *,
+.projector *::before,
+.projector *::after {
+  box-sizing: border-box;
+}
+
+/* 重設用 :where()（權重 0），不會蓋過下面各元件自己的 margin、padding、字型。 */
+:where(.projector) :where(p, h1, h2, ol, ul, li) {
+  margin: 0;
+  padding: 0;
+}
+
+:where(.projector) :where(ol, ul) {
+  list-style: none;
+}
+
+:where(.projector) :where(button) {
+  font: inherit;
+  cursor: pointer;
+}
+
+.projector [hidden] {
+  display: none !important;
+}
+
+.projector-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  overflow: hidden;
+  background: radial-gradient(ellipse 62% 58% at 50% 46%, var(--night-raised) 0%, color-mix(in srgb, var(--night-raised) 45%, var(--night-head)) 55%, var(--night-head) 100%);
+}
+
+.projector-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.projector-broadcast,
+.projector-corner {
+  pointer-events: none;
+}
+
+.projector-corner :is(button) {
+  pointer-events: auto;
+}
+
+/* 場景的內容放在安全邊以內；有廣播條時底部讓出廣播條的高度。 */
+.projector-safe {
+  position: absolute;
+  inset: var(--pj-safe);
+  display: flex;
+  flex-direction: column;
+}
+
+.projector.has-broadcast .projector-safe {
+  bottom: calc(var(--pj-safe) + var(--pj-broadcast) + 20px);
+}
+
+.projector-bg,
+.projector-bg-video,
+.projector-night,
+.projector-veil {
+  position: absolute;
+  inset: 0;
+}
+
+.projector-bg {
+  background-size: cover;
+  background-position: center;
+  filter: saturate(0.85);
+}
+
+.projector-bg-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.projector-night {
+  background: radial-gradient(ellipse 62% 58% at 50% 46%, var(--night-raised) 0%, color-mix(in srgb, var(--night-raised) 45%, var(--night-head)) 55%, var(--night-head) 100%);
+}
+
+.projector-night::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('../assets/ui/parchment-texture.webp') 0 0 / 640px 640px repeat;
+  opacity: 0.05;
+}
+
+.projector-night-awards {
+  background: radial-gradient(ellipse 55% 60% at 50% 42%, color-mix(in srgb, var(--gold) 22%, var(--night-raised)) 0%, var(--night-raised) 45%, var(--night-head) 100%);
+}
+
+.projector-veil {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--night-head) 62%, transparent) 0%, color-mix(in srgb, var(--night-head) 88%, transparent) 100%);
+}
+
+.projector-veil-title {
+  background: radial-gradient(ellipse 70% 70% at 50% 46%, color-mix(in srgb, var(--night-head) 45%, transparent) 0%, color-mix(in srgb, var(--night-head) 92%, transparent) 78%);
+}
+
+.projector-latin {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 28px;
+  letter-spacing: 0.3em;
+  color: var(--night-cta);
+}
+
+.projector-eyebrow {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 40px;
+  letter-spacing: 0.18em;
+  color: var(--night-accent);
+}
+
+.projector-page {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  font-size: 26px;
+  line-height: 32px;
+  color: var(--night-accent);
+}
+
+/* ---------- 標題頁 ---------- */
+
+.projector-title {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.projector-title-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 8px 0 44px;
+}
+
+.projector-title-name {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 168px;
+  line-height: 1.12;
+  letter-spacing: 0.08em;
+  padding-left: 0.08em;
+  color: var(--night-cta);
+  text-shadow: 0 4px 0 color-mix(in srgb, var(--night-head) 80%, transparent), 0 0 48px color-mix(in srgb, var(--night-cta) 25%, transparent);
+}
+
+.projector-title-sub {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 64px;
+  line-height: 1.25;
+  letter-spacing: 0.2em;
+  padding-left: 0.2em;
+  color: var(--night-ink);
+}
+
+.projector-join {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  padding: 28px 52px 32px;
+  border: 2px solid var(--gold);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--night-head) 78%, transparent);
+  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--night-head) 55%, transparent), inset 0 0 0 6px color-mix(in srgb, var(--gold) 30%, transparent);
+}
+
+.projector-join-label {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 30px;
+  letter-spacing: 0.4em;
+  padding-left: 0.4em;
+  color: var(--night-accent);
+}
+
+.projector-join-code {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 150px;
+  line-height: 1.05;
+  letter-spacing: 0.14em;
+  padding-left: 0.14em;
+  color: var(--night-cta);
+}
+
+.projector-join-how {
+  margin-top: 10px;
+  font-size: 32px;
+  line-height: 42px;
+  color: var(--night-ink);
+}
+
+.projector-join-url {
+  font-weight: 700;
+  color: var(--night-cta);
+}
+
+.projector-qr {
+  flex: none;
+  width: 248px;
+  height: 248px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: #fff;
+}
+
+.projector-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.projector[data-layout='4x3'] .projector-title-name {
+  font-size: 132px;
+}
+
+.projector[data-layout='4x3'] .projector-title-sub {
+  font-size: 52px;
+}
+
+.projector[data-layout='4x3'] .projector-title-main {
+  margin-bottom: 36px;
+}
+
+.projector[data-layout='4x3'] .projector-join {
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 40px 28px;
+}
+
+.projector[data-layout='4x3'] .projector-join.has-qr {
+  flex-direction: row;
+  gap: 32px;
+}
+
+.projector[data-layout='4x3'] .projector-join-code {
+  font-size: 120px;
+}
+
+.projector[data-layout='4x3'] .projector-join-how {
+  font-size: 30px;
+}
+
+.projector[data-layout='4x3'] .projector-qr {
+  width: 216px;
+  height: 216px;
+}
+
+/* 開場影片（素材）與佔位：終局圖慢慢放大＋標題，播完回到標題頁。 */
+.projector-video {
+  z-index: 1;
+  background: #000;
+}
+
+.projector-video-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.projector-opening {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  animation: projector-fade-out 1.2s ease-in 12.8s forwards;
+}
+
+.projector-opening-image {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  animation: projector-zoom 14s ease-out forwards;
+}
+
+.projector-opening-veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 70% at 50% 50%, transparent 0%, color-mix(in srgb, #000 70%, transparent) 100%);
+}
+
+.projector-opening-title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  opacity: 0;
+  animation: projector-fade-in 2.4s ease-out 3s forwards;
+}
+
+.projector-opening-title span {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 176px;
+  letter-spacing: 0.08em;
+  color: var(--night-cta);
+  text-shadow: 0 6px 24px #000;
+}
+
+.projector-opening-title small {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 64px;
+  letter-spacing: 0.2em;
+  color: var(--night-ink);
+  text-shadow: 0 4px 16px #000;
+}
+
+.projector-opening-mark {
+  position: absolute;
+  left: var(--pj-safe);
+  bottom: 24px;
+  font-size: var(--pj-min);
+  color: var(--night-ink-3);
+}
+
+@keyframes projector-zoom {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.18);
+  }
+}
+
+@keyframes projector-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes projector-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ---------- 規則說明 ---------- */
+
+.projector-rules {
+  justify-content: center;
+}
+
+.projector-rules-title {
+  margin: 10px 0 48px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 88px;
+  line-height: 1.15;
+  color: var(--night-cta);
+}
+
+.projector-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+}
+
+.projector-flow-step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 330px;
+  padding: 40px 32px 36px;
+  overflow: hidden;
+  border: 2px solid var(--card-frame);
+  border-radius: var(--r-lg);
+  background: var(--card-bg) url('../assets/ui/parchment-texture.webp') 0 0 / 640px 640px repeat;
+  background-blend-mode: multiply;
+  color: var(--card-ink);
+  box-shadow: 0 16px 34px color-mix(in srgb, var(--night-head) 75%, transparent);
+}
+
+.projector-flow-step::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 12px;
+  background: var(--tone, var(--gold));
+}
+
+.projector-flow-latin {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 24px;
+  letter-spacing: 0.2em;
+  opacity: 0.85;
+}
+
+.projector-flow-name {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 76px;
+  line-height: 1.15;
+}
+
+.projector-flow-text {
+  font-size: 34px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--card-ink-2);
+}
+
+.projector-flow-arrow {
+  align-self: center;
+  font-size: 56px;
+  font-weight: 700;
+  color: var(--night-cta);
+}
+
+.projector-rules-foot {
+  margin-top: 40px;
+  font-size: 32px;
+  line-height: 44px;
+  color: var(--night-ink);
+}
+
+.projector .is-dawn {
+  --tone: var(--dawn-accent);
+}
+
+.projector .is-day {
+  --tone: var(--day-accent);
+}
+
+.projector .is-dusk {
+  --tone: var(--dusk-head);
+}
+
+.projector .is-night {
+  --tone: var(--night-rule);
+}
+
+.projector-tip-phase {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-top: 28px;
+  padding: 10px 28px 12px;
+  border: 2px solid var(--gold);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone, var(--gold)) 70%, var(--night-head));
+  color: var(--night-cta);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.2;
+}
+
+.projector-tip-text {
+  margin-top: 44px;
+  max-width: 1560px;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 68px;
+  line-height: 1.5;
+  color: var(--night-cta);
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--night-head) 80%, transparent);
+}
+
+.projector[data-layout='4x3'] .projector-rules-title {
+  font-size: 72px;
+  margin-bottom: 36px;
+}
+
+.projector[data-layout='4x3'] .projector-flow {
+  gap: 10px;
+}
+
+.projector[data-layout='4x3'] .projector-flow-step {
+  min-height: 300px;
+  padding: 32px 18px 24px;
+}
+
+.projector[data-layout='4x3'] .projector-flow-name {
+  font-size: 54px;
+}
+
+.projector[data-layout='4x3'] .projector-flow-text {
+  font-size: 27px;
+}
+
+.projector[data-layout='4x3'] .projector-flow-arrow {
+  font-size: 40px;
+}
+
+.projector[data-layout='4x3'] .projector-tip-text {
+  font-size: 56px;
+}
+
+/* ---------- 比賽中總覽 ---------- */
+
+.projector-overview {
+  gap: 24px;
+}
+
+.projector-head {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 24px;
+}
+
+.projector-brand-title {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 72px;
+  line-height: 84px;
+  letter-spacing: 0.04em;
+  color: var(--night-cta);
+  text-shadow: 0 2px 0 color-mix(in srgb, var(--night-head) 80%, transparent);
+}
+
+.projector-brand-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 24px;
+  margin-top: 4px;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 40px;
+  color: var(--night-ink);
+}
+
+.projector-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 560px;
+}
+
+.projector-clock-label {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 34px;
+  letter-spacing: 0.24em;
+  padding-left: 0.24em;
+  color: var(--night-accent);
+}
+
+.projector-clock-big {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 132px;
+  line-height: 112px;
+  letter-spacing: 0.02em;
+  color: var(--night-cta);
+  text-shadow: 0 0 28px color-mix(in srgb, var(--night-cta) 22%, transparent);
+}
+
+.projector-clock-big.is-text {
+  margin: 8px 0 4px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 80px;
+  line-height: 96px;
+  letter-spacing: 0.1em;
+}
+
+.projector-clock.is-paused .projector-clock-big {
+  color: var(--night-accent);
+  text-shadow: none;
+}
+
+.projector-clock.is-paused .projector-clock-label::before {
+  content: '⏸ ';
+}
+
+.projector-clock-sub {
+  font-size: 24px;
+  line-height: 30px;
+  color: var(--night-accent);
+}
+
+.projector-horizon {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 22px;
+  line-height: 28px;
+  color: var(--night-accent);
+  white-space: nowrap;
+}
+
+.projector-horizon-bar {
+  position: relative;
+  width: 560px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--night-rule);
+}
+
+.projector-horizon-done {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 45%, transparent) 0%, var(--gold) 60%, var(--night-cta) 100%);
+}
+
+.projector-horizon-sun {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--night-cta) 0 38%, var(--gold) 75%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--night-cta) 28%, transparent), 0 0 18px 7px color-mix(in srgb, var(--gold) 55%, transparent);
+}
+
+.projector-clock.is-passed .projector-horizon-sun {
+  background: radial-gradient(circle, var(--dusk-accent) 0 38%, var(--accent) 75%);
+}
+
+.projector-room {
+  justify-self: end;
+  padding: 14px 24px 15px;
+  border: 1.5px solid var(--gold);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--night-raised) 80%, transparent);
+  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--night-head) 55%, transparent), inset 0 0 0 5px color-mix(in srgb, var(--gold) 30%, transparent);
+}
+
+.projector-room-row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.projector-room-label {
+  font-size: 22px;
+  color: var(--night-accent);
+}
+
+.projector-room-code {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 52px;
+  letter-spacing: 0.08em;
+  color: var(--night-cta);
+}
+
+.projector-room-note {
+  margin-top: 4px;
+  font-size: 22px;
+  line-height: 30px;
+  color: var(--night-ink);
+  white-space: nowrap;
+}
+
+.projector-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  column-gap: 32px;
+  row-gap: 24px;
+}
+
+.projector-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 2px solid var(--card-frame);
+  border-radius: var(--r-lg);
+  background: var(--card-bg) url('../assets/ui/parchment-texture.webp') 0 0 / 640px 640px repeat;
+  background-blend-mode: multiply;
+  color: var(--card-ink);
+  box-shadow: 0 16px 34px color-mix(in srgb, var(--night-head) 75%, transparent), 0 3px 0 color-mix(in srgb, var(--card-frame) 55%, transparent);
+}
+
+.projector-card::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  z-index: 2;
+  border: 1px solid var(--card-frame-inner);
+  border-radius: calc(var(--r-lg) - 6px);
+  pointer-events: none;
+}
+
+.projector-card.is-idle {
+  background-color: var(--card-dim-bg);
+}
+
+.projector-band {
+  flex: none;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 26px;
+  white-space: nowrap;
+  background-image: linear-gradient(var(--ov), var(--ov)), var(--img, none);
+  background-size: cover;
+  background-position: center;
+}
+
+.projector-band.is-dawn {
+  --ov: color-mix(in srgb, var(--dawn-head) 85%, transparent);
+  --img: url('../assets/scenes/dawn-a.webp');
+  color: var(--dawn-ink);
+}
+
+.projector-band.is-day {
+  --ov: color-mix(in srgb, var(--day-head) 85%, transparent);
+  --img: url('../assets/scenes/day-a.webp');
+  color: var(--day-ink);
+}
+
+.projector-band.is-dusk {
+  --ov: color-mix(in srgb, var(--dusk-head) 85%, transparent);
+  --img: url('../assets/scenes/dusk-a.webp');
+  color: var(--dusk-ink);
+}
+
+.projector-band.is-night {
+  --ov: color-mix(in srgb, var(--night-head) 85%, transparent);
+  --img: url('../assets/scenes/night-a.webp');
+  color: var(--night-ink);
+  box-shadow: inset 0 3px 0 var(--gold);
+}
+
+.projector-band.is-end {
+  --ov: color-mix(in srgb, var(--end-head) 88%, transparent);
+  --img: url('../assets/scenes/finale-a.webp');
+  color: var(--end-ink);
+}
+
+.projector-band.is-idle {
+  --ov: color-mix(in srgb, var(--paper-sunk) 92%, transparent);
+  color: var(--ink-2);
+  box-shadow: inset 0 -1px 0 var(--rule-strong);
+}
+
+:root[data-art-scene='b'] .projector-band.is-dawn {
+  --img: url('../assets/scenes/dawn-b.webp');
+}
+
+:root[data-art-scene='b'] .projector-band.is-day {
+  --img: url('../assets/scenes/day-b.webp');
+}
+
+:root[data-art-scene='b'] .projector-band.is-dusk {
+  --img: url('../assets/scenes/dusk-b.webp');
+}
+
+:root[data-art-scene='b'] .projector-band.is-night {
+  --img: url('../assets/scenes/night-b.webp');
+}
+
+:root[data-art-scene='b'] .projector-band.is-end {
+  --img: url('../assets/scenes/finale-b.webp');
+}
+
+.projector-band-title {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  min-width: 0;
+}
+
+.projector-band-no {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.projector-band-sub {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.projector-band-latin {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 24px;
+  letter-spacing: 0.16em;
+  opacity: 0.9;
+}
+
+.projector-band-clock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.projector-band-clock-label {
+  font-family: var(--font-title);
+  font-size: 22px;
+  opacity: 0.85;
+}
+
+.projector-band-clock.is-passed {
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--dusk-ink);
+}
+
+.projector-card-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 22px 18px;
+}
+
+.projector-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  min-height: 0;
+}
+
+.projector-card-art {
+  position: relative;
+  flex: none;
+  width: 132px;
+  height: 132px;
+}
+
+.projector-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1.5px solid var(--card-frame);
+  border-radius: var(--r-sm);
+  background: radial-gradient(circle at 50% 40%, var(--card-frame-inner), var(--card-bg) 70%);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--card-ink) 28%, transparent);
+}
+
+.projector-art-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  mix-blend-mode: multiply;
+}
+
+.projector-art-roles .projector-art-img {
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+.projector-art-none::before {
+  content: '✶';
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 48px;
+  color: var(--card-frame);
+}
+
+.projector-seal {
+  position: absolute;
+  right: -16px;
+  bottom: -14px;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: url('../assets/ui/wax-seal.webp') center / cover, radial-gradient(circle, var(--seal-ring) 0 55%, var(--seal) 56%);
+  transform: rotate(-10deg);
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--dusk-ink);
+  text-shadow: 0 1px 0 color-mix(in srgb, var(--seal) 70%, var(--card-ink));
+}
+
+.projector-seal.is-failed {
+  filter: grayscale(0.65) brightness(0.85);
+}
+
+.projector-card-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.projector-card-kicker {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--card-ink-2);
+}
+
+.projector-card-name {
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 34px;
+  line-height: 42px;
+  color: var(--card-ink);
+  text-wrap: balance;
+}
+
+.projector-card-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin-top: 6px;
+  font-size: 27px;
+  line-height: 34px;
+  font-weight: 600;
+  color: var(--card-ink);
+}
+
+.projector-card-part {
+  max-width: 100%;
+}
+
+.projector-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 14px;
+}
+
+.projector-dots i {
+  width: 16px;
+  height: 16px;
+  border: 2.5px solid var(--card-ink);
+  border-radius: 50%;
+}
+
+.projector-dots i.is-on {
+  background: var(--card-ink);
+}
+
+.projector-count {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-left: 12px;
+}
+
+.projector-count::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--turn) * 1turn), color-mix(in srgb, var(--accent) 20%, transparent) 0);
+  -webkit-mask: radial-gradient(circle closest-side, transparent calc(100% - 4.5px), #000 calc(100% - 4px));
+  mask: radial-gradient(circle closest-side, transparent calc(100% - 4.5px), #000 calc(100% - 4px));
+}
+
+.projector-count b {
+  position: relative;
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.projector-fog {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.projector-fog-label {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 30px;
+  color: var(--card-ink-2);
+}
+
+.projector-fog-bar {
+  position: relative;
+  flex: 1;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--fog-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fog-mark) 55%, transparent);
+}
+
+.projector-fog-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px 0 0 6px;
+  background: var(--fog-fill);
+}
+
+.projector-fog-mark {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--fog-mark);
+}
+
+.projector-fog-mark.is-hit {
+  top: -6px;
+  bottom: -6px;
+  width: 5px;
+  margin-left: -2.5px;
+  border-radius: 2px;
+  background: var(--fog-mark-hit);
+  box-shadow: 0 0 0 1.5px var(--card-bg);
+}
+
+.projector-fog-value {
+  min-width: 118px;
+  text-align: right;
+  font-family: var(--font-latin), var(--font-title);
+  font-weight: 700;
+  font-size: 26px;
+  line-height: 30px;
+  color: var(--card-ink);
+}
+
+.projector-fog-value small {
+  font-size: 22px;
+}
+
+/* 迷霧越過門檻：桌牌閃一下，底部那一行換成迷霧事件名稱 10 秒。 */
+.projector-card.is-flash {
+  border-color: var(--accent);
+  animation: projector-flash 0.9s ease-in-out 3;
+}
+
+.projector-flash {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: auto -22px -18px;
+  padding: 6px 22px 8px;
+  background: var(--accent);
+  color: var(--dusk-ink);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 34px;
+}
+
+.projector-flash-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--dusk-ink);
+  border-radius: 50%;
+  font-size: 22px;
+}
+
+@keyframes projector-flash {
+  0%,
+  100% {
+    box-shadow: 0 16px 34px color-mix(in srgb, var(--night-head) 75%, transparent), 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 16px 34px color-mix(in srgb, var(--night-head) 75%, transparent), 0 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+    filter: brightness(1.12);
+  }
+}
+
+/* 4:3：頂部改成兩行（標題＋房號一行、日落鐘一行），桌牌 2 欄 3 列。 */
+.projector[data-layout='4x3'] .projector-overview {
+  gap: 16px;
+}
+
+.projector[data-layout='4x3'] .projector-head {
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'brand room' 'clock clock';
+  row-gap: 4px;
+}
+
+.projector[data-layout='4x3'] .projector-brand {
+  grid-area: brand;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 20px;
+}
+
+.projector[data-layout='4x3'] .projector-brand-title {
+  font-size: 56px;
+  line-height: 64px;
+}
+
+.projector[data-layout='4x3'] .projector-brand-sub {
+  font-size: 26px;
+  line-height: 34px;
+  gap: 0 16px;
+}
+
+.projector[data-layout='4x3'] .projector-room {
+  grid-area: room;
+  padding: 8px 18px 10px;
+}
+
+.projector[data-layout='4x3'] .projector-room-code {
+  font-size: 40px;
+  line-height: 46px;
+}
+
+.projector[data-layout='4x3'] .projector-room-note {
+  display: none;
+}
+
+.projector[data-layout='4x3'] .projector-clock {
+  grid-area: clock;
+  flex-direction: row;
+  justify-content: center;
+  gap: 24px;
+  min-width: 0;
+}
+
+.projector[data-layout='4x3'] .projector-clock-label {
+  font-size: 26px;
+}
+
+.projector[data-layout='4x3'] .projector-clock-big {
+  font-size: 88px;
+  line-height: 88px;
+}
+
+.projector[data-layout='4x3'] .projector-clock-big.is-text {
+  margin: 0;
+  font-size: 52px;
+  line-height: 64px;
+}
+
+.projector[data-layout='4x3'] .projector-clock-sub {
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-horizon {
+  margin-top: 0;
+  font-size: 23px;
+  gap: 12px;
+}
+
+.projector[data-layout='4x3'] .projector-horizon-bar {
+  width: 300px;
+}
+
+.projector[data-layout='4x3'] .projector-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  row-gap: 16px;
+}
+
+.projector[data-layout='4x3'] .projector-band {
+  height: 54px;
+  padding: 0 20px;
+}
+
+.projector[data-layout='4x3'] .projector-band-no {
+  font-size: 34px;
+}
+
+.projector[data-layout='4x3'] .projector-band-sub {
+  font-size: 26px;
+}
+
+.projector[data-layout='4x3'] .projector-band-latin,
+.projector[data-layout='4x3'] .projector-band-clock-label {
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-band-clock {
+  font-size: 28px;
+}
+
+.projector[data-layout='4x3'] .projector-card-body {
+  padding: 10px 18px 12px;
+}
+
+.projector[data-layout='4x3'] .projector-card-row {
+  gap: 16px;
+}
+
+.projector[data-layout='4x3'] .projector-card-art {
+  width: 92px;
+  height: 92px;
+}
+
+.projector[data-layout='4x3'] .projector-seal {
+  width: 56px;
+  height: 56px;
+  right: -12px;
+  bottom: -10px;
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-card-kicker {
+  font-size: 23px;
+  line-height: 26px;
+}
+
+.projector[data-layout='4x3'] .projector-card-name {
+  -webkit-line-clamp: 1;
+  font-size: 30px;
+  line-height: 36px;
+}
+
+.projector[data-layout='4x3'] .projector-card-status {
+  margin-top: 2px;
+  font-size: 25px;
+  line-height: 31px;
+}
+
+.projector[data-layout='4x3'] .projector-fog {
+  padding-top: 6px;
+}
+
+.projector[data-layout='4x3'] .projector-fog-label,
+.projector[data-layout='4x3'] .projector-fog-value small {
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-fog-value {
+  font-size: 25px;
+  min-width: 108px;
+}
+
+.projector[data-layout='4x3'] .projector-flash {
+  margin: auto -18px -12px;
+  padding: 4px 18px 6px;
+  font-size: 26px;
+}
+
+/* 4:3 版的小字一律 23px 起（1024×768 時約 16px）。 */
+.projector[data-layout='4x3'] :is(.projector-room-label, .projector-start-mark, .projector-flash-mark, .projector-band-clock-label) {
+  font-size: 23px;
+}
+
+/* ---------- 兩場合計排行 ---------- */
+
+.projector-scene-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.projector-scene-title {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 72px;
+  line-height: 84px;
+  color: var(--night-cta);
+}
+
+.projector-scene-note {
+  font-size: 26px;
+  line-height: 34px;
+  color: var(--night-accent);
+}
+
+.projector-standing-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 24px 32px;
+}
+
+.projector-standing {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 2px solid var(--card-frame);
+  border-radius: var(--r-lg);
+  background: var(--card-bg) url('../assets/ui/parchment-texture.webp') 0 0 / 640px 640px repeat;
+  background-blend-mode: multiply;
+  color: var(--card-ink);
+  box-shadow: 0 16px 34px color-mix(in srgb, var(--night-head) 75%, transparent);
+}
+
+.projector-standing.is-playing,
+.projector-standing.is-idle {
+  background-color: var(--card-dim-bg);
+}
+
+.projector-standing-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  background: color-mix(in srgb, var(--end-head) 90%, transparent);
+  color: var(--end-ink);
+}
+
+.projector-standing-table {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 38px;
+  line-height: 44px;
+}
+
+.projector-standing-basis {
+  padding: 4px 14px;
+  border: 1.5px solid var(--end-accent);
+  border-radius: 999px;
+  font-size: 22px;
+  line-height: 28px;
+}
+
+.projector-standing-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 24px;
+}
+
+.projector-standing-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  grid-template-areas: 'rank name total' 'rank split split';
+  align-items: center;
+  column-gap: 16px;
+}
+
+.projector-rank {
+  grid-area: rank;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--card-frame);
+  border-radius: 50%;
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--card-ink-2);
+}
+
+.projector-standing-row.is-rank-1 .projector-rank {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--paper-raised);
+}
+
+.projector-standing-name {
+  grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 40px;
+}
+
+.projector-standing-total {
+  grid-area: total;
+  font-family: var(--font-latin), var(--font-title);
+  font-weight: 700;
+  font-size: 34px;
+  line-height: 40px;
+}
+
+.projector-standing-total small {
+  font-family: var(--font-title);
+  font-size: 22px;
+}
+
+.projector-standing-split {
+  grid-area: split;
+  font-size: 22px;
+  line-height: 28px;
+  color: var(--card-ink-2);
+}
+
+.projector-standing-more,
+.projector-standing-wait {
+  font-size: 24px;
+  line-height: 32px;
+  color: var(--card-ink-2);
+}
+
+.projector-standing-wait {
+  margin: auto;
+  padding: 24px;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 34px;
+}
+
+.projector[data-layout='4x3'] .projector-scene-head {
+  margin-bottom: 18px;
+}
+
+.projector[data-layout='4x3'] .projector-scene-title {
+  font-size: 60px;
+  line-height: 70px;
+}
+
+.projector[data-layout='4x3'] .projector-scene-note {
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-head {
+  padding: 8px 20px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-table {
+  font-size: 32px;
+  line-height: 38px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-basis {
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-rows {
+  gap: 2px;
+  padding: 8px 20px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-row {
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  column-gap: 12px;
+}
+
+.projector[data-layout='4x3'] .projector-rank {
+  width: 40px;
+  height: 40px;
+  font-size: 23px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-name {
+  font-size: 28px;
+  line-height: 34px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-total {
+  font-size: 30px;
+  line-height: 34px;
+}
+
+.projector[data-layout='4x3'] .projector-standing-split,
+.projector[data-layout='4x3'] .projector-standing-total small {
+  font-size: 23px;
+  line-height: 26px;
+}
+
+/* ---------- 頒獎 ---------- */
+
+.projector-awards {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.projector-award-title {
+  margin: 12px 0 20px;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 150px;
+  line-height: 1.15;
+  letter-spacing: 0.12em;
+  padding-left: 0.12em;
+  color: var(--night-cta);
+  text-shadow: 0 0 48px color-mix(in srgb, var(--night-cta) 28%, transparent);
+}
+
+.projector-award-title.is-small {
+  font-size: 96px;
+  margin: 8px 0 28px;
+}
+
+.projector-award-sub {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.4;
+  color: var(--night-ink);
+}
+
+.projector-awards.is-top .projector-award-sub {
+  margin-bottom: 28px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 28px;
+  color: var(--night-accent);
+}
+
+.projector-winners {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 72px;
+}
+
+.projector-winner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.projector-badge {
+  position: relative;
+  display: block;
+  width: 220px;
+  height: 220px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 6px solid var(--gold);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, var(--card-bg), var(--card-frame) 85%);
+  box-shadow: 0 0 0 10px color-mix(in srgb, var(--gold) 25%, transparent), 0 20px 40px color-mix(in srgb, #000 55%, transparent);
+}
+
+.projector-badge-img {
+  position: absolute;
+  inset: 12%;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  mix-blend-mode: multiply;
+}
+
+.projector-winner-name {
+  max-width: 1500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 104px;
+  line-height: 1.2;
+  color: var(--night-cta);
+}
+
+.projector-winners.is-2 .projector-winner-name,
+.projector-winners.is-3 .projector-winner-name {
+  max-width: 560px;
+  font-size: 72px;
+}
+
+.projector-winner-table {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 36px;
+  color: var(--night-accent);
+}
+
+.projector-winner-total {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.3;
+  color: var(--night-ink);
+}
+
+.projector-winner-total b {
+  font-family: var(--font-latin), var(--font-title);
+  font-size: 64px;
+  color: var(--night-cta);
+}
+
+.projector-winner-split {
+  font-size: 30px;
+  line-height: 1.4;
+  color: var(--night-accent);
+}
+
+.projector-top-total {
+  margin-top: 24px;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 48px;
+  color: var(--night-ink);
+}
+
+.projector-top-total b {
+  font-family: var(--font-latin), var(--font-title);
+  font-size: 120px;
+  color: var(--night-cta);
+}
+
+.projector-award-seal {
+  position: absolute;
+  right: 120px;
+  top: 40px;
+  display: grid;
+  place-items: center;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: url('../assets/ui/wax-seal.webp') center / cover, radial-gradient(circle, var(--seal-ring) 0 55%, var(--seal) 56%);
+  transform: rotate(-12deg);
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 64px;
+  color: var(--dusk-ink);
+}
+
+.projector-awards.is-credits {
+  justify-content: flex-start;
+  text-align: left;
+  align-items: stretch;
+}
+
+.projector-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.projector-credit {
+  padding-left: 20px;
+  border-left: 3px solid var(--gold);
+  font-size: 22px;
+  line-height: 30px;
+  color: var(--night-ink);
+}
+
+.projector-credits-more {
+  margin-top: 22px;
+  font-size: 26px;
+  line-height: 36px;
+  color: var(--night-accent);
+}
+
+.projector[data-layout='4x3'] .projector-award-title {
+  font-size: 120px;
+}
+
+.projector[data-layout='4x3'] .projector-award-title.is-small {
+  font-size: 80px;
+}
+
+.projector[data-layout='4x3'] .projector-winners {
+  gap: 40px;
+}
+
+.projector[data-layout='4x3'] .projector-winner-name {
+  max-width: 1200px;
+  font-size: 88px;
+}
+
+.projector[data-layout='4x3'] .projector-winners.is-2 .projector-winner-name,
+.projector[data-layout='4x3'] .projector-winners.is-3 .projector-winner-name {
+  max-width: 400px;
+  font-size: 60px;
+}
+
+.projector[data-layout='4x3'] .projector-badge {
+  width: 180px;
+  height: 180px;
+}
+
+.projector[data-layout='4x3'] .projector-award-seal {
+  right: 40px;
+  top: 20px;
+  width: 120px;
+  height: 120px;
+  font-size: 52px;
+}
+
+.projector[data-layout='4x3'] .projector-credit {
+  font-size: 23px;
+  line-height: 29px;
+}
+
+/* 頒獎、規則換頁：簡單的揭曉動畫（淡入上移，冠軍頁的封蠟章蓋下來）。 */
+.projector-reveal {
+  animation: projector-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.projector-reveal .projector-award-seal {
+  animation: projector-stamp 0.5s cubic-bezier(0.3, 1.6, 0.5, 1) 0.9s both;
+}
+
+.projector-reveal .projector-winner-name {
+  animation: projector-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.35s both;
+}
+
+@keyframes projector-rise {
+  from {
+    opacity: 0;
+    transform: translateY(36px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes projector-stamp {
+  from {
+    opacity: 0;
+    transform: rotate(-12deg) scale(2.2);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-12deg) scale(1);
+  }
+}
+
+/* ---------- 疊層：廣播條、全場暫停 ---------- */
+
+.projector-broadcast-bar {
+  position: absolute;
+  left: var(--pj-safe);
+  right: var(--pj-safe);
+  bottom: var(--pj-safe);
+  min-height: var(--pj-broadcast);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 28px 8px 18px;
+  border-top: 2px solid var(--gold);
+  border-radius: 4px;
+  background: var(--night-raised);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--gold) 25%, transparent), 0 10px 24px color-mix(in srgb, var(--night-head) 70%, transparent);
+}
+
+.projector-broadcast-tag {
+  flex: none;
+  padding: 9px 16px;
+  border-radius: var(--r-sm);
+  background: var(--gold);
+  color: var(--night-head);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.projector-broadcast-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 34px;
+  line-height: 42px;
+  color: var(--night-cta);
+}
+
+.projector-broadcast-bar.is-long .projector-broadcast-text {
+  font-size: 30px;
+  line-height: 38px;
+}
+
+.projector-broadcast-time {
+  flex: none;
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 26px;
+  letter-spacing: 0.06em;
+  color: var(--night-accent);
+}
+
+.projector[data-layout='4x3'] .projector-broadcast-bar.is-long .projector-broadcast-text {
+  font-size: 28px;
+  line-height: 34px;
+}
+
+.projector-pause {
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--night-head) 90%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.projector.is-preview .projector-pause {
+  backdrop-filter: none;
+  background: color-mix(in srgb, var(--night-head) 94%, transparent);
+}
+
+.projector-pause-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  max-width: calc(100% - 2 * var(--pj-safe));
+  padding: 64px 96px 72px;
+  border: 3px solid var(--accent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--night-raised) 92%, transparent);
+  box-shadow: inset 0 0 0 6px color-mix(in srgb, var(--night-head) 60%, transparent), inset 0 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  text-align: center;
+}
+
+.projector-pause-icon {
+  display: flex;
+  gap: 22px;
+}
+
+.projector-pause-icon i {
+  display: block;
+  width: 30px;
+  height: 100px;
+  border-radius: 6px;
+  background: var(--night-cta);
+}
+
+.projector-pause-title {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 150px;
+  line-height: 1.15;
+  letter-spacing: 0.16em;
+  padding-left: 0.16em;
+  color: var(--night-cta);
+}
+
+.projector-pause-sub {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 48px;
+  line-height: 1.3;
+  color: var(--night-ink);
+}
+
+.projector-pause-broadcast {
+  margin-top: 12px;
+  padding: 16px 32px;
+  border-top: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.35;
+  color: var(--night-cta);
+}
+
+.projector-pause-clock {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 34px;
+  color: var(--night-accent);
+}
+
+.projector[data-layout='4x3'] .projector-pause-panel {
+  padding: 48px 56px 56px;
+}
+
+.projector[data-layout='4x3'] .projector-pause-title {
+  font-size: 120px;
+}
+
+.projector[data-layout='4x3'] .projector-pause-broadcast {
+  font-size: 34px;
+}
+
+/* ---------- 開始投影頁 ---------- */
+
+.projector-start {
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse 62% 58% at 50% 46%, var(--night-raised) 0%, var(--night-head) 100%);
+}
+
+.projector-start-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  width: 1120px;
+  max-width: calc(100% - 2 * var(--pj-safe));
+  padding: 56px 72px 48px;
+  border: 2px solid var(--card-frame);
+  border-radius: var(--r-lg);
+  background: var(--card-bg) url('../assets/ui/parchment-texture.webp') 0 0 / 640px 640px repeat;
+  background-blend-mode: multiply;
+  color: var(--card-ink);
+  box-shadow: 0 24px 60px color-mix(in srgb, #000 55%, transparent);
+  text-align: center;
+}
+
+.projector-start-panel .projector-eyebrow {
+  color: var(--card-ink-2);
+}
+
+.projector-start-code {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+}
+
+.projector-start-label {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 32px;
+  color: var(--card-ink-2);
+}
+
+.projector-start-value {
+  font-family: var(--font-latin);
+  font-weight: 700;
+  font-size: 96px;
+  line-height: 1.1;
+  letter-spacing: 0.12em;
+  color: var(--card-ink);
+}
+
+.projector-start-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-self: stretch;
+  text-align: left;
+}
+
+.projector-start-list li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 600;
+}
+
+.projector-start-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.projector-start-list .is-ok {
+  color: var(--card-ink);
+}
+
+.projector-start-list .is-wait,
+.projector-start-list .is-info {
+  color: var(--card-ink-2);
+}
+
+.projector-start-list .is-bad {
+  color: var(--accent);
+}
+
+.projector-start-button {
+  margin-top: 10px;
+  min-width: 560px;
+  padding: 26px 64px 28px;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--accent);
+  color: var(--paper-raised);
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 60px;
+  line-height: 1.1;
+  letter-spacing: 0.16em;
+  box-shadow: 0 6px 0 color-mix(in srgb, var(--accent) 60%, #000), 0 18px 32px color-mix(in srgb, #000 35%, transparent);
+}
+
+.projector-start-button:hover,
+.projector-start-button:focus-visible {
+  background: var(--accent-hover);
+}
+
+.projector-start-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.projector-start-hint {
+  font-size: 24px;
+  line-height: 34px;
+  color: var(--card-ink-2);
+}
+
+.projector-start-hint.is-warn {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.projector-start-skip {
+  padding: 8px 18px;
+  border: 0;
+  background: none;
+  color: var(--card-ink-2);
+  font-size: 24px;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
+
+.projector[data-layout='4x3'] .projector-start-panel {
+  padding: 44px 48px 40px;
+}
+
+.projector[data-layout='4x3'] .projector-start-list li {
+  font-size: 26px;
+}
+
+/* ---------- 角落 ---------- */
+
+.projector-corner {
+  z-index: 4;
+}
+
+.projector-conn {
+  position: absolute;
+  top: 14px;
+  right: var(--pj-safe);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: var(--pj-min);
+  line-height: 30px;
+  color: var(--night-ink-3);
+}
+
+.projector-conn i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.projector-conn.is-off {
+  background: var(--accent);
+  color: var(--dusk-ink);
+  font-weight: 700;
+}
+
+.projector-conn.is-off i {
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.projector-notes {
+  position: absolute;
+  left: var(--pj-safe);
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.projector-chip {
+  padding: 6px 16px;
+  border: 1.5px solid var(--night-rule);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--night-head) 85%, transparent);
+  color: var(--night-ink);
+  font-size: var(--pj-min);
+  line-height: 30px;
+  white-space: nowrap;
+}
+
+.projector-chip.is-sound {
+  border-color: var(--gold);
+  color: var(--night-cta);
+  font-weight: 700;
+}
+
+.projector-chip.is-dim {
+  color: var(--night-ink-3);
+}
+
+.projector-chip.is-warn {
+  border-color: var(--accent);
+  color: var(--dusk-ink);
+}
+
+.projector-fullscreen {
+  position: absolute;
+  right: var(--pj-safe);
+  bottom: 12px;
+  border-color: var(--gold);
+  color: var(--night-cta);
+  font-weight: 700;
+}
+
+.projector-message {
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  text-align: center;
+}
+
+.projector-message-title {
+  font-family: var(--font-title);
+  font-weight: 900;
+  font-size: 88px;
+  line-height: 1.2;
+  color: var(--night-cta);
+}
+
+.projector-message-text {
+  max-width: 1400px;
+  font-size: 32px;
+  line-height: 1.5;
+  color: var(--night-ink);
+}
+
+/* 預覽框（控制台裡縮小）與系統設了減少動態效果時：不跑動畫。 */
+.projector.is-preview *,
+.projector.is-preview *::before,
+.projector.is-preview *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+.projector.is-preview .projector-notes,
+.projector.is-preview .projector-fullscreen {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .projector *,
+  .projector *::before,
+  .projector *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}

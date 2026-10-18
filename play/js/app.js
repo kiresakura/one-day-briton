@@ -16,6 +16,9 @@ const slotParam = new URLSearchParams(location.search).get('slot') ?? '';
 const slot = /^[A-Za-z0-9_-]{1,20}$/.test(slotParam) ? slotParam : '';
 // 記住目前在哪個房間，重新整理後回到同一個房。
 const savedRoomKey = `one-day-briton:room:${slot || 'default'}`;
+// ?view=screen：投影畫面（js/ui/screen.js，只在這個網址才載入）。在照身分切畫面之前分出去：只讀房間，
+// 不寫上線狀態、不跑自動結算、不記房號。
+const projector = new URLSearchParams(location.search).get('view') === 'screen';
 
 let stopWatching = null;
 let offlineTimer = null;
@@ -157,10 +160,15 @@ loadGameData()
 
 try {
   ctx.session = await connect(slot);
-  watchConnection(ctx.session, showConnection);
-  const saved = localStorage.getItem(savedRoomKey);
-  if (isRoomCode(saved)) enterRoom(saved);
-  else show('home');
+  if (projector) {
+    const { startProjector } = await import('./ui/screen.js');
+    await startProjector(ctx.session);
+  } else {
+    watchConnection(ctx.session, showConnection);
+    const saved = localStorage.getItem(savedRoomKey);
+    if (isRoomCode(saved)) enterRoom(saved);
+    else show('home');
+  }
 } catch {
   notify('連不上遊戲伺服器，請確認網路後重新整理頁面');
 }
