@@ -1,5 +1,6 @@
 // 唯一碰 Firebase 的檔案：登入、開房、加入、訂閱、推進、主持名單、連線與上線狀態、開局與日出發牌（含日出一般事件與手牌上限）、
-// 白晝出牌與響應卡的請求與結算、黃昏的投票與揭曉、迷霧事件、黑夜的選擇與揭曉、挑棄牌、終局與計分、伺服器時間。
+// 白晝出牌與響應卡的請求與結算、黃昏的投票與揭曉、迷霧事件、黑夜的選擇與揭曉、挑棄牌、終局與計分、伺服器時間，以及主持人控制台的
+// 投影與全場指令（display）、全場日落鐘（clock）、投影端回報（screens）與批次動作。
 // 瀏覽器靠 index.html 的 import map 把 firebase/* 對到 ./vendor/firebase/，Node 測試靠 node_modules。
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
@@ -25,14 +26,25 @@ import {
 } from 'firebase/database';
 import { config } from './config.js';
 import {
+  CLOCK_ADJUST_MAX_MS,
+  CLOCK_MINUTES_MAX,
+  CLOCK_MINUTES_MIN,
   DUSK_GRACE_MS,
   END_PHASE,
   NIGHT_GRACE_MS,
   checkSeating,
+  clockAdjustWrite,
+  clockPassed,
+  clockPauseWrite,
+  clockPaused,
+  clockRemaining,
+  clockResumeWrite,
+  clockStartWrite,
   duskSettleAt,
   duskStage,
   duskStep,
   endGame,
+  isClock,
   judgeScores,
   nextEventIndex,
   nightSettings,
@@ -53,18 +65,29 @@ import {
   withFogEvents,
 } from './game.js';
 import {
+  BROADCAST_MAX_LENGTH,
   MATCH_COUNT,
   MAX_TABLES,
+  MUSIC_TRACKS,
   NAME_MAX_LENGTH,
   ROOM_CODE_LENGTH,
+  SCENE_IDS,
+  SCENE_PAGE_MAX,
+  SFX_GAP_MS,
+  SFX_IDS,
   activeKey,
+  clockOf,
   generateRoomCode,
   initialTable,
+  isHostOf,
   isRoomCode,
+  isValidBroadcast,
   isValidName,
+  isValidScene,
   isValidTable,
   matchKey,
   nextStep,
+  normalizeBroadcast,
   normalizeName,
   normalizeRoomCode,
   parseKey,
@@ -75,6 +98,9 @@ import {
 // cannot-set-start（已經有人出過牌，或第一張牌正在等響應，不能再指定起始玩家）、
 // night-not-revealed（該算分了，但黑夜還沒揭曉）、game-over（這一桌已經算分了）、no-final（這一桌還沒算分）、
 // cannot-open（兩場制：第 1 場還沒結束、還沒算分，或還有天命待判定，不能開第 2 場）、match-locked（第 2 場開了之後第 1 場已鎖定）
+// 主持人控制台：invalid-command（指令內容不合法）、conflict（別台主持端剛改過；error.latest 是最新的那一筆）、
+// rules-outdated（資料庫規則還沒更新）、rejected（被拒、原因不明）、too-soon（音效一秒內第二次）、no-clock（那一場的全場日落鐘還沒開）、
+// clock-passed（已經日落，不能再暫停或加減）、clock-limit（加減調不動）、paused（批次動作中途遇到全場暫停）
 //
 // 兩場制（M9）：吃「桌」的函式都吃局號（rules.js 的 matchKey）：1、"1" 是第 1 場，"1-2" 是第 2 場；路徑直接用局號，
 // 需要實體桌號（players、private 的 table）的地方才 parseKey。
@@ -1155,7 +1181,9 @@ function endStateOf(table, game, records) {
 // 回傳 { advanced, ended, reason, table }：ended 是 true＝這次寫了終局（reason 是 sunset、maxRounds 或 host），advanced 是 false＝這次
 // 沒有寫入（資料庫已經不是 expected，例如另一台主持端先推進或先算分了）。黑夜還沒揭曉卻該算分時報錯（畫面已經擋住「下一階段」）。
 // 兩台主持端同時算分只成一筆（version 只收＋1；規則另外擋已經終局的桌），被拒的一方等局面變了重讀，看到已經終局就回 advanced: false。
-export async function advanceOrEnd(session, code, key, expected, data) {
+// 日落鐘：那一場有全場日落鐘（rooms/{code}/clock/{場次}）時照它，沒有時照舊從該桌的 startedAt 算（game.js 的 shouldEnd）。
+// allowEnd 是 false 時，該算分的桌不寫終局，回 { advanced: false, ended: false, held: true, reason, table }（批次推進用：算分要主持人另外勾）。
+export async function advanceOrEnd(session, code, key, expected, data, { allowEnd = true } = {}) {
   const advance = async () => ({ ...(await advanceTable(session, code, key, expected)), ended: false, reason: null });
   if (expected.phase !== 'night') return advance();
   const clock = serverClock(session);
@@ -1166,8 +1194,10 @@ export async function advanceOrEnd(session, code, key, expected, data) {
     if (!tableState || tableState.round !== expected.round || tableState.phase !== expected.phase) {
       return { advanced: false, ended: false, reason: null, table: tableState ?? null };
     }
-    const reason = game?.seats ? shouldEnd({ round: tableState.round, startedAt: game.startedAt, endAfterRound: game.endAfterRound }, data.settings, clock()) : null;
+    const state = { round: tableState.round, startedAt: game?.startedAt, endAfterRound: game?.endAfterRound };
+    const reason = game?.seats ? shouldEnd(state, data.settings, clock(), clockOf(room, key)) : null;
     if (!reason) return advance();
+    if (!allowEnd) return { advanced: false, ended: false, held: true, reason, table: tableState };
     if (nightStage(game.night, tableState.round) !== 'revealed') throw new StoreError('night-not-revealed', '黑夜還沒揭曉，揭曉後才能算分');
     await readPile(session, code, key, '只有主持端可以算分');
     const { records } = await readPrivates(session, code, Object.keys(game.seats));
@@ -1446,4 +1476,365 @@ export async function setStartOrder(session, code, key, order) {
     if (isPermissionDenied(error)) throw new StoreError('permission-denied', '起始玩家沒有改成，請再按一次');
     throw error;
   }
+}
+
+// ---- 主持人控制台：投影與全場指令（display）、全場日落鐘（clock）、投影端回報（screens）、批次動作 ----
+// display/{scene,broadcast,sfx,music,pause} 與 clock/{場次} 只有主持端能寫：每一筆帶 seq（第一次 1，之後剛好＋1）與 by（自己的 uid），
+// display 另帶 at（伺服器時間）。每個指令先讀房間（有 watchRoom 時是本機快取），接在讀到的那一筆後面寫；兩台主持端同時寫，後到的
+// 被規則拒，回報 conflict。這些寫入一律單獨寫（全場暫停是 display 與 clock 一起寫），不跟遊戲的寫入放在同一筆：資料庫規則還沒發布時
+// 只有這些指令失敗（rules-outdated），開局、推進、結算都不受影響。日落鐘的欄位一律由 game.js 的 clock*Write 算（規則用同樣的式子驗算）。
+
+// 走著的日落鐘：主持端估的伺服器時間可能比實際慢一點，判斷「日落了沒」與「減到 0」時把現在當作再晚這麼多（毫秒），
+// 寫進去的剩餘才不會在伺服器那邊變成負的被規則擋下（減到底時會剩約這麼多秒）。
+const CLOCK_MARGIN_MS = 1500;
+
+function conflictError(latest) {
+  const error = new StoreError('conflict', '別台主持端剛改過，請看最新的狀態再操作');
+  error.latest = latest ?? null;
+  return error;
+}
+
+// 寫入被拒、伺服器上那一筆也沒變時的原因：不是主持端 → permission-denied；這間房從來沒有寫進過控制台的節點（舊規則下一定不存在）
+// → rules-outdated；其他（例如剛好卡在時間的邊界）→ rejected。what 是「切換投影場景」這種動作名稱。
+async function deniedReason(session, code, what) {
+  const room = await readRoom(session, code);
+  if (!isHostOf(room, session.uid)) return new StoreError('permission-denied', `只有主持端可以${what}`);
+  if (!room.display && !room.clock && !room.screens) return new StoreError('rules-outdated', `${what}要等規則更新`);
+  return new StoreError('rejected', `${what}沒有寫進去，請再按一次`);
+}
+
+// 寫 path（rooms/{code} 底下）被拒之後：等伺服器的現況，那一筆的 seq 變了＝別台剛改過（conflict，帶最新的那一筆），沒變再看 deniedReason。
+async function commandDenied(session, code, path, seq, what) {
+  const seen = await waitFor(session, `rooms/${code}/${path}`, (value) => (value?.seq ?? 0) !== seq);
+  if (seen !== undefined) return conflictError(seen);
+  return deniedReason(session, code, what);
+}
+
+// 這次指令要接在哪一筆後面：{ room, current（path 那一筆，沒有是 null）, seq（沒有是 0） }。expectSeq 給了而且對不上就丟 conflict、不寫。
+async function commandBase(session, code, path, expectSeq) {
+  const room = await readRoom(session, code);
+  const current = path.split('/').reduce((node, part) => node?.[part] ?? null, room);
+  const seq = current?.seq ?? 0;
+  if (expectSeq !== undefined && expectSeq !== null && expectSeq !== seq) throw conflictError(current);
+  return { room, current, seq };
+}
+
+// display/{part} 的一筆指令：fields 是內容，seq（＋1）、at（伺服器時間）、by 由這裡補。回傳寫入的 seq。
+async function writeDisplay(session, code, part, fields, seq, what) {
+  const next = seq + 1;
+  try {
+    await set(ref(session.db, `rooms/${code}/display/${part}`), { ...fields, seq: next, at: serverTimestamp(), by: session.uid });
+    return next;
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+    throw await commandDenied(session, code, `display/${part}`, seq, what);
+  }
+}
+
+// 切投影場景：id 是 SCENE_IDS 之一，page 是 0–SCENE_PAGE_MAX 的整數（規則、頒獎換頁；沒給就不帶）。同一個場景再送一次也會寫
+// （seq＋1，投影端可以用來重播開場影片）。expectSeq 見 commandBase。回傳 { seq }。
+export async function setScene(session, code, id, { page, expectSeq } = {}) {
+  if (!isValidScene(id, page)) throw new StoreError('invalid-command', `投影場景要是 ${SCENE_IDS.join('、')} 之一，頁數 0–${SCENE_PAGE_MAX}`);
+  const { seq } = await commandBase(session, code, 'display/scene', expectSeq);
+  const fields = page === undefined || page === null ? { id } : { id, page };
+  return { seq: await writeDisplay(session, code, 'scene', fields, seq, '切換投影場景') };
+}
+
+// 全場廣播：前後空白修剪後 1–BROADCAST_MAX_LENGTH 字（UTF-16 長度，同暱稱），新的取代舊的。回傳 { seq, text }（修剪後的）。
+export async function sendBroadcast(session, code, input) {
+  const text = normalizeBroadcast(input);
+  if (!isValidBroadcast(text)) throw new StoreError('invalid-command', `廣播請輸入 1–${BROADCAST_MAX_LENGTH} 個字`);
+  const { seq } = await commandBase(session, code, 'display/broadcast');
+  return { seq: await writeDisplay(session, code, 'broadcast', { text }, seq, '送出廣播'), text };
+}
+
+// 收回目前那一則廣播（同一則加 hidden: true）。沒有廣播或已經收回就不寫。回傳 { changed, seq }。
+export async function hideBroadcast(session, code, { expectSeq } = {}) {
+  const { current, seq } = await commandBase(session, code, 'display/broadcast', expectSeq);
+  if (!current?.text || current.hidden === true) return { changed: false, seq };
+  return { changed: true, seq: await writeDisplay(session, code, 'broadcast', { text: current.text, hidden: true }, seq, '收回廣播') };
+}
+
+// 投影端播一次音效：id 是 SFX_IDS 之一。離上一次不到 SFX_GAP_MS 丟 too-soon（規則也擋）。回傳 { seq }。
+export async function playSfx(session, code, id) {
+  if (!SFX_IDS.includes(id)) throw new StoreError('invalid-command', `音效要是 ${SFX_IDS.join('、')} 之一`);
+  const { current, seq } = await commandBase(session, code, 'display/sfx');
+  const tooSoon = (margin) => typeof current?.at === 'number' && serverTime(session) < current.at + SFX_GAP_MS + margin;
+  const soon = new StoreError('too-soon', '音效一秒只能放一次，請等一下再按');
+  if (tooSoon(0)) throw soon;
+  try {
+    return { seq: await writeDisplay(session, code, 'sfx', { id }, seq, '播放音效') };
+  } catch (error) {
+    if (error?.code === 'rejected' && tooSoon(CLOCK_MARGIN_MS)) throw soon; // 主持端估的時間比伺服器快一點
+    throw error;
+  }
+}
+
+// 背景音樂播放（on: true）或停止（false）。已經是這個狀態就不寫。回傳 { changed, seq }。
+export async function setMusic(session, code, on, { track = MUSIC_TRACKS[0], expectSeq } = {}) {
+  if (typeof on !== 'boolean' || !MUSIC_TRACKS.includes(track)) throw new StoreError('invalid-command', `音樂要是 ${MUSIC_TRACKS.join('、')}，播放或停止`);
+  const { current, seq } = await commandBase(session, code, 'display/music', expectSeq);
+  if ((current?.on === true) === on && (!on || current.track === track)) return { changed: false, seq };
+  return { changed: true, seq: await writeDisplay(session, code, 'music', { track, on }, seq, on ? '播放音樂' : '停止音樂') };
+}
+
+// 全場暫停（on: true）或恢復（false），一筆寫入 display/pause 與被它停住或恢復的全場日落鐘：暫停時同一筆停住正在走、還沒日落的鐘，
+// 記在 pause.clocks；恢復時只恢復 pause.clocks 記的、現在還停著的鐘（原本就手動暫停的鐘不動）。已經是這個狀態就不寫。
+// 鐘的那一部分被拒（例如剛好日落、別台同時調了鐘）時重讀再試；暫停那一筆被別台改了：已經是要的狀態就當作不用寫，不然丟 conflict。
+// 回傳 { changed, seq, clocks }：clocks 是這次一起停住或恢復的場次（例 ['1']）。
+export async function setPause(session, code, on, { expectSeq } = {}) {
+  if (typeof on !== 'boolean') throw new StoreError('invalid-command', '暫停要給 true 或 false');
+  const what = on ? '全場暫停' : '恢復全場';
+  for (let attempt = 1; ; attempt += 1) {
+    const { room, current, seq } = await commandBase(session, code, 'display/pause', attempt === 1 ? expectSeq : undefined);
+    if ((current?.on === true) === on) return { changed: false, seq, clocks: [] };
+    const now = serverTime(session);
+    const writes = {};
+    const clocks = [];
+    for (const match of ['1', String(MATCH_COUNT)]) {
+      const clock = room.clock?.[match];
+      if (!isClock(clock)) continue;
+      let next = null;
+      if (on) next = clockPassed(clock, now + CLOCK_MARGIN_MS) ? null : clockPauseWrite(clock, serverTimestamp());
+      else if (current?.clocks?.[match] === true) next = clockResumeWrite(clock, serverTimestamp());
+      if (!next) continue;
+      writes[`rooms/${code}/clock/${match}`] = { ...next, by: session.uid };
+      clocks.push(match);
+    }
+    const pause = { on, seq: seq + 1, at: serverTimestamp(), by: session.uid };
+    if (on && clocks.length > 0) pause.clocks = Object.fromEntries(clocks.map((match) => [match, true]));
+    writes[`rooms/${code}/display/pause`] = pause;
+    try {
+      await update(ref(session.db), writes);
+      return { changed: true, seq: seq + 1, clocks };
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      const pauseSeq = (value) => value?.display?.pause?.seq ?? 0;
+      const moved = (value) => pauseSeq(value) !== seq || clocks.some((match) => (value?.clock?.[match]?.seq ?? 0) !== room.clock[match].seq);
+      const seen = await waitFor(session, `rooms/${code}`, moved);
+      if (seen !== undefined && pauseSeq(seen) !== seq) {
+        if ((seen.display.pause.on === true) === on) return { changed: false, seq: pauseSeq(seen), clocks: [] };
+        throw conflictError(seen.display.pause);
+      }
+      if (seen === undefined) throw await deniedReason(session, code, what);
+      if (attempt >= SETTLE_ATTEMPTS) throw new StoreError('rejected', `${what}沒有寫進去，請再按一次`);
+    }
+  }
+}
+
+// 全場日落鐘的場次：1 或 2（數字或字串）→ '1'、'2'；不對丟 invalid-command。
+function clockMatch(match) {
+  const number = Number(match);
+  if (number !== 1 && number !== MATCH_COUNT) throw new StoreError('invalid-command', `全場日落鐘只有第 1、${MATCH_COUNT} 場`);
+  return String(number);
+}
+
+const noClockError = (match) => new StoreError('no-clock', `第 ${match} 場的全場日落鐘還沒開始`);
+const passedError = () => new StoreError('clock-passed', '已經日落了，不能再暫停或加減');
+
+// 寫 clock/{match} 的整筆（record 已經帶好 seq、by），回傳寫入後的那一筆（伺服器時間已經換成真的值）。被拒：別台剛改過 → conflict；
+// 照這台估的時間（多算一點餘裕）已經日落 → clock-passed；其他見 deniedReason。
+async function writeClock(session, code, match, record, seq, current, what) {
+  const path = `clock/${match}`;
+  try {
+    await set(ref(session.db, `rooms/${code}/${path}`), record);
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+    const seen = await waitFor(session, `rooms/${code}/${path}`, (value) => (value?.seq ?? 0) !== seq);
+    if (seen !== undefined) throw conflictError(seen);
+    if (current && clockPassed(current, serverTime(session) + CLOCK_MARGIN_MS)) throw passedError();
+    throw await deniedReason(session, code, what);
+  }
+  return (await get(ref(session.db, `rooms/${code}/${path}`))).val();
+}
+
+// 開第 match 場（1 或 2）的全場日落鐘，minutes 是 CLOCK_MINUTES_MIN–CLOCK_MINUTES_MAX 的整數（照 settings.sunsetMinutes）。
+// 開了之後那一場所有桌的日落都照它。已經開了就不寫（兩台同時開只成一筆）。回傳 { started, clock }：clock 是寫入後或原本的那一筆。
+export async function startClock(session, code, match, minutes) {
+  const key = clockMatch(match);
+  if (!Number.isInteger(minutes) || minutes < CLOCK_MINUTES_MIN || minutes > CLOCK_MINUTES_MAX) {
+    throw new StoreError('invalid-command', `全場日落鐘要是 ${CLOCK_MINUTES_MIN}–${CLOCK_MINUTES_MAX} 分的整數`);
+  }
+  const { current } = await commandBase(session, code, `clock/${key}`);
+  if (current) return { started: false, clock: current };
+  const path = `rooms/${code}/clock/${key}`;
+  try {
+    await set(ref(session.db, path), { ...clockStartWrite(minutes, serverTimestamp()), by: session.uid });
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+    const seen = await waitFor(session, path, (value) => value !== null);
+    if (seen !== undefined) return { started: false, clock: seen };
+    throw await deniedReason(session, code, '開始全場日落鐘');
+  }
+  return { started: true, clock: (await get(ref(session.db, path))).val() };
+}
+
+// 暫停第 match 場的全場日落鐘：已經暫停就不寫；已經日落丟 clock-passed。回傳 { changed, clock }。
+export async function pauseClock(session, code, match, { expectSeq } = {}) {
+  const key = clockMatch(match);
+  const { current, seq } = await commandBase(session, code, `clock/${key}`, expectSeq);
+  if (!isClock(current)) throw noClockError(key);
+  if (clockPaused(current)) return { changed: false, clock: current };
+  if (clockPassed(current, serverTime(session) + CLOCK_MARGIN_MS)) throw passedError();
+  const record = { ...clockPauseWrite(current, serverTimestamp()), by: session.uid };
+  return { changed: true, clock: await writeClock(session, code, key, record, seq, current, '暫停日落鐘') };
+}
+
+// 繼續：沒暫停就不寫。回傳 { changed, clock }。
+export async function resumeClock(session, code, match, { expectSeq } = {}) {
+  const key = clockMatch(match);
+  const { current, seq } = await commandBase(session, code, `clock/${key}`, expectSeq);
+  if (!isClock(current)) throw noClockError(key);
+  if (!clockPaused(current)) return { changed: false, clock: current };
+  const record = { ...clockResumeWrite(current, serverTimestamp()), by: session.uid };
+  return { changed: true, clock: await writeClock(session, code, key, record, seq, null, '繼續日落鐘') };
+}
+
+// 加減 deltaMs 毫秒（例 5 * 60000、-60000），夾在單次 ±10 分、累計 ±30 分、剩餘不小於 0（game.js 的 clockAdjustWrite；走著的鐘
+// 照「現在＋CLOCK_MARGIN_MS」算，減到底時會剩約 1.5 秒）。已經日落丟 clock-passed；完全調不動丟 clock-limit。
+// 回傳 { delta, clock }：delta 是實際調了多少毫秒（「復原」＝再調 -delta）。
+export async function adjustClock(session, code, match, deltaMs, { expectSeq } = {}) {
+  const key = clockMatch(match);
+  if (!Number.isFinite(deltaMs) || Math.round(deltaMs) === 0) throw new StoreError('invalid-command', '加減要給不是 0 的毫秒數');
+  const { current, seq } = await commandBase(session, code, `clock/${key}`, expectSeq);
+  if (!isClock(current)) throw noClockError(key);
+  const now = serverTime(session) + (clockPaused(current) ? 0 : CLOCK_MARGIN_MS);
+  if (clockPassed(current, now)) throw passedError();
+  const next = clockAdjustWrite(current, deltaMs, now);
+  if (!next) {
+    const adjust = current.adjust ?? 0;
+    const capped = deltaMs > 0 ? adjust >= CLOCK_ADJUST_MAX_MS : adjust <= -CLOCK_ADJUST_MAX_MS;
+    const why = capped ? `累計加減已經到 ${CLOCK_ADJUST_MAX_MS / 60000} 分的上限` : `只剩 ${Math.ceil(clockRemaining(current, now) / 1000)} 秒，不能再減`;
+    throw new StoreError('clock-limit', why);
+  }
+  const clock = await writeClock(session, code, key, { ...next, by: session.uid }, seq, current, '調整日落鐘');
+  return { delta: next.adjust - (current.adjust ?? 0), clock };
+}
+
+// 主持端「在等誰」：逐人訂閱入座的人（各局 games/{局號}/seats 的人）的票、黑夜的選擇與挑的棄牌（votes/{code}/{uid}、
+// nights/{code}/{uid}、discards/{code}/{uid}；不在整房掛訂閱，自動結算從伺服器重讀整房的保證不變）。有變就呼叫
+// onChange({ votes, nights, discards })（都是 { uid: 最新一筆 }），交給 game.js 的 waitingFor、missingDiscards、advancePlan。回傳停止的函式。
+export function watchSubmissions(session, code, onChange, onError = () => {}) {
+  const records = { votes: {}, nights: {}, discards: {} };
+  const listening = new Map(); // 「votes:uid」→ 取消訂閱
+  let stopped = false;
+  const emit = () => {
+    if (!stopped) onChange({ votes: { ...records.votes }, nights: { ...records.nights }, discards: { ...records.discards } });
+  };
+  const subscribe = (path, uid) => {
+    const id = `${path}:${uid}`;
+    if (listening.has(id) || stopped) return;
+    const stop = onValue(
+      ref(session.db, `${path}/${code}/${uid}`),
+      (snapshot) => {
+        records[path][uid] = snapshot.val();
+        emit();
+      },
+      onError,
+    );
+    listening.set(id, stop);
+  };
+  const stopRoom = onValue(
+    ref(session.db, `rooms/${code}`),
+    (snapshot) => {
+      for (const game of Object.values(snapshot.val()?.games ?? {})) {
+        for (const uid of Object.keys(game?.seats ?? {})) for (const path of ['votes', 'nights', 'discards']) subscribe(path, uid);
+      }
+    },
+    onError,
+  );
+  return () => {
+    stopped = true;
+    stopRoom();
+    for (const stop of listening.values()) stop();
+    listening.clear();
+  };
+}
+
+// 投影端狀態回報（可做）：寫 rooms/{code}/screens/{uid}＝{ audio, scene, at }（audio＝聲音已開，scene＝已經照著畫的 display/scene 的 seq，
+// at 是伺服器時間）。每次連上（包括斷線後重連）都先請伺服器在斷線時代為刪除，再寫入（同 trackPresence）。投影端只寫這一筆。
+// 回傳 { update(fields), stop() }：update 改內容並寫入（回傳 Promise<寫進去了沒>），stop 停止並刪掉自己那一筆。
+export function trackScreen(session, code, initial = {}) {
+  const mine = ref(session.db, `rooms/${code}/screens/${session.uid}`);
+  let fields = { audio: false, ...initial };
+  let tracking = true;
+  const record = () => {
+    const next = { audio: fields.audio === true, at: serverTimestamp() };
+    if (Number.isInteger(fields.scene) && fields.scene >= 0) next.scene = fields.scene;
+    return next;
+  };
+  const write = () => (tracking ? set(mine, record()).then(() => true, () => false) : Promise.resolve(false));
+  const stopConnection = watchConnection(session, (connected) => {
+    if (!connected || !tracking) return;
+    onDisconnect(mine)
+      .remove()
+      .then(write)
+      .catch(() => {}); // 房間不見了（或規則還沒更新）才會被拒
+  });
+  return {
+    update(next = {}) {
+      fields = { ...fields, ...next };
+      return write();
+    },
+    async stop() {
+      tracking = false;
+      stopConnection();
+      await Promise.all([onDisconnect(mine).cancel(), remove(mine)]).catch(() => {});
+    },
+  };
+}
+
+// 「全部開始」「全部開始第 2 場」：照 game.js 的 startPlan／startMatch2Plan 逐桌呼叫 startTable（等同單桌「開始」，每桌各自洗牌；
+// 第 2 場帶各桌的 include），一桌失敗不影響別桌；中途斷掉時已開的保留，再照新的計畫做一次只會開剩下的。clock 是 true、計畫說那一場的
+// 全場鐘還沒開、而且至少有一桌已經開局時，最後開全場日落鐘（startClock）。全場暫停中的桌不開（回 paused）。
+// onProgress({ done, total, key, result }) 每做完一桌呼叫一次。回傳 { results: [{ key, table, started, error }], clock: { started, error } | null }。
+export async function startAll(session, code, plan, data, { random, clock = false, onProgress = () => {} } = {}) {
+  const results = [];
+  for (const item of plan.start) {
+    let result = { key: item.key, table: item.table, started: false, error: null };
+    try {
+      const room = await readRoom(session, code);
+      if (room.display?.pause?.on === true) throw new StoreError('paused', '全場暫停中，沒有開局');
+      const { started } = await startTable(session, code, item.key, data, random, plan.match === 1 ? {} : { include: item.include });
+      result = { ...result, started };
+    } catch (error) {
+      result = { ...result, error };
+    }
+    results.push(result);
+    onProgress({ done: results.length, total: plan.start.length, key: item.key, result });
+  }
+  let clockResult = null;
+  const anyStarted = plan.started.length > 0 || results.some((result) => result.started);
+  if (clock && plan.clock?.needed && anyStarted) {
+    try {
+      clockResult = { started: (await startClock(session, code, plan.clock.match, plan.clock.minutes)).started, error: null };
+    } catch (error) {
+      clockResult = { started: false, error };
+    }
+  }
+  return { results, clock: clockResult };
+}
+
+// 「能推的全推」：照 game.js 的 advancePlan 逐桌用計畫裡的回合與階段呼叫 advanceOrEnd（等同單桌「下一階段」；計畫的 includeEnding 是
+// false 時不替要算分的桌算分），推進到新回合日出的接著發牌（processSunrise）。每一桌之前重讀房間，全場暫停了就停下、剩下的桌回 paused。
+// 別台先推了（局面跟計畫不一樣）時那一桌不動：advanced 是 false、沒有錯。onProgress 同 startAll。
+// 回傳 { results: [{ key, table, advanced, ended, held, dealt, reason, error }] }：held＝這一回合要算分、這次沒推；dealt＝接著發了牌。
+export async function advanceAll(session, code, plan, data, { random, onProgress = () => {} } = {}) {
+  const results = [];
+  let paused = false;
+  for (const item of plan.advance) {
+    let result = { key: item.key, table: item.table, advanced: false, ended: false, held: false, dealt: false, reason: null, error: null };
+    try {
+      if (!paused) paused = (await readRoom(session, code)).display?.pause?.on === true;
+      if (paused) throw new StoreError('paused', '全場暫停中，沒有推');
+      const moved = await advanceOrEnd(session, code, item.key, { round: item.round, phase: item.phase }, data, { allowEnd: plan.includeEnding === true });
+      result = { ...result, advanced: moved.advanced, ended: moved.ended, held: moved.held === true, reason: moved.reason };
+      if (moved.advanced && !moved.ended && moved.table?.phase === 'sunrise') result.dealt = (await processSunrise(session, code, item.key, data, random)).dealt;
+    } catch (error) {
+      result = { ...result, error };
+    }
+    results.push(result);
+    onProgress({ done: results.length, total: plan.advance.length, key: item.key, result });
+  }
+  return { results };
 }
