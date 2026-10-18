@@ -17,7 +17,8 @@ export const USAGE = `用法：npm run bots -- --room <房號> [選項]
   --fast                 動作前只等 ${FAST_DELAY.join('-')} 毫秒（測試用，會蓋過 --delay）
   --emulator             連本機模擬器（npm run dev 開的那個）；不給就連正式站
   --name-prefix <前綴>   名字的前綴，預設「${DEFAULT_PREFIX}」（${DEFAULT_PREFIX}1、${DEFAULT_PREFIX}2…）
-  --wait <分鐘>          房間這麼久都沒有任何變動就自己結束，預設 ${DEFAULT_WAIT_MINUTES}
+  --wait <分鐘>          還沒開局、等第 2 場時，房間這麼久都沒有任何變動就自己離開，預設 ${DEFAULT_WAIT_MINUTES}
+                         （坐在還沒結束的一局裡不會自己離開）
   --help                 顯示這段說明`;
 
 export class ArgsError extends Error {

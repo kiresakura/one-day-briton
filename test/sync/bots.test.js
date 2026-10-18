@@ -1,11 +1,14 @@
 // 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只用玩家端函式；
-// 模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同 --fast），
-// 兩場都跑到終局、算出分數；主持端退回的請求由機器人自己吸收；機器人自己結束時離線；指令列在房間不存在或已經開局時什麼都不寫、
-// 按 Ctrl-C 時讓機器人離線再結束（npm run test:sync）。
+// 模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同
+// --fast），兩場都跑到終局、算出分數；主持端退回的請求由機器人自己吸收；機器人自己結束時離線，開局前
+// 結束的離開玩家名單、開了局的留著；坐在進行中的一局裡不因等太久離開；指令列在房間不存在或已經開局時什麼都不寫；入座途中、
+// 入座後按 Ctrl-C（直接跑，與 npm run bots 對整個程序群組送）都乾淨結束（npm run test:sync）。
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { combineScores, dayStatus, duskStage, nightStage, overLimit, seededRandom } from '../../play/js/game.js';
 import { loadGameData } from '../../play/js/gamedata.js';
@@ -105,6 +108,10 @@ test('the seating plan picks the open table with the fewest players and fills it
   const room = { meta: meta(3), players: players(['a', '小明', 1], ['b', '小華', 1], ['c', '阿美', 2]) };
   assert.deepEqual(plan(room), { table: 3, names: ['機器人1', '機器人2', '機器人3'], notes: ['沒有指定桌號，選第 3 桌（還沒開局、人最少的一桌）', '第 3 桌現在 0 人，補 3 個機器人到建議的開局人數（3 人）'] });
   assert.deepEqual(plan(room, { table: 1 }).names, ['機器人1'], 'two people there already');
+  // 名單上的人不論在不在線都算（手機可能只是暫時離線），離線的列出來提醒。
+  assert.ok(plan(room, { table: 1 }).notes.includes('第 1 桌名單上有 2 人離線：小明、小華（開局時一樣會排進座位）'));
+  assert.deepEqual(plan({ ...room, presence: { a: true } }, { table: 1 }).notes, ['第 1 桌名單上有 1 人離線：小華（開局時一樣會排進座位）', '第 1 桌現在 2 人，補 1 個機器人到建議的開局人數（3 人）']);
+  assert.ok(!plan({ ...room, presence: { a: true, b: true } }, { table: 1 }).notes.some((note) => note.includes('離線')), 'nobody offline');
   // 開局了的桌、開了第 2 場的桌都不收；剩下的照人數挑。
   const started = { ...room, games: { 3: { seats: {} } }, tables: { '1-2': { round: 1, phase: 'sunrise' } } };
   assert.equal(plan(started).table, 2);
@@ -169,6 +176,7 @@ test('the bots use player functions of the store only', async () => {
     'connect',
     'disconnect',
     'joinRoom',
+    'leaveRoom',
     'serverTime',
     'trackPresence',
     'watchConnection',
@@ -299,8 +307,9 @@ function autoHost(session, code, table, data, random) {
 }
 
 // 開一個 2 桌的房間，先讓一位真人坐第 1 桌，再照指令列的做法排座位（沒指定桌號：選第 2 桌）、放機器人，測試當主持端開局、
-// 一路主持到第 2 場終局。botData 是機器人用的卡牌資料（沒給就跟主持端一樣）。
-async function playBots(t, { count, data, botData = data, policy, seed }) {
+// 一路主持到第 2 場終局。botData 是機器人用的卡牌資料（沒給就跟主持端一樣）；waitMs 同 --wait；hostPause 是主持端開局後
+// 停著不動多久才開始推進。
+async function playBots(t, { count, data, botData = data, policy, seed, waitMs, hostPause = 0 }) {
   const code = await createRoom(host, 2);
   await joinRoom(person, code, '真人', 1);
   const seating = planSeats(await roomOnce(host, code), botData, { count, prefix: DEFAULT_PREFIX });
@@ -318,6 +327,7 @@ async function playBots(t, { count, data, botData = data, policy, seed }) {
         data: botData,
         delay: FAST_DELAY,
         policy,
+        waitMs,
         random: seededRandom(seed * 10 + index),
         log: (line) => lines.push(line),
         onFinal: (_, key) => finals.push(key),
@@ -325,11 +335,12 @@ async function playBots(t, { count, data, botData = data, policy, seed }) {
     ),
   );
   t.after(() => Promise.all(bots.map((bot) => bot.stop())));
-  const hosting = autoHost(host, code, seating.table, data, seededRandom(seed));
-  t.after(hosting.stop);
   const joined = await roomOnce(host, code);
   bots.forEach((bot, index) => assert.deepEqual([joined.players[bot.uid].name, joined.players[bot.uid].table], [seating.names[index], seating.table]));
   assert.deepEqual(await startTable(host, code, seating.table, data, seededRandom(seed)), { started: true });
+  if (hostPause > 0) await delay(hostPause);
+  const hosting = autoHost(host, code, seating.table, data, seededRandom(seed));
+  t.after(hosting.stop);
   const [room, results] = await Promise.all([hosting.done, Promise.all(bots.map((bot) => bot.done))]);
   return { code, table: seating.table, uids: bots.map((bot) => bot.uid), room, results, lines, finals, hostErrors: hosting.errors };
 }
@@ -371,6 +382,15 @@ test('five bots play both matches to the end when cards settle at once', GAME_TI
   assert.deepEqual(game.hostErrors, []);
 });
 
+// 開局後主持端停著不動（中場休息、講解），比 --wait 還久：坐在進行中的一局裡的機器人不走，隔一陣子印一行「還在等」，之後照常打完。
+test('seated bots in a started match wait for the host however short the wait is, say so now and then, and play on', GAME_TIMEOUT, async (t) => {
+  const game = await playBots(t, { count: 3, data: quick, seed: 4, waitMs: 2000, hostPause: 5000 });
+  assertBothMatches(game);
+  assert.ok(game.lines.some((line) => line.includes('還在等主持端或其他玩家') && line.includes('不會自己離開')), 'said it is still waiting');
+  assert.ok(game.results.every((result) => !result.left && !result.abandoned));
+  assert.deepEqual(game.hostErrors, []);
+});
+
 test('the bots take it when the host sends every card back: they try others, end their turn, and the matches still finish', GAME_TIMEOUT, async (t) => {
   const game = await playBots(t, { count: 3, data: allTodo, botData: instant, policy: { passChance: 0, passStep: 0 }, seed: 9 });
   assertBothMatches(game);
@@ -399,22 +419,34 @@ function roomUntil(session, code, predicate, label, ms = 10_000) {
   });
 }
 
-test('a bot leaves by itself when it has no seat, when nothing happens for too long, or when stopped, and takes its presence along', TIMEOUT, async () => {
-  const code = await createRoom(host, 2);
+test('a bot leaves by itself when it has no seat, when nothing happens for too long, or when stopped; it leaves the player list unless it got a seat', TIMEOUT, async () => {
+  const code = await createRoom(host, 3);
   await joinRoom(person, code, '真人', 1);
   assert.deepEqual(await startTable(host, code, 1, instant, seededRandom(2)), { started: true });
-  const start = async (name, table, waitMs = 60_000) => startBot({ session: await connect(name), code, name, table, data: instant, delay: FAST_DELAY, waitMs });
+  const lines = [];
+  const start = async (name, table, waitMs = 60_000) =>
+    startBot({ session: await connect(name), code, name, table, data: instant, delay: FAST_DELAY, waitMs, log: (line) => lines.push(line) });
   const late = await start('late', 1); // 第 1 桌已經開局：沒有座位
   const idle = await start('idle', 2, 1500); // 第 2 桌沒人開局：等太久
   const stopped = await start('stopped', 2);
-  assert.deepEqual([(await late.done).reason, (await idle.done).reason], ['no-seat', 'idle']);
-  await roomUntil(host, code, (room) => room.presence?.[stopped.uid] === true, 'the bot is online');
-  assert.equal((await stopped.stop()).reason, 'stopped');
+  const seated = await start('seated', 3); // 第 3 桌開局時有座位，之後被叫停
+  const [lateEnd, idleEnd] = [await late.done, await idle.done];
+  assert.deepEqual([lateEnd.reason, idleEnd.reason], ['no-seat', 'idle']);
+  assert.equal(idleEnd.detail, '房間 0.025 分鐘都沒有變動', 'the wait as given');
+  await roomUntil(host, code, (room) => room.presence?.[stopped.uid] === true && room.presence?.[seated.uid] === true, 'the bots are online');
+  const stoppedEnd = await stopped.stop('收到停止（測試）');
+  assert.deepEqual([stoppedEnd.reason, stoppedEnd.detail], ['stopped', '收到停止（測試）']);
+  assert.deepEqual(await startTable(host, code, 3, instant, seededRandom(3)), { started: true });
+  for (let waited = 0; !lines.some((line) => /^\S+ seated｜.*入座：座位/.test(line)) && waited < 5000; waited += 50) await delay(50);
+  assert.ok(lines.some((line) => line.includes('seated｜') && line.includes('入座：座位')), 'the bot saw the start');
+  const seatedEnd = await seated.stop();
+  assert.deepEqual([lateEnd.left, idleEnd.left, stoppedEnd.left, seatedEnd.left], [true, true, true, false]);
+  assert.deepEqual([lateEnd.abandoned, idleEnd.abandoned, stoppedEnd.abandoned, seatedEnd.abandoned], [false, false, false, true]);
   const room = await roomOnce(host, code);
-  for (const bot of [late, idle, stopped]) {
-    assert.equal(room.presence?.[bot.uid], undefined, 'offline after it leaves');
-    assert.ok(room.players[bot.uid], 'still on the player list: nothing is deleted');
-  }
+  for (const bot of [late, idle, stopped, seated]) assert.equal(room.presence?.[bot.uid], undefined, 'offline after it leaves');
+  for (const bot of [late, idle, stopped]) assert.equal(room.players[bot.uid], undefined, 'off the player list: it never got a seat');
+  assert.equal(room.players[seated.uid]?.name, 'seated', 'kept on the player list: the score sheet needs it');
+  assert.deepEqual(Object.keys(room.players).sort(), [person.uid, seated.uid].sort(), 'nobody else was removed');
 });
 
 // ---- 指令列：房間不存在、已經開局時，印出原因就結束，什麼都不寫；按 Ctrl-C 時機器人離線再結束 ----
@@ -426,6 +458,65 @@ function runCli(args) {
     execFile(process.execPath, [cli, ...args], { timeout: 20_000 }, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, stdout, stderr }));
   });
 }
+
+// 跑指令列、不等它結束：output() 是到目前為止的輸出（stdout＋stderr），until(test) 等輸出讓 test 成立（給字串就是等它出現），
+// exited 是 { code, signal }。npm 是 true 時照文件用 npm run bots 跑，而且自成一個程序群組（同終端機按 Ctrl-C：送給整個群組）。
+// 測試結束時還沒結束的一律砍掉。
+const repoDir = fileURLToPath(new URL('../../', import.meta.url));
+const npmCli = process.env.npm_execpath?.endsWith('.js') ? [process.execPath, process.env.npm_execpath] : [join(dirname(process.execPath), 'npm')];
+const running = new Set();
+after(() => {
+  for (const { child, npm } of running) {
+    try {
+      if (npm) process.kill(-child.pid, 'SIGKILL');
+      else child.kill('SIGKILL');
+    } catch {}
+  }
+});
+
+function launch(args, { npm = false } = {}) {
+  const child = npm
+    ? spawn(npmCli[0], [...npmCli.slice(1), 'run', 'bots', '--', ...args], { cwd: repoDir, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const entry = { child, npm };
+  running.add(entry);
+  let output = '';
+  const waiters = new Set();
+  const feed = (chunk) => {
+    output += chunk;
+    for (const waiter of [...waiters]) waiter();
+  };
+  child.stdout.on('data', feed);
+  child.stderr.on('data', feed);
+  const exited = new Promise((resolve) =>
+    child.on('exit', (code, signal) => {
+      running.delete(entry);
+      resolve({ code, signal });
+    }),
+  );
+  const until = (test, ms = 15_000) => {
+    const ok = typeof test === 'string' ? () => output.includes(test) : () => test(output);
+    if (ok()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waiters.delete(check);
+        reject(new Error(`timed out waiting for ${test}:\n${output}`));
+      }, ms);
+      const check = () => {
+        if (!ok()) return;
+        clearTimeout(timer);
+        waiters.delete(check);
+        resolve();
+      };
+      waiters.add(check);
+    });
+  };
+  return { child, exited, until, output: () => output };
+}
+
+const count = (text, pattern) => text.match(pattern)?.length ?? 0;
+// 最多等 ms：結束了是 { code, signal }，還沒結束是 null。
+const exitWithin = (run, ms) => Promise.race([run.exited, delay(ms).then(() => null)]);
 
 test('the command refuses a missing room and a started table without writing anything', TIMEOUT, async () => {
   const missing = await runCli(['--emulator', '--room', 'ZZZZZZ']);
@@ -446,24 +537,99 @@ test('the command refuses a missing room and a started table without writing any
 
 test('the command seats the bots it was asked for and leaves cleanly on Ctrl-C', TIMEOUT, async () => {
   const code = await createRoom(host, 1);
-  const child = spawn(process.execPath, [cli, '--emulator', '--room', code, '--count', '2', '--fast'], { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  const seated = new Promise((resolve) => {
-    child.stdout.on('data', (chunk) => {
-      output += chunk;
-      if (output.includes('都入座了')) resolve();
-    });
-  });
-  child.stderr.on('data', (chunk) => (output += chunk));
-  const exited = new Promise((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
-  await seated;
+  const run = launch(['--emulator', '--room', code, '--count', '2', '--fast']);
+  await run.until('都入座了');
   const room = await roomUntil(host, code, (value) => Object.keys(value.presence ?? {}).length === 2, 'both bots online');
   assert.deepEqual(Object.values(room.players).map((player) => [player.name, player.table]).sort(), [['機器人1', 1], ['機器人2', 1]]);
-  child.kill('SIGINT');
-  assert.equal(await exited, 130);
-  assert.match(output, /收到 Ctrl-C：機器人斷線中/);
-  assert.equal(output.match(/結束：收到停止（Ctrl-C）/g)?.length, 2);
+  run.child.kill('SIGINT');
+  assert.deepEqual(await run.exited, { code: 130, signal: null });
+  assert.match(run.output(), /收到 Ctrl-C：機器人斷線中/);
+  assert.equal(count(run.output(), /結束：收到停止（Ctrl-C），已離開玩家名單｜/g), 2, run.output());
   const after = await roomOnce(host, code);
   assert.equal(after.presence, undefined, 'both offline');
-  assert.equal(Object.keys(after.players).length, 2, 'still on the player list');
+  assert.equal(after.players, undefined, 'the table had not started: both left the player list');
+});
+
+// 入座途中按 Ctrl-C：已經入座的、正在入座的那一個都要停，幾秒內結束；房間裡沒有在線的機器人，名單上也不留。
+test('Ctrl-C while the bots are being seated stops every bot that got in, the one on its way too, and leaves nobody behind', TIMEOUT, async () => {
+  const code = await createRoom(host, 1);
+  const seen = new Map(); // 出現在玩家名單上過的機器人：uid → 名字
+  const stopWatch = watchRoom(host, code, (room) => {
+    for (const [uid, player] of Object.entries(room?.players ?? {})) seen.set(uid, player.name);
+  });
+  const run = launch(['--emulator', '--room', code, '--count', '6', '--fast']);
+  await run.until(`房間 ${code}：放 6 個`);
+  run.child.kill('SIGINT');
+  const exit = await exitWithin(run, 8000);
+  stopWatch();
+  assert.ok(exit, `still running 8 seconds after Ctrl-C:\n${run.output()}`);
+  assert.deepEqual(exit, { code: 130, signal: null });
+  const ended = [...run.output().matchAll(/^(\S+) 結束：(.*?)｜/gm)].map(([, name, detail]) => [name, detail]);
+  assert.ok(ended.length > 0, run.output());
+  assert.ok(ended.every(([, detail]) => detail === '收到停止（Ctrl-C），已離開玩家名單'), JSON.stringify(ended));
+  const stopped = ended.map(([name]) => name);
+  assert.equal(new Set(stopped).size, stopped.length, 'one line a bot');
+  for (const name of seen.values()) assert.ok(stopped.includes(name), `${name} got in and was stopped`);
+  const after = await roomOnce(host, code);
+  assert.equal(after.presence, undefined, 'no bot online');
+  assert.equal(after.players, undefined, 'nobody left on the player list');
+});
+
+// 開局前停掉（Ctrl-C、--wait 等太久）的機器人離開名單：之後再放、主持端開局時，座位上沒有離線的機器人。開局之後停掉的留在名單上。
+test('bots stopped before the start leave the player list, so a later run and the start see no dead seats; after the start they stay', { timeout: 60_000 }, async () => {
+  const code = await createRoom(host, 1);
+  const online = (number) => roomUntil(host, code, (room) => Object.keys(room.presence ?? {}).length === number, `${number} bots online`);
+  const first = launch(['--emulator', '--room', code, '--count', '2', '--fast']);
+  await first.until('都入座了');
+  await online(2);
+  first.child.kill('SIGINT');
+  assert.deepEqual(await first.exited, { code: 130, signal: null });
+  assert.equal(count(first.output(), /結束：收到停止（Ctrl-C），已離開玩家名單｜/g), 2, first.output());
+  assert.equal((await roomOnce(host, code)).players, undefined, 'off the list after Ctrl-C');
+
+  const idle = launch(['--emulator', '--room', code, '--count', '2', '--fast', '--wait', '0.05']);
+  const idleExit = await exitWithin(idle, 15_000);
+  assert.deepEqual(idleExit, { code: 0, signal: null }, idle.output());
+  assert.equal(count(idle.output(), /結束：房間 0\.05 分鐘都沒有變動，已離開玩家名單｜/g), 2, idle.output());
+  assert.equal((await roomOnce(host, code)).players, undefined, 'off the list after waiting too long');
+
+  // 一位手機離線的真人坐第 1 桌：照樣算進去、名字列出來；補 2 個機器人到 3 人。
+  await joinRoom(person, code, '真人', 1);
+  const again = launch(['--emulator', '--room', code, '--fast']);
+  await again.until('都入座了');
+  assert.match(again.output(), /第 1 桌名單上有 1 人離線：真人（開局時一樣會排進座位）/);
+  assert.match(again.output(), /第 1 桌現在 1 人，補 2 個機器人到建議的開局人數（3 人）/);
+  await online(2);
+  assert.deepEqual(await startTable(host, code, 1, fileData, seededRandom(4)), { started: true });
+  const started = await roomOnce(host, code);
+  const seats = Object.keys(started.games[1].seats);
+  const botSeats = seats.filter((uid) => uid !== person.uid);
+  assert.equal(seats.length, 3, 'the person and two bots');
+  assert.deepEqual(botSeats.map((uid) => started.players[uid].name).sort(), ['機器人1', '機器人2']);
+  for (const uid of botSeats) assert.equal(started.presence?.[uid], true, 'every bot in a seat is online');
+  await again.until((output) => count(output, /入座：座位/g) === 2);
+  again.child.kill('SIGINT');
+  assert.deepEqual(await again.exited, { code: 130, signal: null });
+  assert.equal(count(again.output(), /結束：收到停止（Ctrl-C）｜/g), 2, again.output());
+  const after = await roomOnce(host, code);
+  for (const uid of botSeats) assert.ok(after.players[uid], 'kept on the player list once seated (the score sheet needs the names)');
+  assert.equal(after.presence, undefined, 'offline');
+});
+
+// 照文件用 npm run bots 跑、像終端機一樣把 Ctrl-C 送給整個程序群組（npm 會再轉送一次）：照樣乾淨結束、以 130 結束。
+test('npm run bots stops cleanly when Ctrl-C goes to the whole process group', TIMEOUT, async () => {
+  const code = await createRoom(host, 1);
+  const run = launch(['--emulator', '--room', code, '--count', '2', '--fast'], { npm: true });
+  await run.until('都入座了');
+  await roomUntil(host, code, (room) => Object.keys(room.presence ?? {}).length === 2, 'both bots online');
+  process.kill(-run.child.pid, 'SIGINT');
+  const exit = await exitWithin(run, 10_000);
+  assert.ok(exit, `still running 10 seconds after Ctrl-C:\n${run.output()}`);
+  assert.match(run.output(), /收到 Ctrl-C：機器人斷線中/);
+  assert.doesNotMatch(run.output(), /又收到一次停止/, 'the copy npm passes on is not a second Ctrl-C');
+  assert.equal(count(run.output(), /結束：收到停止（Ctrl-C），已離開玩家名單｜/g), 2, run.output());
+  assert.deepEqual(exit, { code: 130, signal: null });
+  const after = await roomOnce(host, code);
+  assert.equal(after.presence, undefined, 'both offline');
+  assert.equal(after.players, undefined, 'both off the list');
 });

@@ -10,6 +10,8 @@ import { combinedSummary, finalSummary } from './text.mjs';
 
 // 連不上（模擬器沒開、沒有網路）時，登入與讀房間各最多等這麼久。
 const CONNECT_MS = 20_000;
+// 這麼短的時間內又收到停止訊號不算第二次：npm run 會把終端機送來的同一次 Ctrl-C 再轉送一次。
+const REPEAT_MS = 1000;
 
 function timed(promise, what) {
   let timer;
@@ -54,6 +56,43 @@ async function main() {
     return 0;
   }
 
+  // ---- 停止：Ctrl-C（SIGINT）、結束訊號（SIGTERM），或入座失敗時中止。halt 是 { code, detail }：結束碼、給機器人的結束原因 ----
+  // 第一次開始乾淨結束（入座了的機器人收好：開局前的離開玩家名單，再離線）；REPEAT_MS 內重複收到的不算；之後再收到就不等，直接結束。
+  // 在倒數、登入之前就掛好。
+  const bots = [];
+  let joining = false; // 開始入座了（在這之前停止，資料庫什麼都沒寫）
+  let halt = null;
+  let wakeHalt;
+  const halted = new Promise((resolve) => (wakeHalt = resolve));
+  const stopWith = (next) => {
+    if (halt) return;
+    halt = next;
+    wakeHalt();
+    for (const bot of bots) bot.stop(halt.detail);
+  };
+  let signalAt = null;
+  const onSignal = (signal) => {
+    const now = Date.now();
+    if (signalAt !== null && now - signalAt < REPEAT_MS) return;
+    const first = signalAt === null;
+    signalAt = now;
+    const ctrlC = signal === 'SIGINT';
+    if (!first) {
+      console.log('又收到一次停止：不等機器人收好，直接結束');
+      exit(halt?.code ?? (ctrlC ? 130 : 143));
+      return;
+    }
+    const what = ctrlC ? '收到 Ctrl-C' : '收到結束訊號（SIGTERM）';
+    const again = ctrlC ? '（卡住的話再按一次 Ctrl-C）' : '';
+    console.log(joining ? `${what}：機器人斷線中…${again}` : `${what}：還沒有入座，資料庫沒有寫入任何東西，結束`);
+    stopWith({ code: ctrlC ? 130 : 143, detail: ctrlC ? '收到停止（Ctrl-C）' : '收到停止（結束訊號）' });
+  };
+  process.on('SIGINT', () => onSignal('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  // promise 跟停止比快：先停了就回傳 halted（由呼叫的一端收好、結束）。
+  const HALTED = Symbol('halted');
+  const unlessHalted = (promise) => Promise.race([promise, halted.then(() => HALTED)]);
+
   // play/js/config.js 依頁面的網址選連線設定（Node 裡沒有網址時選模擬器）：匯入 config、store 之前先擺好網址，
   // 正式站帶 ?env=prod、模擬器帶 ?env=emu，不用改 play/。寫入之前先確認選到的是要的那一組。
   const wanted = options.emulator ? 'emu' : 'prod';
@@ -63,7 +102,8 @@ async function main() {
     console.error('連線設定跟指定的不一樣，沒有連線');
     return 1;
   }
-  console.log(`連線：${wanted === 'prod' ? '正式站' : '本機模擬器'}（專案 ${config.firebase.projectId}）`);
+  const project = config.firebase.projectId;
+  console.log(`連線：${wanted === 'prod' ? '正式站' : '本機模擬器'}（專案 ${project}）`);
 
   const [{ loadGameData }, store, { startBot }] = await Promise.all([
     import('../../play/js/gamedata.js'),
@@ -77,23 +117,33 @@ async function main() {
     return 1;
   }
 
-  // 每個機器人一個匿名身分（slot 不同就是不同玩家）。先用第一個讀房間、排座位，排得成才讓其他機器人連線、入座。
+  if (halt) return halt.code;
+
+  // 每個機器人一個匿名身分（slot 不同就是不同玩家）。先用第一個讀房間、排座位，排得成才讓其他機器人登入、入座。
   const slot = (index) => `bot-${options.room}-${index + 1}`;
   const sessions = [];
+  const closeAll = (list) => Promise.all(list.map((session) => store.disconnect(session).catch(() => {})));
   let room;
   try {
-    sessions.push(await timed(store.connect(slot(0)), '登入'));
-    room = await timed(readRoomOnce(store, sessions[0], options.room), '讀房間');
+    const first = await unlessHalted(timed(store.connect(slot(0)), '登入'));
+    if (first === HALTED) return halt.code;
+    sessions.push(first);
+    room = await unlessHalted(timed(readRoomOnce(store, first, options.room), '讀房間'));
   } catch (error) {
+    await closeAll(sessions);
     const hint = options.emulator ? '模擬器要先在另一個終端機跑 npm run dev' : '請確認網路';
     console.error(`連不上${wanted === 'prod' ? '正式站' : '本機模擬器'}（${error.message}）；${hint}。沒有寫入任何東西。`);
     return 1;
+  }
+  if (room === HALTED) {
+    await closeAll(sessions);
+    return halt.code;
   }
   let plan;
   try {
     plan = planSeats(room, data, { table: options.table, count: options.count, prefix: options.prefix });
   } catch (error) {
-    await store.disconnect(sessions[0]);
+    await closeAll(sessions);
     if (!(error instanceof PlanError)) throw error;
     console.error(`${error.message}。沒有寫入任何東西。`);
     return 1;
@@ -112,21 +162,12 @@ async function main() {
     if (match === MATCH_COUNT) for (const line of combinedSummary(latest, table)) console.log(line);
   };
 
-  const bots = [];
-  let interrupted = false;
-  const interrupt = () => {
-    if (interrupted) return;
-    interrupted = true;
-    console.log('收到 Ctrl-C：機器人斷線中…');
-    for (const bot of bots) bot.stop();
-  };
-  process.once('SIGINT', interrupt);
-  process.once('SIGTERM', interrupt);
-
+  joining = true;
   for (const [index, name] of plan.names.entries()) {
-    if (interrupted) break;
+    if (halt) break;
+    let bot;
     try {
-      const bot = await startBot({
+      bot = await startBot({
         session: sessions[index],
         code: options.room,
         name,
@@ -134,31 +175,35 @@ async function main() {
         data,
         delay: options.delay,
         waitMs: options.waitMinutes * 60_000,
+        waitLabel: String(options.waitMinutes),
         log: (line) => console.log(line),
         onFinal,
       });
-      bots.push({ name, ...bot });
     } catch (error) {
       console.error(`${name} 沒有入座：${error.message}`);
-      interrupt();
+      if (!halt) console.log(bots.length > 0 ? '中止：已經入座的機器人離開中…' : '中止：沒有機器人入座');
+      stopWith({ code: 1, detail: `中止（${name} 沒有入座）` });
+      break;
     }
+    bots.push({ name, ...bot });
+    if (halt) bot.stop(halt.detail); // 入座途中收到停止：正在入座的這一個也要停
   }
-  // 沒能開始的機器人（入座失敗或中途按了 Ctrl-C）直接斷線。
-  await Promise.all(sessions.slice(bots.length).map((session) => store.disconnect(session).catch(() => {})));
-  if (bots.length > 0 && !interrupted) console.log('都入座了，等主持端開局。要提早結束請按 Ctrl-C。');
+  // 沒能開始的機器人（入座失敗或中途停止）直接斷線。
+  await closeAll(sessions.slice(bots.length));
+
+  if (bots.length > 0 && !halt) console.log('都入座了，等主持端開局。要提早結束請按 Ctrl-C。');
 
   const results = await Promise.all(bots.map((bot) => bot.done));
-  let failed = false;
   results.forEach((result, index) => {
     const { stats } = result;
-    failed ||= result.reason === 'error';
     console.log(
-      `${bots[index].name} 結束：${result.detail}｜出牌 ${stats.plays}、結束這一輪 ${stats.passes}、響應 ${stats.responses}、` +
-        `表決 ${stats.votes}、黑夜 ${stats.nights}、挑棄牌 ${stats.discards}、被退回 ${stats.rejected}、送不出去 ${stats.failed}`,
+      `${bots[index].name} 結束：${result.detail}${result.left ? '，已離開玩家名單' : ''}｜出牌 ${stats.plays}、結束這一輪 ${stats.passes}、` +
+        `響應 ${stats.responses}、表決 ${stats.votes}、黑夜 ${stats.nights}、挑棄牌 ${stats.discards}、被退回 ${stats.rejected}、送不出去 ${stats.failed}`,
     );
   });
-  if (interrupted) return 130;
-  return failed || bots.length < plan.names.length ? 1 : 0;
+  if (halt) return halt.code;
+  // 讀不到房間的資料，或丟下一局還沒結束的遊戲（例如房間被刪了）：不算正常結束。
+  return results.some((result) => result.reason === 'error' || result.abandoned) ? 1 : 0;
 }
 
 // 等輸出都寫出去再結束（輸出接到管線時是非同步的），也不留下任何計時器或連線。

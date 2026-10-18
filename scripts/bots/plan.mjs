@@ -42,7 +42,8 @@ export function pickNames(room, prefix, count) {
 }
 
 // room 是整個房間的資料（watchRoom 讀到的，房間不存在是 null），table、count 是指令列給的（沒給是 null）。
-// 回傳 { table, names, notes }：notes 是要印給使用者看的說明（自動選了哪一桌、補幾個、放不下幾個）。
+// 回傳 { table, names, notes }：notes 是要印給使用者看的說明（自動選了哪一桌、名單上有誰離線、補幾個、放不下幾個）。
+// 名單上的人不論在不在線都算已經入座（手機可能只是暫時離線；開局時一樣會排進座位），離線的列出來提醒。
 export function planSeats(room, data, { table = null, count = null, prefix }) {
   if (!room?.meta) throw new PlanError('找不到這個房間：房號打錯了，或房間已經不在了');
   const tableCount = room.meta.tableCount;
@@ -65,7 +66,10 @@ export function planSeats(room, data, { table = null, count = null, prefix }) {
     chosen = open[0].number;
     notes.push(`沒有指定桌號，選第 ${chosen} 桌（還沒開局、人最少的一桌）`);
   }
-  const seated = playersAt(room, chosen).length;
+  const here = playersAt(room, chosen);
+  const offline = here.filter(([uid]) => room.presence?.[uid] !== true).map(([, player]) => player.name);
+  if (offline.length > 0) notes.push(`第 ${chosen} 桌名單上有 ${offline.length} 人離線：${offline.join('、')}（開局時一樣會排進座位）`);
+  const seated = here.length;
   const free = capacity - seated;
   let wanted = count;
   if (wanted === null) {
@@ -79,3 +83,4 @@ export function planSeats(room, data, { table = null, count = null, prefix }) {
   }
   return { table: chosen, names: pickNames(room, prefix, wanted), notes };
 }
+

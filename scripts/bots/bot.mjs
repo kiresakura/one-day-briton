@@ -1,7 +1,7 @@
 // 一個機器人玩家：照玩家端的流程入座、訂閱自己看得到的資料，輪到自己（或有事可做）時從規則允許的動作裡隨機挑一個送出。
-// 只用 store.js 的玩家端函式（joinRoom、watch…、request…、trackPresence、serverTime、disconnect）；開局、推進、發牌、結算、
-// 開第 2 場都是主持端的事，這裡一律不碰。被主持端退回或送不出去時記一行、改送別的或結束這一輪；同一個情況最多送幾次，
-// 不會卡住，也不會一直送。
+// 只用 store.js 的玩家端函式（joinRoom、leaveRoom、watch…、request…、trackPresence、serverTime、disconnect）；開局、推進、發牌、
+// 結算、開第 2 場都是主持端的事，這裡一律不碰。被主持端退回或送不出去時記一行、改送別的或結束這一輪；同一個情況最多送幾次，
+// 不會卡住，也不會一直送。自己那一桌還沒開局就結束時離開玩家名單（同手機按「離開」），開了局的留著（成績表要用）。
 import {
   REJECT_REASONS,
   cryptoRandom,
@@ -19,6 +19,7 @@ import {
   StoreError,
   disconnect,
   joinRoom,
+  leaveRoom,
   requestDiscard,
   requestNight,
   requestPass,
@@ -44,7 +45,8 @@ const NOTICE_WAIT_MS = 2000; // 請求處理了、輪次卻沒動（被退回）
 const RESEND_MS = 20_000; // 送出的請求這麼久主持端都沒處理，就再送一次
 const RESENDS = 2; // 同一個請求最多再送幾次
 const RETRY_MS = 2000; // 送不出去之後隔多久再試
-const CLOSE_MS = 5000; // 結束時移除上線狀態、斷線各最多等多久
+const REMIND_MS = 5 * 60_000; // 坐在進行中的一局裡、房間一直沒有變動時，最多隔多久印一行「還在等」
+const CLOSE_MS = 5000; // 結束時離開玩家名單、移除上線狀態、斷線各最多等多久
 
 // promise 最多等 ms 毫秒（計時器不留住程式）。
 function within(promise, ms) {
@@ -62,17 +64,22 @@ function within(promise, ms) {
 //   data         卡牌資料（gamedata.js 讀到、檢查過的；牌名、規則判斷用）
 //   delay        [最少, 最多]：每個動作前隨機等多久（毫秒）
 //   policy       DEFAULT_POLICY 的覆寫    random  亂數來源（同 game.js）
-//   waitMs       房間這麼久沒有任何變動就結束
+//   waitMs       還沒開局、等第 2 場時，局面這麼久沒有進展就結束（坐在進行中的一局裡不結束，只隔一陣子印一行「還在等」）
+//   waitLabel    印出來的分鐘數（指令列給的 --wait；沒給就從 waitMs 換算）
 //   log(text)    印一行
 //   onFinal(room, key)   看到一局終局（印結算摘要用；同一局每個機器人都會叫一次，由呼叫的一端去重）
-// 先入座（joinRoom，失敗就丟出去），成功後回傳 { uid, done, stop }：done 在結束時 resolve 成 { reason, detail, stats }
-// （reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、left、stopped、error），stop() 叫它提早結束並等它收好。
+// 先入座（joinRoom，失敗就丟出去），成功後回傳 { uid, done, stop }：done 在結束時 resolve 成
+// { reason, detail, stats, left, abandoned }（reason：done 兩場都結束、no-seat 這一局沒有座位、idle 等太久、room-gone、
+// left 不在名單上了、stopped、error；left＝離開了玩家名單；abandoned＝丟下一局還沒結束的遊戲）。stop(detail) 叫它提早結束
+// （detail 是結束原因，例如「收到停止（Ctrl-C）」）並等它收好。
 export async function startBot(options) {
   const { session, code, name, table, data } = options;
   const policy = { ...DEFAULT_POLICY, ...options.policy };
   const random = options.random ?? cryptoRandom;
   const [minDelay, maxDelay] = options.delay ?? [1500, 4000];
   const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
+  const waitLabel = options.waitLabel ?? String(waitMs / 60_000);
+  const remindMs = Math.min(waitMs, REMIND_MS);
   const print = options.log ?? (() => {});
   const onFinal = options.onFinal ?? (() => {});
   const { uid } = session;
@@ -86,13 +93,22 @@ export async function startBot(options) {
   const seen = { room: undefined, mine: null, request: null, vote: null, night: null, discard: null };
   let version = 0; // 資料變動的次數
   let lastChange = Date.now();
+  let remindedAt = 0;
   let failure = null;
   let stopping = false;
+  let stopDetail = null;
   const wakers = new Set(); // 等資料變動的
   const stoppers = new Set(); // 等 stop() 的
-  const changed = () => {
+  let roomArrived;
+  const roomKnown = new Promise((resolve) => (roomArrived = resolve)); // 第一筆房間資料到了（或讀不到）
+  // 「等太久」只看局面有沒有進展：自己這一桌兩場的桌況與局面、自己的私密資料與請求、票、黑夜選擇、棄牌。有人加入、離開、上線、
+  // 離線不算（不然一個機器人等太久離開時，其他機器人又從頭等起）。
+  const progressOf = (room) =>
+    JSON.stringify([matchKey(table), matchKey(table, MATCH_COUNT)].map((key) => [room?.tables?.[key] ?? null, room?.games?.[key] ?? null]));
+  let progress = null;
+  const changed = (moved = true) => {
     version += 1;
-    lastChange = Date.now();
+    if (moved) lastChange = Date.now();
     for (const wake of [...wakers]) wake();
   };
   const watching = (watch, field) =>
@@ -101,10 +117,18 @@ export async function startBot(options) {
       code,
       (value) => {
         seen[field] = value;
-        changed();
+        let moved = true;
+        if (field === 'room') {
+          roomArrived();
+          const next = progressOf(value);
+          moved = next !== progress;
+          progress = next;
+        }
+        changed(moved);
       },
       (error) => {
         failure ??= error;
+        roomArrived();
         changed();
       },
     );
@@ -170,7 +194,13 @@ export async function startBot(options) {
     say(m, text);
   };
 
-  // 該結束了嗎：回傳 { reason, detail } 或 null。
+  // 坐在一局還沒結束的遊戲裡（這一局有自己的座位、還沒算完分）。
+  const playing = (m) => Boolean(m.game && m.seat) && !(m.state?.phase === 'end' && m.game.final);
+  // 房間裡有沒有任何一局（第 1 場、第 2 場）有自己的座位：有的話成績表要用，結束時不離開玩家名單。
+  const seatedIn = (room) => Object.values(room?.games ?? {}).some((game) => Boolean(game?.seats?.[uid]));
+
+  // 該結束了嗎：回傳 { reason, detail } 或 null。等太久只用在還沒開局、等第 2 場（沒座位的直接結束）；坐在進行中的一局裡不走，
+  // 走了座位就沒人動、也回不來，只隔一陣子印一行「還在等」。
   const ending = (m) => {
     if (failure) return { reason: 'error', detail: `讀不到房間的資料（${failure.message}）` };
     if (m.room === undefined) return null;
@@ -180,7 +210,16 @@ export async function startBot(options) {
       return { reason: 'no-seat', detail: m.match === 1 ? '這一桌開局時沒有我的座位（開局之後才進來）' : '第 2 場沒有我的座位（主持端設為不參加）' };
     }
     if (m.state?.phase === 'end' && m.game?.final && m.match >= MATCH_COUNT) return { reason: 'done', detail: '兩場都結束了' };
-    if (Date.now() - lastChange > waitMs) return { reason: 'idle', detail: `房間 ${Math.round(waitMs / 60_000)} 分鐘都沒有變動` };
+    const quiet = Date.now() - lastChange;
+    if (playing(m)) {
+      if (quiet >= remindMs && Date.now() - remindedAt >= remindMs) {
+        remindedAt = Date.now();
+        const minutes = Number((quiet / 60_000).toFixed(1));
+        say(m, `還在等主持端或其他玩家（房間 ${minutes} 分鐘沒有變動）；這一局還沒結束，機器人不會自己離開`);
+      }
+      return null;
+    }
+    if (quiet > waitMs) return { reason: 'idle', detail: `房間 ${waitLabel} 分鐘都沒有變動` };
     return null;
   };
 
@@ -438,7 +477,7 @@ export async function startBot(options) {
       const since = version;
       const m = model();
       notes(m);
-      const outcome = stopping ? { reason: 'stopped', detail: '收到停止（Ctrl-C）' } : ending(m);
+      const outcome = stopping ? { reason: 'stopped', detail: stopDetail } : ending(m);
       if (outcome) return outcome;
       reportAnswers(m);
       const intent = decide(m);
@@ -449,19 +488,28 @@ export async function startBot(options) {
       await sleep(between(minDelay, maxDelay, random));
       if (stopping) continue;
       const now = model();
-      const again = decide(now);
-      if (again?.key === intent.key) await execute(again, now);
+      const still = decide(now);
+      if (still?.key === intent.key) await execute(still, now);
     }
   };
 
+  // 收好：取消訂閱；房間裡沒有任何一局有自己的座位（自己那一桌還沒開局、開局時沒有我）就離開玩家名單（同手機按「離開」，只刪
+  // 自己那一筆 rooms/{code}/players/{uid}），免得之後開局被排進座位、變成不會動的座位；開了局的留著。再移除上線狀態、斷線。
+  // 剛入座就叫停（第一筆房間資料還沒到）時先等一下那一筆，才知道開局了沒；等不到就當作還沒開局。
   const finish = async (outcome) => {
+    if (seen.room === undefined) await within(roomKnown, CLOSE_MS);
+    const { room } = seen;
+    const abandoned = outcome.reason !== 'done' && playing(model());
     for (const stop of stops) stop();
+    const listed = room === undefined || Boolean(room?.meta && room.players?.[uid]);
+    const left = listed && !seatedIn(room) ? (await within(leaveRoom(session, code).then(() => true), CLOSE_MS)) === true : false;
     await within(stopPresence(), CLOSE_MS);
     await within(disconnect(session), CLOSE_MS);
-    return { ...outcome, stats };
+    return { ...outcome, stats, left, abandoned };
   };
   const done = run().then(finish, (error) => finish({ reason: 'error', detail: error.message }));
-  const stop = () => {
+  const stop = (detail = '收到停止') => {
+    stopDetail ??= detail;
     stopping = true;
     for (const wake of [...stoppers]) wake();
     return done;
