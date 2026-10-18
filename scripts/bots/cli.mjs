@@ -8,6 +8,17 @@ import { ArgsError, USAGE, parseArgs } from './args.mjs';
 import { PlanError, planSeats } from './plan.mjs';
 import { combinedSummary, finalSummary } from './text.mjs';
 
+// 連不上（模擬器沒開、沒有網路）時，登入與讀房間各最多等這麼久。
+const CONNECT_MS = 20_000;
+
+function timed(promise, what) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}超過 ${CONNECT_MS / 1000} 秒沒有回應`)), CONNECT_MS);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 // 讀一次房間的資料（玩家端的 watchRoom，拿到第一筆就停）：房間不存在是 null。
 function readRoomOnce(store, session, code) {
   return new Promise((resolve, reject) => {
@@ -68,8 +79,16 @@ async function main() {
 
   // 每個機器人一個匿名身分（slot 不同就是不同玩家）。先用第一個讀房間、排座位，排得成才讓其他機器人連線、入座。
   const slot = (index) => `bot-${options.room}-${index + 1}`;
-  const sessions = [await store.connect(slot(0))];
-  const room = await readRoomOnce(store, sessions[0], options.room);
+  const sessions = [];
+  let room;
+  try {
+    sessions.push(await timed(store.connect(slot(0)), '登入'));
+    room = await timed(readRoomOnce(store, sessions[0], options.room), '讀房間');
+  } catch (error) {
+    const hint = options.emulator ? '模擬器要先在另一個終端機跑 npm run dev' : '請確認網路';
+    console.error(`連不上${wanted === 'prod' ? '正式站' : '本機模擬器'}（${error.message}）；${hint}。沒有寫入任何東西。`);
+    return 1;
+  }
   let plan;
   try {
     plan = planSeats(room, data, { table: options.table, count: options.count, prefix: options.prefix });

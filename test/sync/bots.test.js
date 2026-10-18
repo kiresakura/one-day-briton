@@ -381,6 +381,41 @@ test('the bots take it when the host sends every card back: they try others, end
   assert.deepEqual(game.hostErrors, []);
 });
 
+// 等到房間的資料讓 predicate 成立。
+function roomUntil(session, code, predicate, label, ms = 10_000) {
+  return new Promise((resolve, reject) => {
+    let stop = null;
+    const timer = setTimeout(() => {
+      stop?.();
+      reject(new Error(`timed out waiting for: ${label}`));
+    }, ms);
+    stop = watchRoom(session, code, (room) => {
+      if (!room || !predicate(room)) return;
+      clearTimeout(timer);
+      queueMicrotask(() => stop());
+      resolve(room);
+    });
+  });
+}
+
+test('a bot leaves by itself when it has no seat, when nothing happens for too long, or when stopped, and takes its presence along', TIMEOUT, async () => {
+  const code = await createRoom(host, 2);
+  await joinRoom(person, code, '真人', 1);
+  assert.deepEqual(await startTable(host, code, 1, instant, seededRandom(2)), { started: true });
+  const start = async (name, table, waitMs = 60_000) => startBot({ session: await connect(name), code, name, table, data: instant, delay: FAST_DELAY, waitMs });
+  const late = await start('late', 1); // 第 1 桌已經開局：沒有座位
+  const idle = await start('idle', 2, 1500); // 第 2 桌沒人開局：等太久
+  const stopped = await start('stopped', 2);
+  assert.deepEqual([(await late.done).reason, (await idle.done).reason], ['no-seat', 'idle']);
+  await roomUntil(host, code, (room) => room.presence?.[stopped.uid] === true, 'the bot is online');
+  assert.equal((await stopped.stop()).reason, 'stopped');
+  const room = await roomOnce(host, code);
+  for (const bot of [late, idle, stopped]) {
+    assert.equal(room.presence?.[bot.uid], undefined, 'offline after it leaves');
+    assert.ok(room.players[bot.uid], 'still on the player list: nothing is deleted');
+  }
+});
+
 // ---- 指令列：房間不存在、已經開局時，印出原因就結束，什麼都不寫 ----
 
 const cli = fileURLToPath(new URL('../../scripts/bots/cli.mjs', import.meta.url));

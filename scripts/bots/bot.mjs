@@ -421,10 +421,12 @@ export async function startBot(options) {
       stats.failed += 1;
       if (intent.tag) tried(intent.tag, false);
       else if (intent.kind === 'respond') answered.set(intent.pending, { reported: true });
+      else if (intent.kind === 'resend') turn.sent = { ...turn.sent, at: Date.now(), resends: turn.sent.resends + 1 };
       else {
         turn.tries += 1;
         turn.retryAt = Date.now() + RETRY_MS;
         if (intent.kind === 'play') turn.skip.add(intent.card);
+        if (turn.tries > MAX_TRIES) turn.gaveUp = true; // 出牌與結束這一輪都送不出去：等這一輪的局面變了再說
       }
       say(m, `送不出去：${error instanceof StoreError ? error.message : `連線有問題（${error.message}）`}`);
     }
