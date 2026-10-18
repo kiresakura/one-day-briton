@@ -84,3 +84,25 @@ export function planSeats(room, data, { table = null, count = null, prefix }) {
   return { table: chosen, names: pickNames(room, prefix, wanted), notes };
 }
 
+// 入座之後再看一次房間（同一個房間同時有另一個指令在放機器人時，兩邊照同一份舊資料排座位）：照加入的先後（joinedAt，一樣就比 uid），
+// 名字跟較早加入的人重複的、第 table 桌排在第 capacity 位之後的，是多出來的。mine 是這一次放的機器人的 uid（Set）。
+// 跟人同名的較晚那個不算進人數：另一個指令的機器人照同一條規則也會離開（兩邊算出來的一樣，不會多走）。
+// 回傳 { out, seated }：out 是 mine 裡要離開的 [{ uid, why }]；seated 是它們離開後第 table 桌名單上的人數（還超過 capacity 就要提醒）。
+export function crowdedOut(room, table, capacity, mine) {
+  const order = Object.entries(room?.players ?? {}).sort(
+    ([a, x], [b, y]) => (x?.joinedAt ?? 0) - (y?.joinedAt ?? 0) || (a < b ? -1 : a > b ? 1 : 0),
+  );
+  const names = new Set();
+  const out = [];
+  const here = [];
+  for (const [uid, player] of order) {
+    if (names.has(player?.name)) {
+      if (mine.has(uid)) out.push({ uid, why: '跟較早加入的人同名' });
+      continue;
+    }
+    names.add(player?.name);
+    if (player?.table === table) here.push(uid);
+  }
+  for (const uid of here.slice(capacity).filter((id) => mine.has(id))) out.push({ uid, why: `讓第 ${table} 桌超過一桌 ${capacity} 人` });
+  return { out, seated: here.length - out.filter(({ uid }) => here.includes(uid)).length };
+}

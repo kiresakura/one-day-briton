@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { MATCH_COUNT, parseKey } from '../../play/js/rules.js';
 import { ArgsError, USAGE, parseArgs } from './args.mjs';
-import { PlanError, planSeats } from './plan.mjs';
+import { PlanError, capacityOf, crowdedOut, planSeats } from './plan.mjs';
 import { combinedSummary, finalSummary } from './text.mjs';
 
 // 連不上（模擬器沒開、沒有網路）時，登入與讀房間各最多等這麼久。
@@ -14,6 +14,8 @@ const CONNECT_MS = 20_000;
 const COUNTDOWN_MS = 5000;
 // 這麼短的時間內又收到停止訊號不算第二次：npm run 會把終端機送來的同一次 Ctrl-C 再轉送一次。
 const REPEAT_MS = 1000;
+// 都入座之後隔這麼久再讀一次房間，看有沒有跟同時在跑的另一個指令撞名、超過一桌的人數上限。
+const RECHECK_MS = 1000;
 
 function timed(promise, what) {
   let timer;
@@ -219,6 +221,26 @@ async function main() {
   // 沒能開始的機器人（入座失敗或中途停止）直接斷線。
   await closeAll(sessions.slice(bots.length));
 
+  // 同一個房間同時有另一個指令在放機器人時，可能撞名、超過一桌的人數上限（joinRoom 不查人數，開局才查）：再讀一次，
+  // 多出來的（較晚加入的）機器人離開。
+  if (bots.length > 0 && !halt) {
+    let timer;
+    await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, RECHECK_MS))));
+    clearTimeout(timer);
+    const latest = halt ? null : await timed(readRoomOnce(store, sessions[0], options.room), '讀房間').catch(() => null);
+    if (latest?.meta) {
+      const capacity = capacityOf(data);
+      const crowd = crowdedOut(latest, plan.table, capacity, new Set(bots.map((bot) => bot.uid)));
+      for (const { uid, why } of crowd.out) {
+        const bot = bots.find((item) => item.uid === uid);
+        console.log(`注意：${bot.name} ${why}，離開（同一個房間請一次只跑一個指令）`);
+        bot.stop(why);
+      }
+      if (crowd.seated > capacity) {
+        console.log(`注意：第 ${plan.table} 桌名單上有 ${crowd.seated} 人，超過一桌 ${capacity} 人，主持端開不了局；請有人換桌或按「離開」`);
+      }
+    }
+  }
   if (bots.length > 0 && !halt) console.log('都入座了，等主持端開局。要提早結束請按 Ctrl-C。');
 
   const results = await Promise.all(bots.map((bot) => bot.done));

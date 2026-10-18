@@ -29,7 +29,7 @@ import {
 import { ArgsError, DEFAULT_DELAY, DEFAULT_PREFIX, FAST_DELAY, parseArgs } from '../../scripts/bots/args.mjs';
 import { startBot } from '../../scripts/bots/bot.mjs';
 import { chooseDiscard, chooseNight, chooseVote, playOptions, responseOptions } from '../../scripts/bots/brain.mjs';
-import { PlanError, planSeats } from '../../scripts/bots/plan.mjs';
+import { PlanError, crowdedOut, planSeats } from '../../scripts/bots/plan.mjs';
 
 const GAME_TIMEOUT = { timeout: 240_000 };
 const TIMEOUT = { timeout: 30_000 };
@@ -132,6 +132,30 @@ test('the seating plan stops at six a table, says why, and skips names already i
   refused({ meta: meta(1), players: six }, { table: 1, count: 1 }, /已經坐滿 6 人/);
   assert.deepEqual(planSeats({ meta: meta(1) }, fileData, { prefix: '十'.repeat(11), count: 1 }).names, [`${'十'.repeat(11)}1`], 'twelve fits');
   assert.throws(() => planSeats({ meta: meta(1) }, fileData, { prefix: '十'.repeat(12), count: 1 }), (error) => error instanceof PlanError && /超過 12 個字/.test(error.message));
+});
+
+// 同一個房間同時跑兩個指令：兩邊照同一份舊資料排座位。入座後再看一次，較晚加入、跟人同名或排在一桌第 6 位之後的機器人離開。
+test('after seating, the later bots with a name already taken or past six at the table are the ones to leave', () => {
+  const at = (name, table, joinedAt) => ({ name, table, joinedAt });
+  const others = Object.fromEntries([1, 2, 3, 4, 5].map((number) => [`x${number}`, at(`P${number}`, 1, number)]));
+  const room = { meta: meta(2), players: { ...others, m1: at('機器人1', 1, 6), m2: at('機器人2', 1, 7), m3: at('P1', 2, 8), m4: at('機器人4', 2, 9) } };
+  const mine = new Set(['m1', 'm2', 'm3', 'm4']);
+  assert.deepEqual(crowdedOut(room, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }, { uid: 'm2', why: '讓第 1 桌超過一桌 6 人' }], seated: 6 });
+  assert.deepEqual(crowdedOut(room, 2, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], seated: 1 });
+  // 多出來的是別人（較晚加入的人、同一時間加入時 uid 排後面的）：機器人不走，人數還超過就要提醒。
+  const late = { ...room, players: { ...room.players, m2: at('機器人2', 2, 7), y: at('P9', 1, 6) } };
+  assert.deepEqual(crowdedOut(late, 1, 6, mine), { out: [{ uid: 'm3', why: '跟較早加入的人同名' }], seated: 7 });
+  assert.deepEqual(crowdedOut({ meta: meta(1), players: { b: at('機器人1', 1, 5), a: at('機器人1', 1, 5) } }, 1, 6, new Set(['a', 'b'])).out, [{ uid: 'b', why: '跟較早加入的人同名' }]);
+  assert.deepEqual(crowdedOut({ meta: meta(1), players: others }, 1, 6, new Set()), { out: [], seated: 5 });
+  // 兩個指令各放 4 個、名字一樣（8 人）：較晚的那一邊 4 個都走，較早的那一邊不會因為人數多走一個；兩邊算出來的一樣。
+  const both = { meta: meta(1), players: {} };
+  for (const number of [1, 2, 3, 4]) {
+    both.players[`y${number}`] = at(`機器人${number}`, 1, number * 2 - 1);
+    both.players[`z${number}`] = at(`機器人${number}`, 1, number * 2);
+  }
+  const ours = (prefix) => new Set([1, 2, 3, 4].map((number) => `${prefix}${number}`));
+  assert.deepEqual(crowdedOut(both, 1, 6, ours('z')), { out: [1, 2, 3, 4].map((number) => ({ uid: `z${number}`, why: '跟較早加入的人同名' })), seated: 4 });
+  assert.deepEqual(crowdedOut(both, 1, 6, ours('y')), { out: [], seated: 4 });
 });
 
 // ---- 機器人的選擇（只挑規則允許的） ----
