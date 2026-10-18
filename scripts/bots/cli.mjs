@@ -70,7 +70,8 @@ async function main() {
     return 0;
   }
 
-  // ---- 停止：Ctrl-C（SIGINT）、結束訊號（SIGTERM），或入座失敗時中止。halt 是 { code, detail }：結束碼、給機器人的結束原因 ----
+  // ---- 停止：Ctrl-C（SIGINT）、結束訊號（SIGTERM）、關掉終端機視窗（SIGHUP），或入座失敗時中止。halt 是 { code, detail }：結束碼、
+  // 給機器人的結束原因 ----
   // 第一次開始乾淨結束（入座了的機器人收好：開局前的離開玩家名單，再離線）；REPEAT_MS 內重複收到的不算；之後再收到就不等，直接結束。
   // 在倒數、登入之前就掛好。
   const bots = [];
@@ -84,25 +85,32 @@ async function main() {
     wakeHalt();
     for (const bot of bots) bot.stop(halt.detail);
   };
+  // 每種訊號的結束碼（128＋訊號編號）、印出來的、給機器人的結束原因。
+  const SIGNALS = {
+    SIGINT: { code: 130, what: '收到 Ctrl-C', detail: '收到停止（Ctrl-C）', again: '（卡住的話再按一次 Ctrl-C）' },
+    SIGTERM: { code: 143, what: '收到結束訊號（SIGTERM）', detail: '收到停止（結束訊號）', again: '' },
+    SIGHUP: { code: 129, what: '終端機視窗關掉了（SIGHUP）', detail: '收到停止（終端機視窗關掉了）', again: '' },
+  };
   let signalAt = null;
   const onSignal = (signal) => {
+    // 視窗關掉之後輸出已經沒地方去（寫入會出錯）：不理會寫入的錯誤，照樣收好、結束。
+    if (signal === 'SIGHUP') {
+      for (const stream of [process.stdout, process.stderr]) if (stream.listenerCount('error') === 0) stream.on('error', () => {});
+    }
+    const kind = SIGNALS[signal];
     const now = Date.now();
     if (signalAt !== null && now - signalAt < REPEAT_MS) return;
     const first = signalAt === null;
     signalAt = now;
-    const ctrlC = signal === 'SIGINT';
     if (!first) {
       console.log('又收到一次停止：不等機器人收好，直接結束');
-      exit(halt?.code ?? (ctrlC ? 130 : 143));
+      exit(halt?.code ?? kind.code);
       return;
     }
-    const what = ctrlC ? '收到 Ctrl-C' : '收到結束訊號（SIGTERM）';
-    const again = ctrlC ? '（卡住的話再按一次 Ctrl-C）' : '';
-    console.log(joining ? `${what}：機器人斷線中…${again}` : `${what}：還沒有入座，資料庫沒有寫入任何東西，結束`);
-    stopWith({ code: ctrlC ? 130 : 143, detail: ctrlC ? '收到停止（Ctrl-C）' : '收到停止（結束訊號）' });
+    console.log(joining ? `${kind.what}：機器人斷線中…${kind.again}` : `${kind.what}：還沒有入座，資料庫沒有寫入任何東西，結束`);
+    stopWith({ code: kind.code, detail: kind.detail });
   };
-  process.on('SIGINT', () => onSignal('SIGINT'));
-  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  for (const signal of Object.keys(SIGNALS)) process.on(signal, () => onSignal(signal));
   // promise 跟停止比快：先停了就回傳 halted（由呼叫的一端收好、結束）。
   const HALTED = Symbol('halted');
   const unlessHalted = (promise) => Promise.race([promise, halted.then(() => HALTED)]);

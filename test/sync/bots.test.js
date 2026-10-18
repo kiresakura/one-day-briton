@@ -750,6 +750,21 @@ test('the command seats the bots it was asked for and leaves cleanly on Ctrl-C',
   assert.equal(after.players, undefined, 'the table had not started: both left the player list');
 });
 
+// 直接關掉終端機視窗（SIGHUP）：跟 Ctrl-C 一樣收好再結束（以 129 結束），開局前的機器人離開名單。
+test('closing the terminal window (SIGHUP) stops as cleanly as Ctrl-C', TIMEOUT, async () => {
+  const code = await createRoom(host, 1);
+  const run = launch(['--emulator', '--room', code, '--count', '2', '--fast']);
+  await run.until('都入座了');
+  await roomUntil(host, code, (value) => Object.keys(value.presence ?? {}).length === 2, 'both bots online');
+  run.child.kill('SIGHUP');
+  assert.deepEqual(await exitWithin(run, 8000), { code: 129, signal: null }, run.output());
+  assert.match(run.output(), /終端機視窗關掉了（SIGHUP）：機器人斷線中/);
+  assert.equal(count(run.output(), /結束：收到停止（終端機視窗關掉了），已離開玩家名單｜/g), 2, run.output());
+  const after = await roomOnce(host, code);
+  assert.equal(after.presence, undefined, 'both offline');
+  assert.equal(after.players, undefined, 'the table had not started: both left the player list');
+});
+
 // 入座途中按 Ctrl-C：已經入座的、正在入座的那一個都要停，幾秒內結束；房間裡沒有在線的機器人，名單上也不留。
 test('Ctrl-C while the bots are being seated stops every bot that got in, the one on its way too, and leaves nobody behind', TIMEOUT, async () => {
   const code = await createRoom(host, 1);
