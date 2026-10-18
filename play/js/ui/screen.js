@@ -85,7 +85,7 @@ const view = {
   layers: null,
 };
 
-const audio = createAudio();
+const audio = createAudio({ onChange: audioChanged });
 
 // ---- 進入點 ----
 
@@ -438,14 +438,18 @@ function start(sound) {
   if (sound) {
     enterFullscreen();
     requestWakeLock();
-    audio.unlock().then((on) => {
-      view.audioOn = on;
-      if (on) view.screen?.update({ audio: true }).catch(() => false);
-      updateMusic();
-      render();
-    });
+    audio.unlock().then(audioChanged);
     preload();
   }
+  render();
+}
+
+// 聲音開了、或被系統暫停（AudioContext 不是 running）：回報給控制台、照開關停或開背景音樂、重畫（沒開時「聲音未開，點一下」再出現）。
+function audioChanged(on) {
+  if (view.preview || on === view.audioOn) return;
+  view.audioOn = on;
+  view.screen?.update({ audio: on }).catch(() => false);
+  updateMusic();
   render();
 }
 

@@ -4,7 +4,8 @@
 
 const MUSIC_VOLUME = 0.6;
 
-export function createAudio() {
+// onChange(on)：聲音開關變了（解鎖、或被系統暫停：換輸出裝置、Safari 中斷）時呼叫，畫面據此讓「聲音未開，點一下」再出現。
+export function createAudio({ onChange } = {}) {
   let context = null;
   const buffers = new Map(); // 素材解碼好的聲音：bell、gavel
   let music = null; // 正在播的開場音樂 { placeholder, stop() }
@@ -145,7 +146,10 @@ export function createAudio() {
     async unlock() {
       const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
       if (!Context) return false;
-      context ??= new Context();
+      if (!context) {
+        context = new Context();
+        context.addEventListener?.('statechange', () => onChange?.(context.state === 'running'));
+      }
       const silent = context.createBuffer(1, 1, 22050);
       const source = context.createBufferSource();
       source.buffer = silent;
