@@ -2007,3 +2007,9 @@ body[data-phase='night'] .notice-card {
   color: #a7b3c8;
   font-size: var(--fs-small);
 }
+
+/* 新廣播時震動的開關（瀏覽器不支援震動時不放） */
+.buzz-toggle {
+  display: block;
+  margin: 2px auto 0;
+}

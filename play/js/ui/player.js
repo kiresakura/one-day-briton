@@ -165,6 +165,7 @@ export function resetPlayer() {
   setCovered(false);
   topBar.hidden = true;
   topBar.replaceChildren();
+  buzzSeen = { code: null, seq: 0 };
   tab = 'action';
   lastNeed = null;
   handOpen = false;
@@ -417,6 +418,7 @@ function pauseNodes(m) {
 
 // 最上面一條與暫停層。until 有值（暫停前就開著的倒數還在跑）時先寫「這個倒數結束後全場暫停」，到點重畫時蓋上。
 function renderConsole(m) {
+  buzzOnNew(m.room.display);
   const { covered: cover, until } = pauseOf(m);
   pauseWake = wakeAt(pauseWake, until);
   const nodes = [
@@ -482,7 +484,45 @@ function leaveButton(text = '離開房間') {
 }
 
 function roomFoot() {
-  return h('div', { class: 'room-foot', data: { key: 'room-foot' } }, h('p', { class: 'room-line' }, '房號 ', h('span', { class: 'num', text: ctx.code })), leaveButton());
+  return h('div', { class: 'room-foot', data: { key: 'room-foot' } }, h('p', { class: 'room-line' }, '房號 ', h('span', { class: 'num', text: ctx.code })), buzzToggle(), leaveButton());
+}
+
+// ---- 新廣播時短震一次（可以關；瀏覽器不支援震動就不震、也不放開關） ----
+
+const BUZZ_OFF_KEY = 'one-day-briton:broadcast-buzz-off';
+let buzzSeen = { code: null, seq: 0 }; // 這一頁看過的最新一則廣播：剛進房時看到的那一則不震
+
+const canBuzz = () => typeof navigator.vibrate === 'function';
+
+function buzzOff() {
+  try {
+    return localStorage.getItem(BUZZ_OFF_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function buzzToggle() {
+  if (!canBuzz()) return null;
+  const on = !buzzOff();
+  return h('button', { class: 'btn-link buzz-toggle', type: 'button', data: { act: 'buzz' }, attrs: { 'aria-pressed': String(on) }, text: `新廣播時震動：${on ? '開' : '關'}` });
+}
+
+function buzzOnNew(display) {
+  const cast = broadcastOf(display);
+  if (buzzSeen.code !== ctx.code) {
+    buzzSeen = { code: ctx.code, seq: cast?.seq ?? 0 };
+    return;
+  }
+  if (!cast || cast.seq <= buzzSeen.seq) return;
+  buzzSeen.seq = cast.seq;
+  // 還沒碰過這一頁（剛重新整理）時瀏覽器不准震，不叫，免得留下警告。
+  if (!canBuzz() || buzzOff() || navigator.userActivation?.hasBeenActive === false) return;
+  try {
+    navigator.vibrate(200);
+  } catch {
+    // 震不了就算了
+  }
 }
 
 // ---- 標頭 ----
@@ -1814,6 +1854,15 @@ const actions = {
   },
   'broadcast-ok': ({ seq }) => {
     dismissBroadcast(ctx.code, Number(seq));
+    rerender();
+  },
+  buzz: () => {
+    try {
+      if (buzzOff()) localStorage.removeItem(BUZZ_OFF_KEY);
+      else localStorage.setItem(BUZZ_OFF_KEY, '1');
+    } catch {
+      // 存不進去就維持原狀
+    }
     rerender();
   },
 };
