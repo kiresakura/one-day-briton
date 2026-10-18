@@ -214,6 +214,22 @@
   margin-top: 10px;
 }
 
+/* ---- 最下面的署名頁入口：小字、不搶眼，點擊範圍照樣夠大 ---- */
+
+.home-credits {
+  margin: 12px 0 0;
+  text-align: center;
+}
+
+.home-credits a {
+  display: inline-block;
+  min-height: var(--tap);
+  padding: 12px 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-min);
+  line-height: 20px;
+}
+
 /* ---- 等待核准 ---- */
 
 .pending {

@@ -1,0 +1,125 @@
+/* 署名頁（credits.html）：每張圖的作品、作者、館藏、授權與來源；縮圖跟遊戲裡一樣疊在紙色上（multiply）。 */
+
+.credits {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+}
+
+.credits-back {
+  margin: 0 0 12px;
+  font-size: var(--fs-small);
+}
+
+.credits-back a,
+.credit-links a {
+  color: var(--accent);
+}
+
+.credits-title {
+  font-size: var(--fs-h1);
+  font-weight: 900;
+}
+
+.credits-lead {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.credit-group {
+  margin-top: 24px;
+}
+
+.credit-group h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: var(--fs-h2);
+}
+
+.credit-count {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  font-weight: 400;
+}
+
+.credit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.credit {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.credit-thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--card-ink);
+  border-radius: 4px;
+  background: var(--card-bg);
+  object-fit: cover;
+  mix-blend-mode: multiply;
+}
+
+.credit-thumb.is-round {
+  border-radius: 50%;
+}
+
+.credit-thumb.is-wide {
+  width: 112px;
+  height: 28px;
+}
+
+.credit-body {
+  min-width: 0;
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.credit-body p {
+  margin: 0;
+}
+
+.credit-slot {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.credit-flag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: var(--fs-min);
+  font-weight: 400;
+}
+
+.credit-title {
+  margin-top: 2px;
+  color: var(--text);
+  font-style: italic;
+}
+
+.credit-meta,
+.credit-mod {
+  color: var(--text-2);
+}
+
+.credit-attr {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--gold);
+  background: var(--surface-sunk);
+  color: var(--text);
+}
