@@ -404,7 +404,7 @@ function setCovered(value) {
   pauseLayer.focus({ preventScroll: true });
 }
 
-// 暫停層：暫停字樣、目前的廣播（不管這支手機收起了沒）、自己的連線狀態。
+// 暫停層：暫停字樣、目前的廣播（不管這支手機收起了沒；沒有廣播、已經收回時不放）、自己的連線狀態。
 function pauseNodes(m) {
   const cast = broadcastOf(m.room.display);
   return [
@@ -413,22 +413,26 @@ function pauseNodes(m) {
     h('p', { class: 'pause-text', attrs: { id: 'player-pause-text' }, text: '請聽主持人說明' }),
     cast ? h('p', { class: 'pause-cast', data: { key: 'pause-cast' } }, h('span', { class: 'broadcast-tag', text: '廣播' }), h('span', { class: 'pause-cast-text', text: cast.text })) : null,
     h('p', { class: 'pause-conn', data: { key: 'pause-conn' } }, connPill(connected)),
-  ];
+  ].filter(Boolean);
 }
 
 // 最上面一條與暫停層。until 有值（暫停前就開著的倒數還在跑）時先寫「這個倒數結束後全場暫停」，到點重畫時蓋上。
+// 蓋不蓋只看 pauseOf：最上面一條或層上的內容組不起來（丟出錯誤）時也照樣蓋上、擋住操作。
 function renderConsole(m) {
-  buzzOnNew(m.room.display);
   const { covered: cover, until } = pauseOf(m);
   pauseWake = wakeAt(pauseWake, until);
-  const nodes = [
-    until === null ? null : h('p', { class: 'pause-soon', data: { key: 'pause-soon' } }, h('span', { class: 'pause-soon-mark', attrs: { 'aria-hidden': 'true' } }), h('span', { text: '這個倒數結束後全場暫停' })),
-    ...broadcastNodes(m.room.display, ctx.code),
-  ].filter(Boolean);
-  topBar.hidden = nodes.length === 0;
-  patchChildren(topBar, nodes);
-  if (cover) patchChildren(pauseLayer, pauseNodes(m));
-  setCovered(cover);
+  try {
+    buzzOnNew(m.room.display);
+    const nodes = [
+      until === null ? null : h('p', { class: 'pause-soon', data: { key: 'pause-soon' } }, h('span', { class: 'pause-soon-mark', attrs: { 'aria-hidden': 'true' } }), h('span', { text: '這個倒數結束後全場暫停' })),
+      ...broadcastNodes(m.room.display, ctx.code),
+    ].filter(Boolean);
+    topBar.hidden = nodes.length === 0;
+    patchChildren(topBar, nodes);
+    if (cover) patchChildren(pauseLayer, pauseNodes(m));
+  } finally {
+    setCovered(cover);
+  }
 }
 
 // 現在需要我動作的情況（輪到我、響應窗口、黃昏開票、黑夜、要棄牌）；沒有是 null。
