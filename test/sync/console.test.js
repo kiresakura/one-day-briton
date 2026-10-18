@@ -161,6 +161,8 @@ async function nightRevealed(code, round, { from = 'day', key = 2 } = {}) {
 const put = (session, path, value) => set(ref(session.db, path), value);
 const stamp = () => serverTimestamp();
 const command = (session, fields, seq) => ({ ...fields, seq, at: stamp(), by: session.uid });
+// 直接開一個全場鐘（規則照收；store 的 startClock 要等第 2 場開了才開第 2 場的鐘，這裡不用先打完第 1 場）。
+const createClock = (session, path, minutes) => put(session, path, { startedAt: stamp(), minutes, anchor: stamp(), remain: minutes * MINUTE, adjust: 0, seq: 1, by: session.uid });
 
 test('only the hosts write display and clock; seated players, a signed-in screen and a signed-out connection cannot; everyone signed in reads them', TIMEOUT, async (t) => {
   const { code, watchers } = await consoleRoom(t);
@@ -172,6 +174,7 @@ test('only the hosts write display and clock; seated players, a signed-in screen
   const clock = (session) => put(session, `rooms/${code}/clock/1`, { startedAt: stamp(), minutes: 75, anchor: stamp(), remain: 75 * MINUTE, adjust: 0, seq: 1, by: session.uid });
   await assert.rejects(clock(p1), denied);
   await assert.rejects(clock(outsider), denied);
+  await assert.rejects(startClock(p1, code, 1, 75), codeOf('permission-denied'), 'the store says so too');
   await clock(backup);
   // 讀：玩家與只登入的人（投影端）都讀得到。
   for (const name of ['p1', 'outsider', 'backup']) {
@@ -188,7 +191,6 @@ test('only the hosts write display and clock; seated players, a signed-in screen
   await assert.rejects(set(ref(db, `rooms/${code}/display/scene`), { id: 'rules', seq: 3, at: stamp(), by: 'nobody' }), denied);
   // store：玩家呼叫指令也是 permission-denied。
   await assert.rejects(setScene(p1, code, 'rules'), codeOf('permission-denied'));
-  await assert.rejects(startClock(p1, code, 2, 75), codeOf('permission-denied'));
 });
 
 test('every display command needs the next seq, the server time and the writer; formats, extra fields, partial updates and deletes are rejected', TIMEOUT, async (t) => {
@@ -334,7 +336,7 @@ test('adjusting moves remain and adjust by the same amount, at most 10 minutes a
   await assert.rejects(adjustClock(host, code, 1, -MINUTE), codeOf('clock-limit'));
   // 減到變負被拒；剛好 0 可以，之後就是日落，什麼都不能調了。
   const second = `rooms/${code}/clock/2`;
-  await startClock(host, code, 2, 10);
+  await createClock(host, second, 10);
   await pauseClock(host, code, 2);
   let paused = await read(host, second);
   const left = paused.remain - (paused.pausedAt - paused.anchor);
@@ -394,6 +396,9 @@ test('the store commands: scene, broadcast and take back, sounds, music, clock p
   await assert.rejects(pauseClock(host, code, 1), codeOf('no-clock'));
   await assert.rejects(startClock(host, code, 3, 75), codeOf('invalid-command'));
   await assert.rejects(startClock(host, code, 1, 0.0001), codeOf('invalid-command'));
+  // 第 2 場的鐘要等第 2 場開了（有 tables/{n}-2）：開了之後照樣開得起來，見「全部開始第 2 場」那個測試。
+  await assert.rejects(startClock(host, code, 2, 75), codeOf('invalid-command'), 'the second match is not open yet');
+  assert.equal(await read(host, `rooms/${code}/clock/2`), null);
   const opened = await startClock(host, code, 1, 75);
   assert.equal(opened.started, true);
   assert.deepEqual({ ...opened.clock, startedAt: 0, anchor: 0 }, { startedAt: 0, minutes: 75, anchor: 0, remain: 75 * MINUTE, adjust: 0, seq: 1, by: host.uid });
@@ -443,7 +448,7 @@ test('two hosts writing the same node at once: one write goes in, the other is r
 test('the full pause stops the running clocks in the same write and resumes only those; an invalid clock part rejects the whole write', TIMEOUT, async (t) => {
   const { code, watchers } = await consoleRoom(t);
   await startClock(host, code, 1, 75);
-  await startClock(host, code, 2, 75);
+  await createClock(host, `rooms/${code}/clock/2`, 75);
   await pauseClock(host, code, 2); // 原本就手動暫停的鐘
   await watchers.backup.until((value) => value.clock?.[1]?.seq === 1 && value.clock?.[2]?.seq === 2, 'the backup sees both clocks');
   const paused = await setPause(backup, code, true);
@@ -729,7 +734,7 @@ test('the full pause leaves out a clock less than 10 seconds before sunset at on
   const { code } = await consoleRoom(t);
   await startClock(host, code, 1, 10);
   await adjustClock(host, code, 1, -(10 * MINUTE - 6000)); // 還剩約 6 秒
-  await put(host, `rooms/${code}/clock/2`, { startedAt: stamp(), minutes: 75, anchor: stamp(), remain: 75 * MINUTE, adjust: 0, seq: 1, by: host.uid });
+  await createClock(host, `rooms/${code}/clock/2`, 75);
   const near = await read(host, `rooms/${code}/clock/1`);
   const left = clockRemaining(near, serverTime(host));
   assert.ok(left > 2000 && left < 10_000, String(left));

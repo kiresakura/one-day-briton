@@ -75,7 +75,7 @@
 | `playSfx(session, code, id)` | 投影端播一次音效：`id` 是 `bell` 或 `gavel`；離上一次不到 1 秒丟 `too-soon`（送出時就在 1 秒的邊界、被規則拒的也立刻回 `too-soon`，不等伺服器） | `{ seq }` |
 | `setMusic(session, code, on, { track = 'opening', expectSeq } = {})` | 背景音樂播放／停止；已經是這個狀態就不寫 | `{ changed, seq }` |
 | `setPause(session, code, on, { expectSeq } = {})` | 全場暫停／恢復，一筆寫入。暫停：同一筆停住正在走、離日落還有 10 秒以上（`PAUSE_NEAR_SUNSET_MS`，照這台估的伺服器時間）的鐘，記在 `pause.clocks`；離日落不到 10 秒的鐘第一次就不帶（照常日落；停了也沒有意義，帶了反而可能讓整筆被拒、要等好幾秒）。暫停那一筆一定要寫得進去：還是被拒、伺服器上也沒變時，一個鐘都不帶再寫一次。恢復：只恢復 `pause.clocks` 記的、而且還是被這一次暫停停住的鐘（`pausedAt` 等於 `pause.at`；原本就手動暫停的、暫停中被手動繼續又暫停的都不動）；恢復不放寬：被拒、伺服器上也沒變就丟 `rejected`，不會不帶鐘只寫 `pause.on = false`（那樣被暫停停住的鐘會一直停著）。已經是這個狀態就不寫 | `{ changed, seq, clocks }`（`clocks`＝這次一起停住或恢復的場次，例 `['1']`；正在走卻不在裡面的鐘就是沒停住的） |
-| `startClock(session, code, match, minutes)` | 開第 `match` 場（1 或 2）的全場日落鐘，`minutes` 是 10–180 的整數（照 `settings.sunsetMinutes`）。已經開了就不寫；全場暫停中丟 `paused`（暫停中開的鐘會一路走、恢復時也不會被照顧到） | `{ started, clock }`（`clock` 是寫入後或原本的那一筆） |
+| `startClock(session, code, match, minutes)` | 開第 `match` 場（1 或 2）的全場日落鐘，`minutes` 是 10–180 的整數（照 `settings.sunsetMinutes`）。已經開了就不寫；第 2 場還沒開（還沒有任何 `tables/{n}-2`）時開第 2 場的鐘丟 `invalid-command`（先開走的話，第 2 場各桌開局時已經被吃掉一段）；全場暫停中丟 `paused`（暫停中開的鐘會一路走、恢復時也不會被照顧到） | `{ started, clock }`（`clock` 是寫入後或原本的那一筆） |
 | `pauseClock(session, code, match, { expectSeq } = {})` | 暫停這一場的鐘；已經暫停就不寫；日落後丟 `clock-passed` | `{ changed, clock }` |
 | `resumeClock(session, code, match, { expectSeq } = {})` | 繼續；沒暫停就不寫 | `{ changed, clock }` |
 | `adjustClock(session, code, match, deltaMs, { expectSeq } = {})` | 加減（毫秒，例 `5 * 60000`、`-60000`），自動夾在單次 ±10 分、累計 ±30 分、剩餘不小於 0。走著的鐘減到底時留約 1.5 秒的餘裕（主持端估的伺服器時間有誤差）。日落後（包括已經減到 0）丟 `clock-passed`；完全調不動（累計已到 ±30 分還要往同一邊調）丟 `clock-limit` | `{ delta, clock }`（`delta`＝實際調了多少毫秒；「復原」＝`adjustClock(…, -delta)`） |
@@ -176,7 +176,7 @@
 
 | 代碼 | 什麼時候 | 畫面建議 |
 |---|---|---|
-| `invalid-command` | 指令內容不合法：場景、頁數、音效、曲目不在清單，廣播 0 字或超過 40 字，場次不是 1、2，分鐘數不對，加減量不是數字 | 照 `message` 寫 |
+| `invalid-command` | 指令內容不合法：場景、頁數、音效、曲目不在清單，廣播 0 字或超過 40 字，場次不是 1、2，分鐘數不對，加減量不是數字；第 2 場還沒開就開第 2 場的鐘 | 照 `message` 寫 |
 | `conflict` | 別台主持端剛改過（`expectSeq` 對不上，或同時寫、後到的被拒）。`error.latest` 是最新的那一筆 | 「別台剛改過」＋照 `latest` 重畫（例「現在剩 33:52」） |
 | `rules-outdated` | 寫入被拒、自己是主持端、資料也沒變，而且這間房從來沒有寫進過控制台指令（舊規則下這些節點一定不存在）；約 0.5 秒後回 | 「要等規則更新」（日落鐘：「日落鐘控制要等規則更新，各桌照舊各自計時」） |
 | `rejected` | 寫入被拒、原因不明（例如剛好卡在時間邊界）；全場恢復（`setPause(…, false)`）被拒也是這個 | 「沒有寫進去，請再按一次」 |

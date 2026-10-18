@@ -199,6 +199,7 @@
 - 日落鐘與算分：那一場有 `clock/{m}` 時，所有桌的日落都照它（`shouldEnd` 多一個 `clock` 參數，`advanceOrEnd` 與畫面用同一個判斷；局號對到場次用 `rules.js` 的
   `clockOf`）；沒有時照舊從各桌的 `startedAt` 起算（舊房間、舊規則、忘了開鐘）。日落只決定「這一回合結束後算不算分」，不打斷正在進行的回合；終局的桌不會因為加時復活
   （終局後不能再改）；日落之後規則不准再加減或暫停。主持端的「下一階段」仍是用那台估的伺服器時間判斷到了沒（同各桌計時）。
+  第 2 場的鐘要等第 2 場開了（有 `tables/{n}-2`）才開得起來（`startClock` 擋；規則不擋），免得第 1 場還在打就先開走、吃掉第 2 場的時間。
 - 寫入原則：`display`、`clock` 一律單獨寫（全場暫停是 `display/pause` 與它停住或恢復的 `clock/{m}` 一起寫），不跟任何遊戲寫入放在同一筆，所以規則沒更新時
   只有控制台的指令失敗，開局、推進、結算都不受影響。欄位一律由 `game.js` 算（`clockStartWrite`、`clockPauseWrite`、`clockResumeWrite`、`clockAdjustWrite`），
   `store.js` 只補伺服器時間與 `by`。
