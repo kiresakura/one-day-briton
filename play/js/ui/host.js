@@ -16,9 +16,9 @@ import {
   responseDeadline,
   seatsInOrder,
   skippedEffects,
-  sunsetClock,
+  sunsetStatus,
 } from '../game.js';
-import { FOG_MAX, FOG_MIN, FOG_THRESHOLDS, MAX_TABLES, activeKey, confirmCode, hostUids, matchKey, parseKey } from '../rules.js';
+import { FOG_MAX, FOG_MIN, FOG_THRESHOLDS, MAX_TABLES, activeKey, clockOf, confirmCode, hostUids, matchKey, parseKey } from '../rules.js';
 import {
   advanceOrEnd,
   approveHost,
@@ -144,8 +144,9 @@ function tableModel(room, key) {
   // 已開局、在日出、這一回合還沒發牌（主持機在推進與發牌之間掛掉時，任何主持端都可以補發）。
   const pending = Boolean(game) && state.phase === 'sunrise' && (room.deals?.[key] ?? 0) < state.round;
   const ended = state.phase === 'end';
-  // 這一回合是最後一回合（日落鐘、回合上限、主持端按了「這回合結束後算分」）：黑夜揭曉後的「下一階段」就是算分。
-  const reason = game && !ended ? endReasonNow(game, state) : null;
+  // 這一回合是最後一回合（日落鐘、回合上限、主持端按了「這回合結束後算分」）：黑夜揭曉後的「下一階段」就是算分。日落鐘帶那一場的
+  // 全場日落鐘（沒有就照這一桌的 startedAt），跟 advanceOrEnd 同一個判斷。
+  const reason = game && !ended ? endReasonNow(game, state, String(key)) : null;
   const first = parsed.match === 1 ? null : (room.games?.[matchKey(parsed.table)] ?? null);
   const tone = game ? (PHASE_TONES[state.phase] ?? 'day') : 'idle';
   return { room, key: String(key), number: parsed.table, match: parsed.match, first, state, game, pending, ended, ending: reason !== null, reason, tone };
@@ -752,14 +753,21 @@ function startOrderRow(t) {
 
 const MINUTE = 60_000;
 
-function sunsetText(startedAt) {
-  const clock = sunsetClock(startedAt, ctx.cardData?.data.settings, serverTime(ctx.session));
-  const elapsed = Math.floor(clock.elapsed / MINUTE);
-  return clock.passed ? `日落鐘　開局 ${elapsed} 分・時間到了` : `日落鐘　開局 ${elapsed} 分・剩 ${Math.ceil(clock.remaining / MINUTE)} 分`;
+// 桌卡底部的日落鐘（game.js 的 sunsetStatus）：那一場有全場日落鐘就照全場鐘，沒有照這一桌從按「開始」起算（同改版前）。
+function sunsetLine(room, key) {
+  const game = room?.games?.[key];
+  const status = ctx.cardData && game ? sunsetStatus(game, ctx.cardData.data.settings, serverTime(ctx.session), clockOf(room, key)) : null;
+  if (!status) return '';
+  const left = `剩 ${Math.ceil(status.remaining / MINUTE)} 分`;
+  if (status.global) return status.passed ? '全場日落鐘　時間到了' : `全場日落鐘　${status.paused ? '暫停中・' : ''}${left}`;
+  const elapsed = Math.floor(status.elapsed / MINUTE);
+  return status.passed ? `日落鐘　開局 ${elapsed} 分・時間到了` : `日落鐘　開局 ${elapsed} 分・${left}`;
 }
 
 setInterval(() => {
-  for (const node of document.querySelectorAll('.sunset-clock[data-started]')) node.textContent = sunsetText(Number(node.dataset.started));
+  const room = ctx.latestRoom;
+  if (!room) return;
+  for (const node of document.querySelectorAll('.sunset-clock[data-sunset]')) node.textContent = sunsetLine(room, node.dataset.sunset);
 }, 1000);
 
 function linkButton(act, table, text, extra = {}) {
@@ -772,7 +780,7 @@ function footer(t, step) {
   const { game, state, key } = t;
   let clock = null;
   if (game && !t.ended && ctx.cardData && typeof game.startedAt === 'number') {
-    clock = h('span', { class: 'tc-clock sunset-clock', data: { started: game.startedAt }, text: sunsetText(game.startedAt) });
+    clock = h('span', { class: 'tc-clock sunset-clock', data: { sunset: key }, text: sunsetLine(t.room, key) });
   } else if (t.ended && game?.final) {
     clock = trunc('span', 'tc-clock', endReasonText(game.final));
   } else if (!game && t.match !== 1) {
@@ -1236,7 +1244,7 @@ export function renderHost(room) {
     if (!t) continue;
     if (t.game) {
       watchHostDiscards(t.game);
-      if (!t.ended) wakeAtSunset(t.game);
+      if (!t.ended) wakeAtSunset(t.game, t.key);
     }
     const limits = handLimits(t);
     cards.push({ t, limits, step: stepOf(t, limits) });
