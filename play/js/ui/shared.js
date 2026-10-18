@@ -43,7 +43,7 @@ export const ACHIEVEMENT_LABELS = { parliament: '議會之聲', gear: '齒輪大
 export const RESOURCE_LABELS = { pounds: '英鎊', influence: '影響力' };
 const MINUTE_MS = 60_000;
 
-// 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框浮在頂列下方（host.css），錯誤 8 秒後自己消失（字多的久一點；
+// 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框放在頂列下方（host.css），錯誤 8 秒後自己消失（字多的久一點；
 // 滑鼠停在上面時先不消失），按 × 可以先關掉；下一次按按鈕時照樣清掉。
 const NOTICE_MS = 8000;
 let noticeTimer = null;

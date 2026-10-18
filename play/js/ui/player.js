@@ -407,7 +407,7 @@ function roomFoot() {
 
 function header(m) {
   const { me, state, game } = m;
-  // 第 2 場準備中：桌況已經是新一場的第 1 回合日出，但還沒開局，標頭寫「準備中」、配沙漏與羊皮紙底（不用日出的圖示、場景圖與底色），
+  // 第 2 場準備中：桌況已經是新一場的第 1 回合日出，但還沒開局，標頭寫「準備中」、配準備中的記號與羊皮紙底（不用日出的圖示、場景圖與底色），
   // 不寫回合、不放迷霧值，免得像已經開始了。
   let where = state.phase === 'end' ? `第 ${me.table} 桌・第 ${game?.final?.round ?? state.round} 回合結束` : `第 ${me.table} 桌・第 ${state.round} 回合`;
   if (m.prep) where = `第 ${me.table} 桌・還沒開局`;

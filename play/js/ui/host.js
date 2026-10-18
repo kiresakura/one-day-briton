@@ -1252,7 +1252,7 @@ export function renderHost(room) {
   markTruncated($('screen-host'));
 }
 
-// 頁首的提示框浮在頂列下方（host.css 的 --host-top-h）：頂列在窄螢幕會折成兩行，照實際高度放。
+// 頁首的提示框放在頂列下方（host.css 的 --host-top-h）：頂列在比較小的畫面會變成兩行，照實際高度放。
 function markTopHeight() {
   if (!$('screen-host').hidden) document.body.style.setProperty('--host-top-h', `${$('host-top').offsetHeight}px`);
 }
