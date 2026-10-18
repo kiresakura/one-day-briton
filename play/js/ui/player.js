@@ -4,8 +4,8 @@
 // 兩場制（M9）：每次重畫先用 rules.js 的 activeKey 找自己這一桌目前的局號（第 1 場 "3"、第 2 場 "3-2"），局面、送出的票／黑夜選擇／
 // 挑的棄牌、本機暫存與計時器的鍵都用局號；畫面上的「第 3 桌」用實體桌號。第 2 場準備中看得到自己的新階層與要交卡給誰（shared.js 的
 // handovers），第 2 場結束看兩場合計（combinedOf）。
-// 主持人控制台（docs/CONSOLE-API.md）：畫面最上面一條全場廣播（home.js 的 broadcastNodes，「知道了」只收起這支手機）；
-// 「最後一回合」照那一場的全場日落鐘（clockOf）判斷。
+// 主持人控制台（docs/CONSOLE-API.md）：畫面最上面一條全場廣播（home.js 的 broadcastNodes，「知道了」只收起這支手機）；全場暫停時
+// 蓋上暫停層（game.js 的 pauseHold：自己這一桌暫停前就開著的倒數先跑完）；「最後一回合」照那一場的全場日落鐘（clockOf）判斷。
 import {
   DISCARD_REASONS,
   NIGHT_CHOICES,
@@ -21,6 +21,7 @@ import {
   needsTarget,
   nightStage,
   overLimit,
+  pauseHold,
   playProblem,
   responseDeadline,
   responseProblem,
@@ -45,7 +46,7 @@ import {
   watchVote,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
-import { broadcastNodes, dismissBroadcast } from './home.js';
+import { broadcastNodes, broadcastOf, dismissBroadcast } from './home.js';
 import {
   CHAIN_BONUS,
   CHOICE_LABELS,
@@ -135,12 +136,18 @@ let connected = true;
 let watching = false; // 已經訂閱自己的私密資料、請求、票、黑夜選擇、棄牌
 let shownPhase = null; // 上一次畫的階段：換階段時標頭淡入一次
 let sunsetWake = { at: null, timer: null }; // 日落鐘到點時重畫一次的計時器（at 是伺服器時間）
+let pauseWake = { at: null, timer: null }; // 「這個倒數結束後全場暫停」的倒數結束時重畫一次（蓋上暫停層）
+let covered = false; // 暫停層蓋著：所有動作都不接
 let generation = 0;
 const stops = [];
 
-// 最上面一條（捲動時也留在畫面上方）：全場廣播；動作列與分頁列在畫面底部，不會被它蓋到。
+// 最上面一條（捲動時也留在畫面上方）：「這個倒數結束後全場暫停」與全場廣播；動作列與分頁列在畫面底部，不會被它蓋到。
 const topBar = h('div', { class: 'player-top', attrs: { id: 'player-top', role: 'status' }, hidden: true });
 $('screen-player').prepend(topBar);
+// 全場暫停層：蓋住整個玩家畫面；底下的區塊設成 inert，按不到也移不了焦點。
+const pauseLayer = h('div', { class: 'pause-layer', attrs: { id: 'player-pause', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'player-pause-title', 'aria-describedby': 'player-pause-text', tabindex: '-1' }, hidden: true });
+$('screen-player').append(pauseLayer);
+const underPause = () => [topBar, $('player-head'), $('player-view'), $('screen-player').querySelector('.dock'), $('destiny-sheet')];
 
 // 回首頁時清掉玩家端的訂閱與暫存。
 export function resetPlayer() {
@@ -154,6 +161,8 @@ export function resetPlayer() {
   clearTimeout(windowEnd.timer);
   windowEnd = { id: null, timer: null };
   sunsetWake = wakeAt(sunsetWake, null);
+  pauseWake = wakeAt(pauseWake, null);
+  setCovered(false);
   topBar.hidden = true;
   topBar.replaceChildren();
   tab = 'action';
@@ -361,7 +370,7 @@ function model(room, me) {
   return { room, me, key, match, first, firstSeat, prep: match !== 1 && !game, state, game, seat, wait, hand, day, ended, ending, clock };
 }
 
-// ---- 到點重畫、全場廣播 ----
+// ---- 到點重畫、全場廣播與暫停 ----
 
 // 到了伺服器時間 at 時重畫一次：at 跟排好的一樣就不動，變了就改排，null 是不排。回傳新的 { at, timer }。
 function wakeAt(wake, at) {
@@ -379,11 +388,45 @@ function wakeAtSunset(m) {
   sunsetWake = wakeAt(sunsetWake, status?.sunsetAt ?? null);
 }
 
-// 最上面一條：全場廣播（這支手機按過「知道了」的那一則不放）。
+// 全場暫停（display/pause）對自己這一局：{ covered, until }。沒有暫停（含舊房間沒有 display）是 { covered: false, until: null }。
+function pauseOf(m) {
+  return pauseHold(m.room.display?.pause, m.game, m.state, ctx.cardData?.data.settings, serverTime(ctx.session));
+}
+
+function setCovered(value) {
+  if (covered === value) return;
+  covered = value;
+  pauseLayer.hidden = !value;
+  for (const node of underPause()) node?.toggleAttribute('inert', value);
+  if (!value) return;
+  setHolding(false);
+  pauseLayer.focus({ preventScroll: true });
+}
+
+// 暫停層：暫停字樣、目前的廣播（不管這支手機收起了沒）、自己的連線狀態。
+function pauseNodes(m) {
+  const cast = broadcastOf(m.room.display);
+  return [
+    h('span', { class: 'pause-mark', attrs: { 'aria-hidden': 'true' } }),
+    h('h2', { class: 'pause-title', attrs: { id: 'player-pause-title' }, text: '暫停中' }),
+    h('p', { class: 'pause-text', attrs: { id: 'player-pause-text' }, text: '請聽主持人說明' }),
+    cast ? h('p', { class: 'pause-cast', data: { key: 'pause-cast' } }, h('span', { class: 'broadcast-tag', text: '廣播' }), h('span', { class: 'pause-cast-text', text: cast.text })) : null,
+    h('p', { class: 'pause-conn', data: { key: 'pause-conn' } }, connPill(connected)),
+  ];
+}
+
+// 最上面一條與暫停層。until 有值（暫停前就開著的倒數還在跑）時先寫「這個倒數結束後全場暫停」，到點重畫時蓋上。
 function renderConsole(m) {
-  const nodes = broadcastNodes(m.room.display, ctx.code);
+  const { covered: cover, until } = pauseOf(m);
+  pauseWake = wakeAt(pauseWake, until);
+  const nodes = [
+    until === null ? null : h('p', { class: 'pause-soon', data: { key: 'pause-soon' } }, h('span', { class: 'pause-soon-mark', attrs: { 'aria-hidden': 'true' } }), h('span', { text: '這個倒數結束後全場暫停' })),
+    ...broadcastNodes(m.room.display, ctx.code),
+  ].filter(Boolean);
   topBar.hidden = nodes.length === 0;
   patchChildren(topBar, nodes);
+  if (cover) patchChildren(pauseLayer, pauseNodes(m));
+  setCovered(cover);
 }
 
 // 現在需要我動作的情況（輪到我、響應窗口、黃昏開票、黑夜、要棄牌）；沒有是 null。
@@ -1572,7 +1615,7 @@ function destinySheet(m) {
 }
 
 function setHolding(value) {
-  if (holding === value) return;
+  if (holding === value || (value && covered)) return;
   holding = value;
   const sheet = $('destiny-sheet');
   sheet.hidden = !holding;
@@ -1775,14 +1818,16 @@ const actions = {
   },
 };
 
+// 暫停層蓋著時什麼都不接（底下已經是 inert；不支援 inert 的舊瀏覽器靠這裡與下面的焦點檢查擋）。
 $('screen-player').addEventListener('click', (event) => {
   const target = event.target.closest('[data-act]');
-  if (!target || target.disabled || !$('screen-player').contains(target)) return;
+  if (covered || !target || target.disabled || !$('screen-player').contains(target)) return;
   actions[target.dataset.act]?.(target.dataset, target);
 });
 
 $('screen-player').addEventListener('change', (event) => {
   const target = event.target.closest('[data-change]');
+  if (covered) return;
   if (target?.dataset.change === 'person' && composing) {
     composing[target.dataset.field] = target.value || null;
     rerender();
@@ -1807,3 +1852,8 @@ hold.addEventListener('keydown', (event) => {
 hold.addEventListener('keyup', () => setHolding(false));
 hold.addEventListener('blur', () => setHolding(false));
 document.addEventListener('visibilitychange', () => setHolding(false));
+
+// 暫停層蓋著時焦點留在暫停層上（用 Tab 鍵或讀出畫面的工具也到不了底下的按鈕）。
+document.addEventListener('focusin', (event) => {
+  if (covered && !pauseLayer.contains(event.target)) pauseLayer.focus({ preventScroll: true });
+});

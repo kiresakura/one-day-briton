@@ -1897,7 +1897,7 @@ body[data-phase='night'] .notice-card {
   }
 }
 
-/* ---- 主持人控制台：最上面一條（全場廣播） ---- */
+/* ---- 主持人控制台：最上面一條（「這個倒數結束後全場暫停」、全場廣播）與全場暫停層 ---- */
 
 /* 黏在畫面頂端，捲動時一直看得到；動作列與分頁列黏在底部，不會被它蓋到（內容捲上來時從它下面經過，按「知道了」就不佔位）。
    有它的時候瀏海的留白由它的第一條負責，標頭不再多留。 */
@@ -1913,4 +1913,97 @@ body[data-phase='night'] .notice-card {
 
 .player-top:not([hidden]) + .phase-head {
   padding-top: 6px;
+}
+
+.pause-soon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.pause-soon-mark {
+  flex: none;
+  width: 12px;
+  height: 14px;
+  border-left: 4px solid currentColor;
+  border-right: 4px solid currentColor;
+}
+
+/* 暫停層蓋住整個畫面（含動作列與分頁列）；深藍底、米白字（對比 ≥ 17:1），廣播用金色字（≥ 11:1）。 */
+.pause-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(14, 21, 34, 0.97);
+  color: #fffdf8;
+  text-align: center;
+  animation: rise-in 0.24s ease both;
+}
+
+.pause-layer:focus {
+  outline: none;
+}
+
+.pause-mark {
+  width: 44px;
+  height: 52px;
+  border-left: 15px solid #ecd29a;
+  border-right: 15px solid #ecd29a;
+}
+
+.pause-title {
+  font-family: var(--font-title);
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.pause-text {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+}
+
+.pause-cast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #8a6417;
+  border-radius: var(--r-md);
+  background: #152036;
+  color: #ecd29a;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.pause-cast .broadcast-tag {
+  margin-top: 2px;
+  background: #ecd29a;
+  color: #2a1d08;
+}
+
+.pause-cast-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pause-conn {
+  color: #a7b3c8;
+  font-size: var(--fs-small);
 }
