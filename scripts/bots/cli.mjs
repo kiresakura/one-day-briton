@@ -221,6 +221,7 @@ async function main() {
 
   // 同一個房間同時有另一個指令在放機器人時，可能撞名、超過一桌的人數上限（joinRoom 不查人數，開局才查）：再讀一次，
   // 多出來的（較晚加入的）機器人離開。
+  let crowdedOff = 0;
   if (bots.length > 0 && !halt) {
     let timer;
     await unlessHalted(new Promise((resolve) => (timer = setTimeout(resolve, RECHECK_MS))));
@@ -233,13 +234,14 @@ async function main() {
         const bot = bots.find((item) => item.uid === uid);
         console.log(`注意：${bot.name} ${why}，離開（同一個房間請一次只跑一個指令）`);
         bot.stop(why);
+        crowdedOff += 1;
       }
       if (crowd.seated > capacity) {
         console.log(`注意：第 ${plan.table} 桌名單上有 ${crowd.seated} 人，超過一桌 ${capacity} 人，主持端開不了局；請有人換桌或按「離開」`);
       }
     }
   }
-  if (bots.length > 0 && !halt) console.log('都入座了，等主持端開局。要提早結束請按 Ctrl-C。');
+  if (bots.length > crowdedOff && !halt) console.log('都入座了，等主持端開局。要提早結束請按 Ctrl-C。');
 
   const results = await Promise.all(bots.map((bot) => bot.done));
   results.forEach((result, index) => {
