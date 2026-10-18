@@ -192,6 +192,17 @@
 
 ## 7. 接線注意
 
+- **上線相依：任何能開 `clock/{m}` 的畫面，必須跟「主持端與玩家端改成照全場鐘判斷」同一次（或更晚）上線。**
+  `advanceOrEnd` 已經照全場鐘判斷要不要算分，畫面卻還照各桌的 `startedAt`：全場鐘被減到日落、各桌時間還沒到時，桌卡寫「下一階段 ▸／下一階段是第 N＋1 回合日出」，
+  主持人一按就算分（不可逆）；全場鐘暫停中、各桌時間已經過了時，桌卡寫「（算分）」、告訴手牌超過上限的人不用棄，實際卻推進到下一回合日出、把他們隨機棄牌。
+  目前沒有任何畫面能開鐘，所以資料層單獨上線是安全的。要跟著換的呼叫點（行號是 main `f3204a1` 的）：
+  - `ui/shared.js:467-472` `endReasonNow`（改呼叫 `endReasonAt`，帶 `clockOf(room, 局號)`）、`:474-477` `wakeAtSunset`（改用 `sunsetStatus(…).sunsetAt`）；
+  - `ui/host.js:148`（桌卡的 `reason`，`:151` 的 `ending` 由它來）、`:175-182` `handLimits`（「這一回合結束就算分：手牌超過上限的不用棄…」）、
+    `:197-198` 按鈕字樣（「下一階段（算分）」／「下一階段 ▸」）、`:291-295` 黑夜揭曉後的標題與「下一階段是第 N＋1 回合日出」、`:478` 色帶上的「最後一回合」、
+    `:755-763` 每桌的 `sunsetText` 倒數與照 `data-started` 每秒更新的 interval（改用 `sunsetStatus`；`:775` 是放 `data-started` 的地方）；
+  - `ui/player.js:346`（`ending`）、`:1553`（`wakeAtSunset(game)`）。
+  - 另外也跟著 `ending`／`reason` 走、要一起看的：`ui/host.js:785`（「這回合結束後算分」鈕只在 `reason` 是 `null` 或 `host` 時顯示）、`:1239`（`wakeAtSunset(t.game)`），
+    `ui/player.js:358`、`:429`、`:1096`、`:1118`、`:1431`、`:1709`（都用 `:346` 的 `ending`）。
 - **最後一回合與日落重畫**（`shared.js`）：`endReasonNow(game, state)` 改成呼叫 `endReasonAt(game, state, settings, serverTime(session), clockOf(room, 局號))`
   （呼叫端要多傳房間與局號，或直接傳那一場的鐘）；`wakeAtSunset(game)` 改用 `sunsetStatus(…).sunsetAt` 排重畫（暫停中是 `null`，不用排；鐘一變房間就會重畫）。
   主持端與玩家端用同一個函式，「最後一回合」的判斷各端一致；`advanceOrEnd` 也是同一個判斷。
