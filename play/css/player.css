@@ -1896,3 +1896,21 @@ body[data-phase='night'] .notice-card {
     transform: none;
   }
 }
+
+/* ---- 主持人控制台：最上面一條（全場廣播） ---- */
+
+/* 黏在畫面頂端，捲動時一直看得到；動作列與分頁列黏在底部，不會被它蓋到（內容捲上來時從它下面經過，按「知道了」就不佔位）。
+   有它的時候瀏海的留白由它的第一條負責，標頭不再多留。 */
+.player-top {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+}
+
+.player-top > :first-child {
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+
+.player-top:not([hidden]) + .phase-head {
+  padding-top: 6px;
+}

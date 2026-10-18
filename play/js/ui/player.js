@@ -4,7 +4,8 @@
 // 兩場制（M9）：每次重畫先用 rules.js 的 activeKey 找自己這一桌目前的局號（第 1 場 "3"、第 2 場 "3-2"），局面、送出的票／黑夜選擇／
 // 挑的棄牌、本機暫存與計時器的鍵都用局號；畫面上的「第 3 桌」用實體桌號。第 2 場準備中看得到自己的新階層與要交卡給誰（shared.js 的
 // handovers），第 2 場結束看兩場合計（combinedOf）。
-// 主持人控制台（docs/CONSOLE-API.md）：「最後一回合」照那一場的全場日落鐘（clockOf）判斷。
+// 主持人控制台（docs/CONSOLE-API.md）：畫面最上面一條全場廣播（home.js 的 broadcastNodes，「知道了」只收起這支手機）；
+// 「最後一回合」照那一場的全場日落鐘（clockOf）判斷。
 import {
   DISCARD_REASONS,
   NIGHT_CHOICES,
@@ -44,6 +45,7 @@ import {
   watchVote,
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
+import { broadcastNodes, dismissBroadcast } from './home.js';
 import {
   CHAIN_BONUS,
   CHOICE_LABELS,
@@ -136,6 +138,10 @@ let sunsetWake = { at: null, timer: null }; // 日落鐘到點時重畫一次的
 let generation = 0;
 const stops = [];
 
+// 最上面一條（捲動時也留在畫面上方）：全場廣播；動作列與分頁列在畫面底部，不會被它蓋到。
+const topBar = h('div', { class: 'player-top', attrs: { id: 'player-top', role: 'status' }, hidden: true });
+$('screen-player').prepend(topBar);
+
 // 回首頁時清掉玩家端的訂閱與暫存。
 export function resetPlayer() {
   generation += 1;
@@ -148,6 +154,8 @@ export function resetPlayer() {
   clearTimeout(windowEnd.timer);
   windowEnd = { id: null, timer: null };
   sunsetWake = wakeAt(sunsetWake, null);
+  topBar.hidden = true;
+  topBar.replaceChildren();
   tab = 'action';
   lastNeed = null;
   handOpen = false;
@@ -353,7 +361,7 @@ function model(room, me) {
   return { room, me, key, match, first, firstSeat, prep: match !== 1 && !game, state, game, seat, wait, hand, day, ended, ending, clock };
 }
 
-// ---- 到點重畫 ----
+// ---- 到點重畫、全場廣播 ----
 
 // 到了伺服器時間 at 時重畫一次：at 跟排好的一樣就不動，變了就改排，null 是不排。回傳新的 { at, timer }。
 function wakeAt(wake, at) {
@@ -369,6 +377,13 @@ function wakeAtSunset(m) {
   const settings = ctx.cardData?.data.settings;
   const status = settings && m.state.phase !== 'end' ? sunsetStatus(m.game, settings, serverTime(ctx.session), m.clock) : null;
   sunsetWake = wakeAt(sunsetWake, status?.sunsetAt ?? null);
+}
+
+// 最上面一條：全場廣播（這支手機按過「知道了」的那一則不放）。
+function renderConsole(m) {
+  const nodes = broadcastNodes(m.room.display, ctx.code);
+  topBar.hidden = nodes.length === 0;
+  patchChildren(topBar, nodes);
 }
 
 // 現在需要我動作的情況（輪到我、響應窗口、黃昏開票、黑夜、要棄牌）；沒有是 null。
@@ -1609,6 +1624,7 @@ export function renderPlayer(room, me) {
   patchChildren($('player-actions'), bar);
   for (const button of document.querySelectorAll('.tab-bar .tab[data-tab]')) button.setAttribute('aria-pressed', String(button.dataset.tab === tab));
   if (holding) patchChildren($('destiny-sheet'), destinySheet(m));
+  renderConsole(m);
   markTruncated($('player-view'));
 }
 
@@ -1751,6 +1767,10 @@ const actions = {
   },
   'first-destinies': () => {
     showFirstDestinies = !showFirstDestinies;
+    rerender();
+  },
+  'broadcast-ok': ({ seq }) => {
+    dismissBroadcast(ctx.code, Number(seq));
     rerender();
   },
 };
