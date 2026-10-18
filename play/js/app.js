@@ -158,17 +158,41 @@ loadGameData()
     if (!$('screen-host-entry').hidden) renderHostEntry();
   });
 
-try {
-  ctx.session = await connect(slot);
-  if (projector) {
-    const { startProjector } = await import('./ui/screen.js');
-    await startProjector(ctx.session);
-  } else {
+// 投影畫面自己接錯誤：連不上與投影畫面的檔載入、啟動失敗分開寫（後者重新整理就好，不用去查網路），字寫在載入頁那一行，
+// 拿掉投影舞台（它蓋在整頁上面，頁面頂端的提示會被蓋住），並記在 console。
+function projectorFailed(text, error) {
+  console.error(text, error);
+  document.getElementById('screen-projector')?.remove();
+  document.documentElement.classList.remove('is-projector');
+  const loading = $('screen-loading');
+  loading.hidden = false;
+  const line = loading.querySelector('.loading');
+  if (line) line.textContent = text;
+  else notify(text);
+}
+
+if (projector) {
+  try {
+    ctx.session = await connect(slot);
+  } catch (error) {
+    projectorFailed('連不上遊戲伺服器，請確認網路後重新整理頁面', error);
+  }
+  if (ctx.session) {
+    try {
+      const { startProjector } = await import('./ui/screen.js');
+      await startProjector(ctx.session);
+    } catch (error) {
+      projectorFailed('投影畫面載入失敗，請重新整理', error);
+    }
+  }
+} else {
+  try {
+    ctx.session = await connect(slot);
     watchConnection(ctx.session, showConnection);
     const saved = localStorage.getItem(savedRoomKey);
     if (isRoomCode(saved)) enterRoom(saved);
     else show('home');
+  } catch {
+    notify('連不上遊戲伺服器，請確認網路後重新整理頁面');
   }
-} catch {
-  notify('連不上遊戲伺服器，請確認網路後重新整理頁面');
 }
