@@ -143,34 +143,36 @@ test('全部開始：逐桌的結果（開了幾人、別台先開了、錯誤�
 });
 
 test('日落鐘的按鈕：日落後都不能按、累計到上限的那一邊不能按；全場暫停中照鐘是哪一種寫原因，沒被停住的可以手動暫停', () => {
+  // 房間資料裡只有第 match 場這個鐘（pause 是 display/pause）：按鈕照房間資料分，不看 setPause 的回傳。
+  const at = (clock, pause = null, match = 1) => ({ clock: { [match]: clock }, display: pause ? { pause } : {} });
   const now = 1_000_000;
   const clock = { ...clockStartWrite(75, now - 10 * MINUTE), by: 'a' };
-  assert.deepEqual(clockGuards(clock, now), { toggle: null, minus: null, plus: null, hold: null });
+  assert.deepEqual(clockGuards(at(clock), 1, now), { toggle: null, minus: null, plus: null, hold: null });
   // 全場暫停中：被這次暫停停住的、手動暫停的、快日落的不能按暫停／繼續（各寫各的原因）；在走、沒被停住的可以手動暫停。
   const pause = { on: true, seq: 1, at: now - 5_000, clocks: { 1: true } };
   const held = { ...clock, pausedAt: pause.at, seq: 2 };
-  assert.deepEqual(clockGuards(held, now, { pause, match: 1 }), { toggle: '被這次全場暫停停住（恢復時一起繼續）', minus: null, plus: null, hold: 'held' });
-  assert.equal(clockGuards({ ...held, pausedAt: now - 60_000 }, now, { pause, match: 1 }).toggle, '手動暫停的（恢復全場後要自己按繼續）');
-  assert.equal(clockGuards(held, now, { pause, match: 2 }).toggle, '手動暫停的（恢復全場後要自己按繼續）');
+  assert.deepEqual(clockGuards(at(held, pause), 1, now), { toggle: '被這次全場暫停停住（恢復時一起繼續）', minus: null, plus: null, hold: 'held' });
+  assert.equal(clockGuards(at({ ...held, pausedAt: now - 60_000 }, pause), 1, now).toggle, '手動暫停的（恢復全場後要自己按繼續）');
+  assert.equal(clockGuards(at(held, pause, 2), 2, now).toggle, '手動暫停的（恢復全場後要自己按繼續）');
   const soon = { ...clock, remain: clock.remain - 65 * MINUTE + 8_000 }; // 剩 8 秒
-  assert.deepEqual(clockGuards(soon, now, { pause, match: 1 }), { toggle: '快日落・照常日落、不停', minus: null, plus: null, hold: 'near' });
-  assert.deepEqual(clockGuards(clock, now, { pause, match: 1 }), { toggle: null, minus: null, plus: null, hold: 'free' });
-  assert.equal(clockGuards(soon, now, { pause: { ...pause, on: false }, match: 1 }).toggle, null);
+  assert.deepEqual(clockGuards(at(soon, pause), 1, now), { toggle: '快日落・照常日落、不停', minus: null, plus: null, hold: 'near' });
+  assert.deepEqual(clockGuards(at(clock, pause), 1, now), { toggle: null, minus: null, plus: null, hold: 'free' });
+  assert.equal(clockGuards(at(soon, { ...pause, on: false }), 1, now).toggle, null);
   const plus30 = { ...clock, remain: clock.remain + 30 * MINUTE, adjust: 30 * MINUTE };
-  assert.equal(clockGuards(plus30, now).minus, null);
-  assert.match(clockGuards(plus30, now).plus, /累計已經加了 30 分/);
+  assert.equal(clockGuards(at(plus30), 1, now).minus, null);
+  assert.match(clockGuards(at(plus30), 1, now).plus, /累計已經加了 30 分/);
   const minus30 = { ...clock, remain: clock.remain - 30 * MINUTE, adjust: -30 * MINUTE };
-  assert.match(clockGuards(minus30, now).minus, /累計已經減了 30 分/);
-  const passed = clockGuards(clock, now + 66 * MINUTE);
+  assert.match(clockGuards(at(minus30), 1, now).minus, /累計已經減了 30 分/);
+  const passed = clockGuards(at(clock), 1, now + 66 * MINUTE);
   assert.ok(passed.toggle && passed.minus && passed.plus);
   // 暫停中被減到剛好 0 也算日落：都不能按（繼續也不行）。
   const paused = { ...clock, pausedAt: now, seq: 2 };
   const near = { ...paused, remain: now - paused.anchor + 5 * MINUTE, adjust: -20 * MINUTE };
   const zero = clockAdjustWrite(near, -10 * MINUTE, now); // 剩 5 分，減 10 分夾成減到 0
   assert.equal(zero.remain - (zero.pausedAt - zero.anchor), 0);
-  assert.match(clockGuards(zero, now).plus, /已經日落/);
-  assert.match(clockGuards(zero, now).toggle, /已經日落/);
-  assert.equal(clockGuards(null, now), null);
+  assert.match(clockGuards(at(zero), 1, now).plus, /已經日落/);
+  assert.match(clockGuards(at(zero), 1, now).toggle, /已經日落/);
+  assert.equal(clockGuards(at(null), 1, now), null);
 });
 
 test('要顯示哪幾場的鐘：都在第 1 場 [1]、有桌開了第 2 場而第 1 場還有桌在打 [1, 2]、第 1 場都打完 [2]', () => {

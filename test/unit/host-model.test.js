@@ -9,7 +9,7 @@ import {
   OFFLINE_TEXT,
   PAUSED_TEXT,
   actionWhy,
-  clockUnderPause,
+  clockPauseState,
   heldByPause,
   manualPausedMatches,
   nearSunsetLine,
@@ -77,18 +77,47 @@ const room = (clocks, pause = null) => ({ clock: clocks, display: pause ? { paus
 
 test('全場暫停中的鐘：被這次暫停停住、手動暫停的、快日落（不到 10 秒，照常日落）、沒被停住；沒有暫停或已經日落是 null', () => {
   assert.equal(PAUSE_NEAR_SUNSET_MS, 10_000);
-  assert.equal(clockUnderPause(held(30 * MINUTE), PAUSE, '1', NOW), 'held');
+  assert.equal(clockPauseState(room({ 1: held(30 * MINUTE) }, PAUSE), '1', NOW), 'held');
   assert.equal(heldByPause(held(30 * MINUTE), PAUSE, 1), true);
   // 第 2 場不在 pause.clocks；第 1 場在，但停住的時刻不是暫停那一筆（暫停中被手動繼續又暫停）：都是手動暫停的。
-  assert.equal(clockUnderPause(held(30 * MINUTE), PAUSE, '2', NOW), 'manual');
-  assert.equal(clockUnderPause(clock(30 * MINUTE, { paused: true }), PAUSE, '1', NOW), 'manual');
-  assert.equal(clockUnderPause(clock(PAUSE_NEAR_SUNSET_MS), PAUSE, '1', NOW), 'near');
-  assert.equal(clockUnderPause(clock(PAUSE_NEAR_SUNSET_MS + 1), PAUSE, '1', NOW), 'free');
-  assert.equal(clockUnderPause(clock(40 * MINUTE), PAUSE, '1', NOW), 'free');
-  assert.equal(clockUnderPause(clock(0), PAUSE, '1', NOW), null);
-  assert.equal(clockUnderPause(clock(40 * MINUTE), { ...PAUSE, on: false }, '1', NOW), null);
-  assert.equal(clockUnderPause(clock(40 * MINUTE), null, '1', NOW), null);
-  assert.equal(clockUnderPause(null, PAUSE, '1', NOW), null);
+  assert.equal(clockPauseState(room({ 2: held(30 * MINUTE) }, PAUSE), '2', NOW), 'manual');
+  assert.equal(clockPauseState(room({ 1: clock(30 * MINUTE, { paused: true }) }, PAUSE), '1', NOW), 'manual');
+  assert.equal(clockPauseState(room({ 1: clock(PAUSE_NEAR_SUNSET_MS) }, PAUSE), '1', NOW), 'near');
+  assert.equal(clockPauseState(room({ 1: clock(PAUSE_NEAR_SUNSET_MS + 1) }, PAUSE), '1', NOW), 'free');
+  assert.equal(clockPauseState(room({ 1: clock(40 * MINUTE) }, PAUSE), 1, NOW), 'free');
+  assert.equal(clockPauseState(room({ 1: clock(0) }, PAUSE), '1', NOW), null);
+  assert.equal(clockPauseState(room({ 1: clock(40 * MINUTE) }, { ...PAUSE, on: false }), '1', NOW), null);
+  assert.equal(clockPauseState(room({ 1: clock(40 * MINUTE) }), '1', NOW), null);
+  assert.equal(clockPauseState(room({}, PAUSE), '1', NOW), null);
+  assert.equal(clockPauseState(null, '1', NOW), null);
+});
+
+test('全場暫停中的鐘照房間資料分、每一台都一樣：changed: false 的那一台、別台主持端、重新整理後、暫停中走進最後 10 秒、手動暫停後再全場暫停', () => {
+  // A 在第 1 場剩 8 秒時按全場暫停：store 不停它（nearSunset ['1']），pause 沒有 clocks。寫完的房間資料只有這一份。
+  const nearPause = { on: true, seq: 2, at: NOW - 1_000, by: 'a' };
+  const after = room({ 1: clock(8_000) }, nearPause);
+  const a = pauseReport(true, { changed: true, clocks: [], nearSunset: ['1'] }, room({ 1: clock(9_000) }), after, NOW);
+  assert.match(a.text, /第 1 場日落鐘快日落/);
+  // B 同時按、後到：changed: false、兩欄都是空的。結果條只講本來就是全場暫停中，不從空陣列推論「沒停住、可以手動暫停」。
+  const b = pauseReport(true, { changed: false, clocks: [], nearSunset: [] }, room({ 1: clock(9_000) }), after, NOW);
+  assert.deepEqual(b, { ok: true, warn: false, text: '本來就是全場暫停中' });
+  // 面板：按的那一台、後到的那一台、沒按的別台主持端、重新整理後讀到的都是同一份房間資料，都是快日落（不給手動暫停）。
+  for (const seen of [after, structuredClone(after), JSON.parse(JSON.stringify(after))]) assert.equal(clockPauseState(seen, '1', NOW), 'near');
+  // 暫停中才走進最後 10 秒：寫的時候剩 15 秒（被拒後不帶鐘重送，沒停住），6 秒後剩 9 秒就是快日落；結果條也不叫人按暫停。
+  const resent = room({ 2: clock(15_000) }, nearPause);
+  assert.equal(clockPauseState(resent, '2', NOW), 'free');
+  assert.equal(clockPauseState(resent, '2', NOW + 6_000), 'near');
+  const late = pauseReport(true, { changed: true, clocks: [], nearSunset: [] }, resent, resent, NOW + 6_000);
+  assert.match(late.text, /第 2 場日落鐘快日落/);
+  assert.doesNotMatch(late.text, /按暫停/);
+  assert.match(pauseReport(true, { changed: true, clocks: [], nearSunset: [] }, resent, resent, NOW).text, /第 2 場日落鐘沒有停住：要停可以在日落鐘面板按暫停/);
+  // 先手動暫停（一分鐘前）再全場暫停：store 不記已經停著的鐘；就算記了，停住的時刻不是暫停那一筆，也是手動暫停的。恢復後照房間資料提醒。
+  const manual = { ...clock(30 * MINUTE, { paused: true }), pausedAt: NOW - 60_000 };
+  assert.equal(clockPauseState(room({ 1: manual }, nearPause), '1', NOW), 'manual');
+  assert.equal(clockPauseState(room({ 1: manual }, { ...nearPause, clocks: { 1: true } }), '1', NOW), 'manual');
+  const resumed = room({ 1: manual }, { ...nearPause, on: false });
+  assert.match(pauseReport(false, { changed: true, clocks: [], nearSunset: [] }, room({ 1: manual }, nearPause), resumed, NOW).text, /第 1 場日落鐘還在暫停（手動暫停的）/);
+  assert.equal(clockPauseState(resumed, '1', NOW), null);
 });
 
 test('快日落的場次（全場暫停確認框先講）與手動暫停的場次（恢復確認框先講）', () => {
@@ -146,7 +175,15 @@ test('恢復全場之後的結果條：接著走的、沒跟著繼續的、還�
     warn: true,
     text: '恢復全場了；第 1 場日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續',
   });
-  assert.deepEqual(pauseReport(false, { changed: false, clocks: [], nearSunset: [] }, before, before, later), { ok: true, warn: false, text: '本來就沒有全場暫停' });
+  // changed: false（別台先恢復了）：回傳是空的，但第 2 場還停著是房間資料說的，照樣提醒；房間裡沒有還停著的就只講本來就沒有。
+  assert.deepEqual(pauseReport(false, { changed: false, clocks: [], nearSunset: [] }, before, after, later), { ok: true, warn: false, text: '本來就沒有全場暫停' });
+  assert.deepEqual(pauseReport(false, { changed: false, clocks: [], nearSunset: [] }, before, room({ 1: clock(30 * MINUTE), 2: clock(20 * MINUTE, { paused: true }) }), later), {
+    ok: true,
+    warn: true,
+    text: '本來就沒有全場暫停；第 2 場日落鐘還在暫停（手動暫停的），要繼續請在日落鐘面板按繼續',
+  });
+  // 手動暫停的鐘提不提醒只看房間資料：回傳就算把第 2 場也列進 clocks，寫完還停著就提醒。
+  assert.match(pauseReport(false, { changed: true, clocks: ['1', '2'], nearSunset: [] }, before, before, later).text, /第 2 場日落鐘還在暫停（手動暫停的）/);
 });
 
 test('局面的指紋：「這回合結束後算分」、兩個全場鐘的序號、黑夜的桌該不該算分（鐘到了）變了都會變；不相干的不變', () => {

@@ -46,9 +46,14 @@ export function heldByPause(clock, pause, match) {
   return pause?.clocks?.[match] === true && clockPaused(clock) && clock.pausedAt === pause.at;
 }
 
-// 全場暫停中，這一場的鐘是哪一種（沒有全場暫停、沒有鐘、已經日落是 null）：held＝被這次全場暫停停住；manual＝手動暫停的；
-// near＝正在走、離日落不到 PAUSE_NEAR_SUNSET_MS（全場暫停照設計不停它）；free＝正在走、沒被停住（例如被拒後不帶鐘重送）。
-export function clockUnderPause(clock, pause, match, now) {
+// 全場暫停中，第 match 場的鐘是哪一種（沒有全場暫停、沒有鐘、已經日落是 null）。只看房間資料（display/pause 與 clock），不看 setPause
+// 的回傳：回傳只有按的那一台、這一次寫進去才有（changed: false 的那一台、別台主持端、重新整理後都沒有），所以每一台、每次重畫都照這個分。
+// held＝在 pause.clocks、停住的時刻就是暫停那一筆的時刻（恢復全場時一起繼續）；manual＝其他暫停著的（恢復全場後要自己按繼續）；
+// near＝正在走、照這台估的伺服器時間離日落不到 PAUSE_NEAR_SUNSET_MS（照常日落、不給手動暫停；暫停中才走進最後 10 秒的也是）；
+// free＝其他正在走的（沒被停住，例如被拒後不帶鐘重送；可以手動暫停）。
+export function clockPauseState(room, match, now) {
+  const pause = room?.display?.pause ?? null;
+  const clock = room?.clock?.[match];
   if (pause?.on !== true || !isClock(clock) || clockPassed(clock, now)) return null;
   if (clockPaused(clock)) return heldByPause(clock, pause, match) ? 'held' : 'manual';
   return clockRemaining(clock, now) <= PAUSE_NEAR_SUNSET_MS ? 'near' : 'free';
@@ -83,21 +88,27 @@ export function manualPausedMatches(room) {
   });
 }
 
-// 全場暫停（on）或恢復之後結果條的一句：{ ok, warn, text }。result 是 store.js setPause 的回傳 { changed, clocks, nearSunset }；
+// 全場暫停（on）或恢復之後，按的那一台結果條的一句：{ ok, warn, text }。result 是 store.js setPause 的回傳 { changed, clocks, nearSunset }，
+// 只用在這裡（面板與按鈕照 clockPauseState）；changed: false（本來就是那樣，例如兩台同時按的後到者）時兩欄都是空的，不拿來推論鐘。
 // before 是按下去時的房間資料，after 是寫完之後的（還沒收到就給 before），now 是寫完的時刻。暫停：在 clocks 的停住了、在 nearSunset 的
-// 快日落照常日落（不叫人手動暫停）、按下去時在走而且現在還沒日落、兩邊都不在的沒停住（可以手動暫停，恢復全場時不會自動繼續）。
-// 恢復：被這次暫停停住卻沒跟著繼續的、手動暫停而且還停著的都提醒。
+// 快日落照常日落；其他正在走、還沒日落的照寫完的鐘分：離日落不到 PAUSE_NEAR_SUNSET_MS 的也是快日落（面板不給手動暫停，這裡也不叫人
+// 按），其餘沒停住（可以手動暫停，恢復全場時不會自動繼續）。恢復：被這次暫停停住卻沒跟著繼續的照回傳提醒；還停著的手動暫停鐘照房間
+// 資料比（按下去時是手動暫停的、寫完還停著），不看回傳，changed: false 的那一台也提醒。
 export function pauseReport(on, result, before, after, now) {
-  if (!result?.changed) return { ok: true, warn: false, text: on ? '本來就是全場暫停中' : '本來就沒有全場暫停' };
-  const done = (result.clocks ?? []).map(String);
+  const changed = result?.changed === true;
+  const done = changed ? (result.clocks ?? []).map(String) : [];
   const clocks = CLOCK_KEYS.filter((match) => isClock(before?.clock?.[match]));
+  const latest = after ?? before;
   const parts = [];
   if (on) {
+    if (!changed) return { ok: true, warn: false, text: '本來就是全場暫停中' };
     const near = (result.nearSunset ?? []).map(String);
-    const missed = clocks.filter((match) => {
-      const clock = before.clock[match];
-      return !clockPaused(clock) && !clockPassed(clock, now) && !done.includes(match) && !near.includes(match);
+    const running = clocks.filter((match) => {
+      const clock = latest?.clock?.[match];
+      return !done.includes(match) && !near.includes(match) && isClock(clock) && !clockPaused(clock) && !clockPassed(clock, now);
     });
+    near.push(...running.filter((match) => clockRemaining(latest.clock[match], now) <= PAUSE_NEAR_SUNSET_MS));
+    const missed = running.filter((match) => !near.includes(match));
     parts.push('全場暫停了');
     if (done.length) parts.push(`${namesOf(done)}日落鐘一起停住`);
     if (near.length) parts.push(`${namesOf(near)}日落鐘快日落（不到 ${NEAR_SECONDS} 秒）・照常日落、不停：各桌這一回合結束後算分`);
@@ -105,10 +116,9 @@ export function pauseReport(on, result, before, after, now) {
     return { ok: true, warn: near.length + missed.length > 0, text: parts.join('；') };
   }
   const pause = before?.display?.pause ?? null;
-  const missed = clocks.filter((match) => heldByPause(before.clock[match], pause, match) && !done.includes(match));
-  const latest = after ?? before;
-  const manual = manualPausedMatches(before).filter((match) => !done.includes(match) && clockPaused(latest?.clock?.[match]) && !clockPassed(latest.clock[match], now));
-  parts.push('恢復全場了');
+  const missed = clocks.filter((match) => changed && heldByPause(before.clock[match], pause, match) && !done.includes(match));
+  const manual = manualPausedMatches(before).filter((match) => clockPaused(latest?.clock?.[match]) && !clockPassed(latest.clock[match], now));
+  parts.push(changed ? '恢復全場了' : '本來就沒有全場暫停');
   if (done.length) parts.push(`${namesOf(done)}日落鐘接著走`);
   if (missed.length) parts.push(`${namesOf(missed)}日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續`);
   if (manual.length) parts.push(`${namesOf(manual)}日落鐘還在暫停（手動暫停的），要繼續請在日落鐘面板按繼續`);
