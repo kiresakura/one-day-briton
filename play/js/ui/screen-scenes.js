@@ -183,18 +183,26 @@ function tableCard(card, now) {
       h(
         'div',
         { class: 'projector-card-row' },
-        h('div', { class: 'projector-card-art' }, art(card.art?.kind ?? 'none', card.art?.id ?? null), card.seal ? h('span', { class: `projector-seal${card.seal === '否決' ? ' is-failed' : ''}`, text: card.seal }) : null),
+        // 響應倒數圈放在圖的右上角，不跟狀態那一行搶位置。
+        h(
+          'div',
+          { class: 'projector-card-art' },
+          art(card.art?.kind ?? 'none', card.art?.id ?? null),
+          card.seal ? h('span', { class: `projector-seal${card.seal === '否決' ? ' is-failed' : ''}`, text: card.seal }) : null,
+          card.countdown ? countdown(card.countdown, now) : null,
+        ),
+        // 有響應窗口時名稱只留 1 行；狀態那一行最多 2 行（長的縮字，再長就截掉）。
         h(
           'div',
           { class: 'projector-card-text' },
           h('p', { class: 'projector-card-kicker', text: card.kicker }),
-          h('p', { class: 'projector-card-name', text: card.name }),
-          h('p', { class: 'projector-card-status' }, statusParts(card.status), card.countdown ? countdown(card.countdown, now) : null, card.dots ? dots(card.dots) : null),
+          h('p', { class: `projector-card-name${card.countdown ? ' is-one-line' : ''}`, text: card.name }),
+          h('p', { class: `projector-card-status${String(card.status).length > STATUS_LONG ? ' is-long' : ''}` }, statusParts(card.status), card.dots ? dots(card.dots) : null),
         ),
       ),
-      // 迷霧剛越過門檻的 10 秒：底部那一行換成迷霧事件的名稱（不蓋住狀態那一行）。
+      // 迷霧剛越過門檻的 10 秒：底部那一行換成迷霧事件的名稱（只排 1 行，不蓋住狀態那一行；全名在上面的名稱）。
       flash
-        ? h('div', { class: 'projector-flash', attrs: { role: 'status' } }, h('span', { class: 'projector-flash-mark', text: '霧', attrs: { 'aria-hidden': 'true' } }), h('span', { text: flash }))
+        ? h('div', { class: 'projector-flash', attrs: { role: 'status' } }, h('span', { class: 'projector-flash-mark', text: '霧', attrs: { 'aria-hidden': 'true' } }), h('span', { class: 'projector-flash-text', text: flash }))
         : card.fog
           ? fogRow(card.fog)
           : null,
@@ -202,11 +210,16 @@ function tableCard(card, now) {
   );
 }
 
-// 狀態那一行在「・」之後才換行：「黑夜揭曉：2 人豪賭・」「2 人分贓・」「2 人睡覺」各自是一段，不會從中間斷開。
+// 狀態那一行超過這麼多字就縮小一號（最長的暱稱＋牌名在 16:9 的桌牌上也排得進 2 行）。
+const STATUS_LONG = 24;
+// 短的一段不從中間斷開（「黑夜揭曉：2 人豪賭・」「2 人分贓・」「2 人睡覺」各自是一段，在「・」之後換行）；
+// 比一行還長的段落照常換行，接在後面的字可以排在同一行，不會多佔一行。
+const PART_KEEP = 12;
+
 function statusParts(text) {
   return String(text)
     .split(/(?<=・)/)
-    .map((part) => h('span', { class: 'projector-card-part', text: part }));
+    .map((part) => h('span', { class: `projector-card-part${part.length <= PART_KEEP ? ' is-keep' : ''}`, text: part }));
 }
 
 function cardClock(status) {

@@ -986,11 +986,16 @@ html.is-projector body {
   text-wrap: balance;
 }
 
+.projector-card-name.is-one-line {
+  -webkit-line-clamp: 1;
+}
+
+/* 狀態那一行：最多 2 行，超過的截掉（長的先縮小一號，見 screen-scenes.js 的 STATUS_LONG）。 */
 .projector-card-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   margin-top: 6px;
   font-size: 27px;
   line-height: 34px;
@@ -998,8 +1003,13 @@ html.is-projector body {
   color: var(--card-ink);
 }
 
-.projector-card-part {
-  max-width: 100%;
+.projector-card-status.is-long {
+  font-size: 24px;
+  line-height: 31px;
+}
+
+.projector-card-part.is-keep {
+  white-space: nowrap;
 }
 
 .projector-dots {
@@ -1007,6 +1017,7 @@ html.is-projector body {
   align-items: center;
   gap: 6px;
   margin-left: 14px;
+  vertical-align: middle;
 }
 
 .projector-dots i {
@@ -1020,19 +1031,24 @@ html.is-projector body {
   background: var(--card-ink);
 }
 
+/* 響應倒數：圖的右上角，墊一個卡紙色的圓，蓋在圖上也看得清楚。 */
 .projector-count {
-  position: relative;
-  display: inline-grid;
+  position: absolute;
+  top: -12px;
+  right: -14px;
+  display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  margin-left: 12px;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--card-ink) 35%, transparent);
 }
 
 .projector-count::before {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 5px;
   border-radius: 50%;
   background: conic-gradient(var(--accent) calc(var(--turn) * 1turn), color-mix(in srgb, var(--accent) 20%, transparent) 0);
   -webkit-mask: radial-gradient(circle closest-side, transparent calc(100% - 4.5px), #000 calc(100% - 4px));
@@ -1135,6 +1151,13 @@ html.is-projector body {
   font-weight: 700;
   font-size: 28px;
   line-height: 34px;
+}
+
+.projector-flash-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .projector-flash-mark {
@@ -1304,6 +1327,26 @@ html.is-projector body {
   margin-top: 2px;
   font-size: 25px;
   line-height: 31px;
+}
+
+.projector[data-layout='4x3'] .projector-card-status.is-long {
+  font-size: 23px;
+  line-height: 28px;
+}
+
+.projector[data-layout='4x3'] .projector-count {
+  top: -6px;
+  right: -12px;
+  width: 48px;
+  height: 48px;
+}
+
+.projector[data-layout='4x3'] .projector-count::before {
+  inset: 4px;
+}
+
+.projector[data-layout='4x3'] .projector-count b {
+  font-size: 23px;
 }
 
 .projector[data-layout='4x3'] .projector-fog {
