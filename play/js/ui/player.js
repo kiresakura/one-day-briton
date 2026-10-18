@@ -497,10 +497,12 @@ function roomFoot() {
 
 const BUZZ_OFF_KEY = 'one-day-briton:broadcast-buzz-off';
 let buzzSeen = { code: null, seq: 0 }; // 這一頁看過的最新一則廣播：剛進房時看到的那一則不震
+let buzzOffInPage = null; // 這一頁按過開關後的選擇（true＝關）：存不進 localStorage 時（例如瀏覽器不准）照這個；沒按過是 null
 
 const canBuzz = () => typeof navigator.vibrate === 'function';
 
 function buzzOff() {
+  if (buzzOffInPage !== null) return buzzOffInPage;
   try {
     return localStorage.getItem(BUZZ_OFF_KEY) === '1';
   } catch {
@@ -1859,11 +1861,12 @@ const actions = {
     rerender();
   },
   buzz: () => {
+    buzzOffInPage = !buzzOff();
     try {
-      if (buzzOff()) localStorage.removeItem(BUZZ_OFF_KEY);
-      else localStorage.setItem(BUZZ_OFF_KEY, '1');
+      if (buzzOffInPage) localStorage.setItem(BUZZ_OFF_KEY, '1');
+      else localStorage.removeItem(BUZZ_OFF_KEY);
     } catch {
-      // 存不進去就維持原狀
+      // 存不進去就只記在這一頁
     }
     rerender();
   },
