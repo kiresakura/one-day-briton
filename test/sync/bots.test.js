@@ -1,4 +1,4 @@
-// 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、只匯入玩家端函式
+// 湊人數機器人（scripts/bots/，用法見 docs/BOTS.md）的測試：指令列參數、入座前的安排、機器人的選擇、結算摘要、只匯入玩家端函式
 // （白名單）；模擬器上由測試當主持端（開房、開局、自動結算、照「下一階段」推進、開第 2 場），放 3 個與 5 個機器人（動作間隔同
 // --fast），兩場都跑到終局、算出分數，出牌沒有因為不合法被退回；主持端退回的請求由機器人自己吸收；機器人自己結束時離線，開局前
 // 結束的離開玩家名單、開了局的留著；坐在進行中的一局裡不因等太久離開；指令列在房間不存在或已經開局時什麼都不寫；入座途中、
@@ -30,6 +30,7 @@ import { ArgsError, DEFAULT_DELAY, DEFAULT_PREFIX, FAST_DELAY, parseArgs } from 
 import { startBot } from '../../scripts/bots/bot.mjs';
 import { chooseDiscard, chooseNight, chooseVote, playOptions, responseOptions } from '../../scripts/bots/brain.mjs';
 import { PlanError, crowdedOut, planSeats } from '../../scripts/bots/plan.mjs';
+import { PENDING_TEXT, combinedSummary, finalSummary } from '../../scripts/bots/text.mjs';
 
 const GAME_TIMEOUT = { timeout: 240_000 };
 const TIMEOUT = { timeout: 30_000 };
@@ -156,6 +157,25 @@ test('after seating, the later bots with a name already taken or past six at the
   const ours = (prefix) => new Set([1, 2, 3, 4].map((number) => `${prefix}${number}`));
   assert.deepEqual(crowdedOut(both, 1, 6, ours('z')), { out: [1, 2, 3, 4].map((number) => ({ uid: `z${number}`, why: '跟較早加入的人同名' })), seated: 4 });
   assert.deepEqual(crowdedOut(both, 1, 6, ours('y')), { out: [], seated: 4 });
+});
+
+// 有天命還待主持人判定時，總分（與兩場合計）之後還會變：標題後面加註。
+test('the summaries say so when a destiny is still to be judged', () => {
+  const [first, second] = fileData.roles;
+  const score = (rank, total, done) => ({ rank, total, destiny: { done, points: 3 }, assets: { points: 1, pounds: 2, influence: 3 } });
+  const room = {
+    players: { u1: { name: '甲', table: 1 }, u2: { name: '乙', table: 1 } },
+    games: { 1: { seats: { u1: { order: 0, role: first.id }, u2: { order: 1, role: second.id } }, final: { round: 3, reason: 'sunset', scores: { u1: score(1, 9, true), u2: score(2, 4, false) } } } },
+  };
+  const judged = finalSummary(room, '1', fileData);
+  assert.match(judged[0], /第 1 桌第 1 場結算：第 3 回合結束（日落鐘到了）——$/);
+  assert.match(judged[1], new RegExp(`第 1 名 甲（${first.name}）：9 分｜天命達成 \\+3`));
+  assert.ok(!combinedSummary(room, 1)[0].includes(PENDING_TEXT));
+  room.games[1].final.scores.u2.destiny.done = null;
+  const pending = finalSummary(room, '1', fileData);
+  assert.ok(pending[0].endsWith(`——${PENDING_TEXT}`), pending[0]);
+  assert.match(pending[2], /乙.*天命待判定/);
+  assert.ok(combinedSummary(room, 1)[0].endsWith(PENDING_TEXT));
 });
 
 // ---- 機器人的選擇（只挑規則允許的） ----

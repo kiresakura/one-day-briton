@@ -1,5 +1,5 @@
 // 機器人印出來的文字：每個動作一行（時間、機器人、桌／場、回合與階段、動作），以及終局的結算摘要、兩場合計。
-import { combineScores } from '../../play/js/game.js';
+import { combineScores, pendingDestinies } from '../../play/js/game.js';
 import { MATCH_COUNT, PHASE_LABELS, matchKey, parseKey } from '../../play/js/rules.js';
 
 export const PHASE_TEXT = { ...PHASE_LABELS, end: '終局' };
@@ -37,13 +37,17 @@ export function nameOf(room, uid) {
 // 資料庫讀回來的陣列可能是數字鍵的物件。
 const listOf = (value) => (Array.isArray(value) ? value : Object.values(value ?? {}));
 
+// 有天命還待主持人判定時加在標題後面：那些人的天命分數還沒算進去，總分（與兩場合計）之後會變。
+export const PENDING_TEXT = '（天命待判定，總分未定）';
+
 // 一局終局的結算摘要（好幾行）：結束的回合與原因、每個人的名次、總分與組成（照名次排）。
 export function finalSummary(room, key, data) {
   const game = room?.games?.[key];
   const final = game?.final;
   if (!final) return [];
   const roleName = new Map(data.roles.map((role) => [role.id, role.name]));
-  const lines = [`—— ${matchLabel(key)}結算：第 ${final.round} 回合結束（${END_REASON_TEXT[final.reason] ?? final.reason}）——`];
+  const pending = pendingDestinies(final.scores).length > 0 ? PENDING_TEXT : '';
+  const lines = [`—— ${matchLabel(key)}結算：第 ${final.round} 回合結束（${END_REASON_TEXT[final.reason] ?? final.reason}）——${pending}`];
   const rows = Object.entries(final.scores ?? {}).sort(([, a], [, b]) => a.rank - b.rank);
   for (const [uid, score] of rows) {
     const destiny = score.destiny?.done === true ? `天命達成 +${score.destiny.points ?? 0}` : score.destiny?.done === false ? '天命沒達成' : '天命待判定';
@@ -63,7 +67,8 @@ export function combinedSummary(room, table) {
   const second = room?.games?.[matchKey(table, MATCH_COUNT)];
   if (!first?.final) return [];
   const combined = combineScores(first.final, second?.final, first.seats);
-  const lines = [`—— 第 ${table} 桌兩場合計 ——`];
+  const pending = [first.final, second?.final].some((final) => pendingDestinies(final?.scores).length > 0) ? PENDING_TEXT : '';
+  const lines = [`—— 第 ${table} 桌兩場合計 ——${pending}`];
   for (const [uid, row] of Object.entries(combined)) {
     const later = row.absent ? '第 2 場沒參加' : `第 2 場 ${row.second}`;
     lines.push(`  第 ${row.rank} 名 ${nameOf(room, uid)}：${row.total} 分（第 1 場 ${row.first}、${later}）`);
