@@ -1248,7 +1248,13 @@ export function renderHost(room) {
   );
   patchChildren($('host-layer'), [...drawerLayer(room), ...confirmLayer(room)]);
   document.body.classList.toggle('has-drawer', Boolean(drawer || confirming));
+  markTopHeight();
   markTruncated($('screen-host'));
+}
+
+// 頁首的提示框浮在頂列下方（host.css 的 --host-top-h）：頂列在窄螢幕會折成兩行，照實際高度放。
+function markTopHeight() {
+  if (!$('screen-host').hidden) document.body.style.setProperty('--host-top-h', `${$('host-top').offsetHeight}px`);
 }
 
 // ---- 事件（委派）：按鈕上的 data-act 決定做什麼，做的時候讀當下的局面 ----
@@ -1462,9 +1468,12 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-// 視窗大小變了，重新看哪些名字被截斷。
+// 視窗大小變了，重新看頂列多高、哪些名字被截斷。
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => markTruncated($('screen-host')), 150);
+  resizeTimer = setTimeout(() => {
+    markTopHeight();
+    markTruncated($('screen-host'));
+  }, 150);
 });

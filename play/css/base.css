@@ -367,6 +367,11 @@ body[data-phase='night'] .select {
   border-radius: 50%;
 }
 
+/* 頁首提示的關閉／收起鈕只在主持畫面出現（提示框浮在頂列下方，見 host.css）；手機上提示條照舊排在頁首。 */
+.toast-btn {
+  display: none;
+}
+
 .conn {
   display: inline-flex;
   align-items: center;

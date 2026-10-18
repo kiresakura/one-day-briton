@@ -43,9 +43,49 @@ export const ACHIEVEMENT_LABELS = { parliament: '議會之聲', gear: '齒輪大
 export const RESOURCE_LABELS = { pounds: '英鎊', influence: '影響力' };
 const MINUTE_MS = 60_000;
 
+// 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框浮在頂列下方（host.css），錯誤 8 秒後自己消失（字多的久一點；
+// 滑鼠停在上面時先不消失），按 × 可以先關掉；下一次按按鈕時照樣清掉。
+const NOTICE_MS = 8000;
+let noticeTimer = null;
+
 export function notify(message = '') {
-  $('notice').textContent = message;
+  clearTimeout(noticeTimer);
+  $('notice-text').textContent = message;
   $('notice').hidden = !message;
+  if (message) fadeNotice();
+}
+
+function fadeNotice() {
+  clearTimeout(noticeTimer);
+  if ($('screen-host').hidden) return;
+  noticeTimer = setTimeout(() => notify(), NOTICE_MS + Math.max(0, $('notice-text').textContent.length - 30) * 200);
+}
+
+$('notice').addEventListener('pointerenter', () => clearTimeout(noticeTimer));
+$('notice').addEventListener('pointerleave', () => {
+  if (!$('notice').hidden) fadeNotice();
+});
+
+// 斷線、卡牌資料有問題：狀況一直在，不會自己消失；主持畫面上按「收起」縮成一個小記號，按「展開」再打開。狀況解除（藏起來）時恢復展開。
+function fold(toast, folded) {
+  const button = toast.querySelector('[data-toast="fold"]');
+  toast.classList.toggle('is-folded', folded);
+  button.textContent = folded ? '展開' : '收起';
+  button.setAttribute('aria-expanded', String(!folded));
+}
+
+document.querySelector('.topbar').addEventListener('click', (event) => {
+  const button = event.target.closest('.toast-btn');
+  if (!button) return;
+  if (button.dataset.toast === 'close') notify();
+  else fold(button.closest('.toast'), button.getAttribute('aria-expanded') === 'true');
+});
+
+for (const button of document.querySelectorAll('[data-toast="fold"]')) {
+  const toast = button.closest('.toast');
+  new MutationObserver(() => {
+    if (toast.hidden) fold(toast, false);
+  }).observe(toast, { attributeFilter: ['hidden'] });
 }
 
 export function explain(error) {

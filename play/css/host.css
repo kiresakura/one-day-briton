@@ -15,15 +15,74 @@ body.has-drawer {
   overflow: hidden;
 }
 
-/* 主持畫面整頁固定一屏：頂端的錯誤提示條、斷線提示條改成浮在頂列中間，不佔高度（不然 1280×800 會多出那一條而要捲動）；
-   提示條本身不攔滑鼠，底下頂列的按鈕照樣按得到。 */
+/* 主持畫面整頁固定一屏：錯誤提示、卡牌資料有問題、斷線提示改成浮在頂列下方靠右的提示框，不佔高度（不然 1280×800 會多出
+   那一條而要捲動），也不蓋住頂列的各桌狀態。錯誤提示按 × 關掉，8 秒後也會自己消失；斷線、卡牌資料有問題不會自己消失，按「收起」
+   縮成一個小記號（shared.js）。--host-top-h 是頂列實際的高度（窄螢幕會折成兩行，host.js 量）。 */
 body:has(> #screen-host:not([hidden])) > .topbar {
   position: fixed;
-  top: 0;
-  left: 50%;
-  width: min(560px, calc(100% - 24px));
-  transform: translateX(-50%);
+  top: calc(var(--host-top-h, 56px) + 8px);
+  right: 16px;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(440px, calc(100% - 32px));
   pointer-events: none;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .alerts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast {
+  position: static;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(31, 36, 48, 0.28);
+  text-align: left;
+  pointer-events: auto;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast-text {
+  min-width: 0;
+  padding: 10px 0;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast-btn[data-toast='close'] {
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast-btn:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+body:has(> #screen-host:not([hidden])) > .topbar .toast.is-folded .toast-text {
+  display: none;
 }
 
 /* ---- 頂列 ---- */

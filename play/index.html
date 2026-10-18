@@ -24,10 +24,10 @@
 </head>
 <body data-phase="day">
   <div class="topbar">
-    <p id="connection" class="connection" role="status" hidden>連線中斷，正在重新連線…</p>
+    <p id="connection" class="connection toast" role="status" hidden><span class="toast-text">連線中斷，正在重新連線…</span><button class="toast-btn" type="button" data-toast="fold" aria-expanded="true">收起</button></p>
     <div class="alerts">
-      <p id="notice" class="notice" role="status" hidden></p>
-      <p id="data-problem" class="notice" role="alert" hidden>卡牌資料有問題，請找工作人員</p>
+      <p id="notice" class="notice toast" role="status" hidden><span id="notice-text" class="toast-text"></span><button class="toast-btn" type="button" data-toast="close" aria-label="關閉提示">×</button></p>
+      <p id="data-problem" class="notice toast" role="alert" hidden><span class="toast-text">卡牌資料有問題，請找工作人員</span><button class="toast-btn" type="button" data-toast="fold" aria-expanded="true">收起</button></p>
     </div>
   </div>
 
