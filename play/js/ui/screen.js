@@ -133,7 +133,7 @@ function buildRoot() {
   document.getElementById('screen-loading')?.setAttribute('hidden', '');
   document.documentElement.classList.add('is-projector');
   const layer = (name) => h('div', { class: `projector-layer projector-${name}` });
-  // 背景影片的層在場景底下（場景的底圖用 z-index 墊在它下面，遮罩與文字在它上面）。
+  // 背景影片的層在場景底下（場景的底圖用 z-index 放到它下面，遮罩與文字在它上面）。
   view.layers = { loop: layer('loop'), scene: layer('scene'), video: layer('video'), broadcast: layer('broadcast'), pause: layer('pause'), start: layer('start'), corner: layer('corner') };
   view.layers.video.hidden = true;
   view.stage = h('div', { class: 'projector-stage' }, Object.values(view.layers));
@@ -287,7 +287,7 @@ function render() {
 }
 
 // 場景元件回傳的是一層包一層的陣列（可能有 null）：拉平後交給 patchChildren 就地更新，換場景以外不重建節點（動畫不會重來）。
-// 場景樹裡不放 <video>／<audio>：每次重畫都會先建一整棵新的離線樹，媒體元素一設 src 就開始載入與播放，而且不會被回收。
+// 場景裡不放 <video>／<audio>：每次重畫都會先建一份新的離線節點，影片一設 src 就開始載入與播放，而且不會被回收。
 function patch(layer, nodes) {
   patchChildren(layer, [nodes].flat(Infinity).filter(Boolean));
 }

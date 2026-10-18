@@ -23,7 +23,7 @@ function art(kind, id, extra = '') {
   );
 }
 
-// 場景底圖。背景影片不在這裡：screen.js 另外放在場景底下的一層（場景樹每秒重建，媒體元素不能放進來）。
+// 場景底圖。背景影片不在這裡：screen.js 另外放在場景底下的一層（場景每秒重建，影片不能放進來）。
 function backdrop(url, key) {
   return h('div', { class: 'projector-bg', data: { key: `bg-${key}` }, style: url ? { 'background-image': `url("${url}")` } : {} });
 }

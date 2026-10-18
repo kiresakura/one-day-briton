@@ -97,7 +97,7 @@ html.is-projector body {
   inset: 0;
 }
 
-/* 場景的底圖墊在背景影片那一層（.projector-loop，在場景層前面）底下；遮罩與內容照順序蓋在影片上面。 */
+/* 場景的底圖放在背景影片那一層（.projector-loop，在場景層前面）底下；遮罩與內容照順序蓋在影片上面。 */
 .projector-bg,
 .projector-night {
   z-index: -1;
@@ -1055,7 +1055,7 @@ html.is-projector body {
   background: var(--card-ink);
 }
 
-/* 響應倒數：圖的右上角，墊一個卡紙色的圓，蓋在圖上也看得清楚。 */
+/* 響應倒數：圖的右上角，底下一個卡紙色的圓，蓋在圖上也看得清楚。 */
 .projector-count {
   position: absolute;
   top: -12px;

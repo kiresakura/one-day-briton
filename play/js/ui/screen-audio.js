@@ -4,7 +4,7 @@
 
 const MUSIC_VOLUME = 0.6;
 
-// onChange(on)：聲音開關變了（解鎖、或被系統暫停：換輸出裝置、Safari 中斷）時呼叫，畫面據此讓「聲音未開，點一下」再出現。
+// onChange(on)：聲音開關變了（解鎖、或被系統暫停：換輸出裝置、Safari 中斷）時呼叫，畫面就讓「聲音未開，點一下」再出現。
 export function createAudio({ onChange } = {}) {
   let context = null;
   const buffers = new Map(); // 素材解碼好的聲音：bell、gavel

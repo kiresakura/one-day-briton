@@ -50,7 +50,7 @@ export function projectorParams(search, isRoomCode, normalizeRoomCode) {
 }
 
 // 標題頁的加入方式：網址拿掉 https:// 與參數（「kiresakura.github.io/one-day-briton/play/」）。QR 碼用 full；base 是不帶參數的
-// 網址（素材來源頁接在後面）。參數只留 env=emu：區網排練（模擬器、不是本機的位址）時手機才會連到同一個模擬器，不會跑去正式站。
+// 網址（素材來源頁接在後面）。參數只留 env=emu：在區網用模擬器（不是本機的位址）時手機才會連到同一個模擬器，不會跑去正式站。
 export function joinAddress(location) {
   const path = String(location?.pathname ?? '/').replace(/index\.html$/, '');
   const host = String(location?.host ?? '');
@@ -362,7 +362,7 @@ export function matchLine(room, match) {
 
 // 這一秒的日落鐘：{ ring, mark }。ring 是要響鐘的場次，mark 是要記成「響過」的鐘（bellKey）。走著的鐘（鐘本身不是暫停中）
 // 已經日落、而且這一場還沒響過才算；seen 是這台已經處理過的鐘（Set）。paused＝全場暫停中（display/pause）：到點的先不響也不記，
-// 恢復後第一秒補響一次（全場暫停不一定停鐘，快日落的鐘照走），每場恰好一次。
+// 恢復後第一秒補響一次（全場暫停不一定停鐘，快日落的鐘照走），每場只響一次。
 // 投影端第一次讀到房間時已經日落的鐘不響（不補），由呼叫端先把它們放進 seen（passedClocks）。
 export function bellsDue(room, now, seen, paused = false) {
   const ring = [];
