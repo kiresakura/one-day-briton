@@ -438,7 +438,7 @@ export function wakeAtSunset(game) {
 
 // 天命那一項：內容與是否達成（終局時公開）。
 export function destinyText(destiny) {
-  if (!destiny?.id) return '天命：這一局沒有天命（0 分）';
+  if (!destiny?.id) return '天命：這一場沒有天命（0 分）';
   const condition = ctx.cardData?.index.destinies.get(destiny.id)?.score.text;
   const state = destiny.done === true ? `達成 +${destiny.points}` : destiny.done === false ? '沒達成 0 分' : `待主持人判定（目前 0 分，達成 +${destiny.points}）`;
   return `天命「${destiny.text}」${condition ? `（${condition}）` : ''}：${state}`;

@@ -335,7 +335,7 @@ function model(room, me) {
   const seat = game?.seats?.[ctx.session.uid];
   let wait = '';
   if (!game) wait = match === 1 ? '等待主持端開局' : `${matchText(match)}準備中`;
-  else if (!seat && match === 1) wait = '本桌已開局，這一局沒有你的座位，請找工作人員';
+  else if (!seat && match === 1) wait = '本桌已開局，這一場沒有你的座位，請找工作人員';
   else if (!seat) wait = firstSeat ? '這一場你沒有座位（主持人設為不參加）' : `${matchText(match)}不收新人，請找工作人員`;
   else if (ctx.cardsFailed) wait = '卡牌資料有問題，請找工作人員';
   else if (!ctx.cardData || !ctx.mine) wait = '讀取手牌中…';
@@ -482,7 +482,7 @@ function randomDiscardNote(m) {
   const record = ctx.mine?.randomDiscard;
   if (!record || record.round !== m.state.round || m.state.phase === 'end') return null;
   const names = Object.values(record.cards ?? {}).map((id) => `〈${cardName(id)}〉`).join('、');
-  return section(`random-discard-${record.round}`, 'notice-card', h('p', { text: `手牌超過上限沒挑完，天亮時隨機棄了：${names}` }));
+  return section(`random-discard-${record.round}`, 'notice-card', h('p', { text: `手牌超過上限沒挑完，黑夜結束時隨機棄了：${names}` }));
 }
 
 // ---- 兩場制：準備中、換場說明、沒座位 ----
@@ -709,7 +709,7 @@ function handBlock(m, { day = null, hint = '' } = {}) {
       respondPick = { pending: day.waiting.id, index, card: index >= 0 ? hand[index] : null };
     }
     title = `能響應的牌 ${ok} 張`;
-    note = ok ? '其他牌這時不能打' : '這次沒有能打的響應牌';
+    note = ok ? '其他牌這時不能打' : '這次沒有能打的響應卡';
     cards = hand.map((id, index) =>
       parchmentCard(id, {
         tag: 'button',
@@ -1074,7 +1074,7 @@ function nightForm(m, progress, sent) {
       if (choice === 'sleep') return option(choice, CHOICE_LABELS[choice], '什麼都不發生');
       return option(choice, CHOICE_LABELS[choice] ?? choice, '');
     }),
-    overLimit(m.hand, ctx.cardData.data.settings) === 0 && limit ? h('p', { class: 'hint', text: `手牌上限 ${limit} 張：超過的人在黑夜挑要棄的牌，下一回合日出時棄掉。你現在 ${m.hand.length} 張。` }) : null,
+    overLimit(m.hand, ctx.cardData.data.settings) === 0 && limit ? h('p', { class: 'hint', text: `手牌上限 ${limit} 張：超過的人在黑夜挑要棄的牌，黑夜結束時棄掉。你現在 ${m.hand.length} 張。` }) : null,
     sent ? h('button', { class: 'btn-link', type: 'button', data: { act: 'night-cancel-edit' }, text: `不改了（維持 ${choiceText(sent)}）` }) : null,
   );
 }
@@ -1110,9 +1110,9 @@ function discardPanel(m) {
   if (info.ending) return [section('discard-skip', 'is-plain', h('p', { text: `手牌 ${m.hand.length} 張超過上限，但這一回合結束就算分：不用棄牌，算分時超過上限的照上限 ${settings.handLimit} 張算` }))];
   const { over, saved, problem } = info;
   let state;
-  if (problem === null) state = h('p', { class: 'discard-state is-ready', text: `已選好：${Object.values(saved.cards).map(cardName).join('、')}（天亮前可以改）` });
+  if (problem === null) state = h('p', { class: 'discard-state is-ready', text: `已選好：${Object.values(saved.cards).map(cardName).join('、')}（黑夜結束前可以改）` });
   else if (saved) state = h('p', { class: 'discard-state problem', text: `之前選的不能用（${DISCARD_REASONS[problem] ?? problem}），請重選` });
-  else state = h('p', { class: 'discard-state', text: '還沒選；沒選的話，天亮時隨機棄' });
+  else state = h('p', { class: 'discard-state', text: '還沒選；沒選的話，黑夜結束時隨機棄' });
   return [
     h(
       'section',
@@ -1327,7 +1327,7 @@ function matesPanel(m) {
     h(
       'table',
       { class: 'mates-table', data: { key: 'mates-table' } },
-      h('thead', {}, h('tr', {}, h('th', { attrs: { scope: 'col' }, text: '座位' }), h('th', { attrs: { scope: 'col' }, text: '暱稱・階層' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '英鎊' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '影響' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '手牌' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '罪孽' }))),
+      h('thead', {}, h('tr', {}, h('th', { attrs: { scope: 'col' }, text: '座位' }), h('th', { attrs: { scope: 'col' }, text: '名字・階層' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '英鎊' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '影響' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '手牌' }), h('th', { class: 'num', attrs: { scope: 'col' }, text: '罪孽' }))),
       h(
         'tbody',
         {},
@@ -1488,11 +1488,11 @@ function respondBar(m, day) {
   const action = pick?.card ? ctx.cardData.index.actions.get(pick.card) : null;
   const problem = action ? answerProblem(day, action) : null;
   let why = null;
-  if (!action) why = '沒有能打的響應牌';
+  if (!action) why = '沒有能打的響應卡';
   else if (problem) why = problem;
   else if (day.sent) why = '已送出，等結算';
   return [
-    h('div', { class: 'bar-summary', data: { key: 'summary' } }, h('span', { class: 'bar-text', text: action ? `打出「${action.name}」：${action.text}` : `${pendingText(m.room, day.waiting)}，你這次沒有能打的響應牌` })),
+    h('div', { class: 'bar-summary', data: { key: 'summary' } }, h('span', { class: 'bar-text', text: action ? `打出「${action.name}」：${action.text}` : `${pendingText(m.room, day.waiting)}，你這次沒有能打的響應卡` })),
     h('button', { class: 'btn btn-primary btn-block', type: 'button', data: { act: 'respond', key: 'respond' }, disabled: Boolean(why), text: why ?? '打出響應' }),
   ];
 }
@@ -1514,7 +1514,7 @@ function destinySheet(m) {
       'div',
       { class: 'destiny-card', attrs: { role: 'dialog', 'aria-label': '隱藏天命' } },
       h('p', { class: 'destiny-top' }, h('span', { class: 'eyebrow-latin', text: 'SECRET DESTINY', attrs: { lang: 'en' } }), h('span', { text: ended ? '終局後全桌都看得到' : '只有你看得到' })),
-      destiny ? h('p', { class: 'destiny-text', text: destiny.text }) : h('p', { class: 'destiny-text', text: '這一局沒有天命' }),
+      destiny ? h('p', { class: 'destiny-text', text: destiny.text }) : h('p', { class: 'destiny-text', text: '這一場沒有天命' }),
       destiny ? h('div', { class: 'pcard-rule', attrs: { 'aria-hidden': 'true' } }, h('span')) : null,
       destiny ? h('p', {}, h('strong', { text: '達成條件：' }), destiny.score.text) : null,
       destiny ? h('p', {}, h('strong', { text: '達成 ' }), `+${destiny.score.points} 分`) : null,
