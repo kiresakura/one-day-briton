@@ -4,7 +4,6 @@
 // 場景（開場影片、規則說明、比賽中總覽、兩場合計排行、頒獎）照 display/scene 換；底部廣播條、全場暫停、右上角連線狀態疊在所有場景上。
 // 影片與音效只有這個畫面會載（play/media/，按「開始投影」後才下載），沒有或下載失敗就用佔位，畫面不壞。
 // &preview=1：控制台的小預覽框用。不顯示開始投影頁、不出聲、不全螢幕、不防休眠、不回報狀態、不播影片，也不下載影片與音效。
-import { sfxToPlay } from '../game.js';
 import { isRoomCode, normalizeRoomCode } from '../rules.js';
 import { serverTime, trackScreen, watchConnection, watchRoom } from '../store.js';
 import { ART } from './art.js';
@@ -28,12 +27,14 @@ import {
   mediaProgressText,
   musicOn,
   openingMode,
+  openingStep,
   openingWaitText,
   pageIndex,
   passedClocks,
   projectorParams,
   rulesPages,
   sceneOf,
+  sfxStep,
   stageLayout,
   standingsView,
   tableCard,
@@ -200,18 +201,14 @@ function react(room) {
   const now = serverTime(view.session);
   const display = room.display ?? {};
   // 音效：seq 比看過的新、5 秒內的才播；播不播都記下 seq（斷線重連後不補放）。
-  const { sfx } = display;
-  if (sfx && Number.isInteger(sfx.seq) && sfx.seq !== view.seen.sfx) {
-    if (view.audioOn && !view.preview && sfxToPlay(sfx, view.seen.sfx, now)) audio.play(sfx.id);
-    view.seen.sfx = Math.max(view.seen.sfx ?? 0, sfx.seq);
-  }
+  const sound = sfxStep(display.sfx, view.seen.sfx, now, view.audioOn && !view.preview);
+  view.seen.sfx = sound.seen;
+  if (sound.play) audio.play(sound.play);
   // 開場影片：只在 display/scene 的 seq 變了、而且是開場時播。第一次讀到的場景當作看過了（重新整理不重播）。
   const scene = sceneOf(display);
-  if (view.seen.scene === null) view.seen.scene = scene.seq;
-  else if (scene.seq !== view.seen.scene) {
-    view.seen.scene = scene.seq;
-    if (scene.id === 'opening' && view.started && !view.preview) playOpening(scene.seq);
-  }
+  const opening = openingStep(scene, view.seen.scene, view.started && !view.preview);
+  view.seen.scene = opening.seen;
+  if (opening.play) playOpening(scene.seq);
   if (scene.id !== 'opening') stopOpening();
   updateMusic();
   // 投影端回報：只在換場景時更新（規則沒有限制多久能寫一次，每寫一次都會推給全房的手機）。

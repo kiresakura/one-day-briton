@@ -27,6 +27,7 @@ import {
   musicOn,
   nightCounts,
   openingMode,
+  openingStep,
   openingWaitText,
   pageIndex,
   pageText,
@@ -35,6 +36,7 @@ import {
   rulesPages,
   sceneOf,
   scenePageCount,
+  sfxStep,
   stageLayout,
   standingsView,
   tableCard,
@@ -354,6 +356,74 @@ test('a sunset reached during a room pause rings once on the first second after 
     for (const key of step.mark) twoSeen.add(key);
   }
   assert.deepEqual(rings, [1, 2], 'match 1 waits out the paused second, then each match rings once');
+});
+
+// 突變測試抓不到的地方各補一條：版面門檻的邊界、開頁時暫停中的鐘、剛好日落、第 2 場的全場鐘、排行最多 5 人、排隊中的素材。
+test('layout boundaries: a 1.50 window (1024×768 projector in a window) is 4:3, 16:10 and 16:9 are 16:9', () => {
+  assert.equal(stageLayout(1024, 683).layout, '4x3', '1.50');
+  assert.equal(stageLayout(1500, 1000).layout, '4x3', '1.50 exactly');
+  assert.equal(stageLayout(1280, 800).layout, '16x9', '1.6');
+  assert.equal(stageLayout(1920, 1080).layout, '16x9', '1.778');
+});
+
+test('a clock paused before sunset is not taken as past when the screen opens, one exactly at sunset is', () => {
+  const stopped = room({ clock: { 1: clock({ anchor: NOW - 60 * MINUTE, remain: 30 * MINUTE, pausedAt: NOW - 50 * MINUTE }) } });
+  assert.deepEqual(passedClocks(stopped, NOW), [], 'it stopped with 20 minutes left; the time since does not count');
+  const exact = room({ clock: { 1: clock({ anchor: NOW - 30 * MINUTE, remain: 30 * MINUTE }) } });
+  assert.deepEqual(passedClocks(exact, NOW), [bellKey(1, exact.clock[1])], 'remaining 0 counts as past');
+  const exactPaused = room({ clock: { 1: clock({ anchor: NOW - 30 * MINUTE, remain: 10 * MINUTE, pausedAt: NOW - 20 * MINUTE }) } });
+  assert.deepEqual(passedClocks(exactPaused, NOW), [bellKey(1, exactPaused.clock[1])], 'paused at exactly 0');
+});
+
+test('the header follows the second match as soon as its room clock exists, even before any table starts it', () => {
+  const r = room({ clock: { 1: clock({ remain: 10 * MINUTE }), 2: clock({ startedAt: NOW, anchor: NOW }) } });
+  r.tables[1] = { round: 6, phase: 'end', fog: 0 };
+  r.games[1] = game(1, { final: final(1, [10, 20, 30]) });
+  assert.equal(headerMatch(r), 2);
+  assert.equal(headerClock(r, SETTINGS, NOW).status.remaining, 75 * MINUTE);
+});
+
+test('standings show at most five tied names and count the rest', () => {
+  const r = room();
+  const six = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6'];
+  r.tables[1] = { round: 6, phase: 'end', fog: 0 };
+  r.games[1] = { seats: seats(six), startedAt: NOW, startOrder: 0, final: { scores: Object.fromEntries(six.map((uid) => [uid, { total: 10, rank: 1, destiny: { done: true } }])) } };
+  const [column] = standingsView(r);
+  assert.equal(column.rows.length, 5);
+  assert.equal(column.more, 1);
+});
+
+test('files still queued count as downloading in the progress line', () => {
+  assert.equal(
+    mediaProgressText(
+      [
+        { status: 'waiting', loaded: 0, total: 0 },
+        { status: 'ready', loaded: 1_000_000, total: 1_000_000 },
+      ],
+      true,
+    ),
+    '素材下載中 1.0／1.0 MB',
+  );
+});
+
+test('a sound effect plays once if it is new, recent and the sound is on; its seq is kept either way', () => {
+  const gavel = (seq, at = NOW - 1000) => ({ id: 'gavel', seq, at });
+  assert.deepEqual(sfxStep(gavel(3), null, NOW, true), { seen: 3, play: 'gavel' }, 'pressed a second ago');
+  assert.deepEqual(sfxStep(gavel(3), 3, NOW, true), { seen: 3, play: null }, 'already handled');
+  assert.deepEqual(sfxStep(gavel(4), 3, NOW, false), { seen: 4, play: null }, 'sound off: kept, not played later');
+  assert.deepEqual(sfxStep(gavel(5, NOW - 6000), 4, NOW, true), { seen: 5, play: null }, 'more than 5 seconds old: not played late');
+  assert.deepEqual(sfxStep(gavel(2), 5, NOW, true), { seen: 5, play: null }, 'an older seq does not move back');
+  assert.deepEqual(sfxStep(undefined, 5, NOW, true), { seen: 5, play: null });
+  assert.deepEqual(sfxStep({ id: 'bell', seq: 'x', at: NOW }, 5, NOW, true), { seen: 5, play: null });
+});
+
+test('the opening video plays when the scene seq changes to the opening on a started projector, not on the first read', () => {
+  const opening = (seq) => ({ id: 'opening', page: 0, seq });
+  assert.deepEqual(openingStep(opening(7), null, true), { seen: 7, play: false }, 'first read after a reload: no replay');
+  assert.deepEqual(openingStep(opening(7), 7, true), { seen: 7, play: false });
+  assert.deepEqual(openingStep(opening(8), 7, true), { seen: 8, play: true });
+  assert.deepEqual(openingStep({ id: 'rules', page: 0, seq: 9 }, 8, true), { seen: 9, play: false });
+  assert.deepEqual(openingStep(opening(10), 9, false), { seen: 10, play: false }, 'not started or a preview: kept, not played later');
 });
 
 test('standings list the top three of each finished table and say which tables are still playing', () => {

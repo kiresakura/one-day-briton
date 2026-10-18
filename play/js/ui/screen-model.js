@@ -10,6 +10,7 @@ import {
   nightStage,
   responseDeadline,
   seatsInOrder,
+  sfxToPlay,
   standingsOf,
   sunriseEventsOf,
   sunsetStatus,
@@ -388,6 +389,24 @@ export function passedClocks(room, now) {
     if (isClock(clock) && clock.remain - ((clockPaused(clock) ? clock.pausedAt : now) - clock.anchor) <= 0) keys.push(bellKey(match, clock));
   }
   return keys;
+}
+
+// ---- 房間變了：音效、開場影片 ----
+
+// 主持端按的音效（display/sfx）這一次要不要播：{ seen, play }。seq 跟看過的不一樣才處理：播不播都把 seen 記成比較新的 seq
+// （斷線重連、重新整理後不補放）；聲音開著（audible）、seq 比看過的新、而且是 5 秒內按的（sfxToPlay）才播，play 是音效 id，不播是 null。
+export function sfxStep(sfx, seen, now, audible) {
+  if (!sfx || !Number.isInteger(sfx.seq) || sfx.seq === seen) return { seen, play: null };
+  return { seen: Math.max(seen ?? 0, sfx.seq), play: audible && sfxToPlay(sfx, seen, now) ? sfx.id : null };
+}
+
+// 開場影片這一次要不要播：{ seen, play }。seen 是看過的 display/scene seq（null＝還沒讀到過房間）。第一次讀到的場景只記下來、
+// 不播（重新整理不重播）；之後 seq 變了、換成開場、而且這台可以播（canPlay：按過開始投影、不是預覽框）才播。不能播時也記下 seq，
+// 之後才按開始投影不會補播。
+export function openingStep(scene, seen, canPlay) {
+  if (seen === null || seen === undefined) return { seen: scene.seq, play: false };
+  if (scene.seq === seen) return { seen, play: false };
+  return { seen: scene.seq, play: scene.id === 'opening' && canPlay };
 }
 
 // ---- 兩場合計排行 ----
