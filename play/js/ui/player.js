@@ -5,7 +5,7 @@
 // 挑的棄牌、本機暫存與計時器的鍵都用局號；畫面上的「第 3 桌」用實體桌號。第 2 場準備中看得到自己的新階層與要交卡給誰（shared.js 的
 // handovers），第 2 場結束看兩場合計（combinedOf）。
 // 主持人控制台（docs/CONSOLE-API.md）：畫面最上面一條全場廣播（home.js 的 broadcastNodes，「知道了」只收起這支手機）；全場暫停時
-// 蓋上暫停層（game.js 的 pauseHold：自己這一桌暫停前就開著的倒數先跑完）；「最後一回合」照那一場的全場日落鐘（clockOf）判斷。
+// 蓋上暫停層（自己這一桌暫停前就開著的倒數先跑完）；「最後一回合」照那一場的全場日落鐘判斷。這些判斷是 player-model.js 的純函式。
 import {
   DISCARD_REASONS,
   NIGHT_CHOICES,
@@ -17,20 +17,17 @@ import {
   dayStatus,
   discardProblem,
   duskStage,
-  endReasonAt,
   needsTarget,
   nightStage,
   overLimit,
-  pauseHold,
   playProblem,
   responseDeadline,
   responseProblem,
   seatsInOrder,
   showsTutorial,
-  sunsetStatus,
   voteProblem as voteCheck,
 } from '../game.js';
-import { activeKey, clockOf, hostUids, matchKey, parseKey } from '../rules.js';
+import { activeKey, hostUids, matchKey, parseKey } from '../rules.js';
 import {
   requestDiscard,
   requestNight,
@@ -47,6 +44,7 @@ import {
 } from '../store.js';
 import { $, h, markTruncated, patchChildren } from './dom.js';
 import { broadcastNodes, broadcastOf, dismissBroadcast } from './home.js';
+import { buzzStep, lastRoundOf, pauseView, sunsetWakeOf } from './player-model.js';
 import {
   CHAIN_BONUS,
   CHOICE_LABELS,
@@ -365,10 +363,8 @@ function model(room, me) {
   if (!day?.myTurn || hand[composing?.index] !== composing?.card) composing = null; // 換人了或那張牌已經不在
   const ended = state.phase === 'end' && Boolean(game?.final) && Boolean(ctx.cardData);
   // 最後一回合：跟主持端推進時（advanceOrEnd）同一個判斷，日落照那一場的全場日落鐘（沒有鐘的房間照這一桌從開局算起）。
-  const clock = clockOf(room, key);
-  const settings = ctx.cardData?.data.settings;
-  const ending = wait || !settings ? false : endReasonAt(game, state, settings, serverTime(ctx.session), clock) !== null;
-  return { room, me, key, match, first, firstSeat, prep: match !== 1 && !game, state, game, seat, wait, hand, day, ended, ending, clock };
+  const ending = !wait && lastRoundOf(room, key, ctx.cardData?.data.settings, serverTime(ctx.session));
+  return { room, me, key, match, first, firstSeat, prep: match !== 1 && !game, state, game, seat, wait, hand, day, ended, ending };
 }
 
 // ---- 到點重畫、全場廣播與暫停 ----
@@ -381,17 +377,15 @@ function wakeAt(wake, at) {
   return { at, timer: left > 0 ? setTimeout(rerender, left + 50) : null };
 }
 
-// 日落時重畫一次（「最後一回合」、手牌上限的提示跟著換）：照 sunsetStatus 的日落時刻；全場鐘暫停中沒有日落時刻（null）就不排，
+// 日落時重畫一次（「最後一回合」、手牌上限的提示跟著換）：照 sunsetWakeOf 的日落時刻；全場鐘暫停中沒有日落時刻（null）就不排，
 // 鐘一被繼續或加減，房間資料變了就會重畫、改排。
 function wakeAtSunset(m) {
-  const settings = ctx.cardData?.data.settings;
-  const status = settings && m.state.phase !== 'end' ? sunsetStatus(m.game, settings, serverTime(ctx.session), m.clock) : null;
-  sunsetWake = wakeAt(sunsetWake, status?.sunsetAt ?? null);
+  sunsetWake = wakeAt(sunsetWake, sunsetWakeOf(m.room, m.key, ctx.cardData?.data.settings, serverTime(ctx.session)));
 }
 
-// 全場暫停（display/pause）對自己這一局：{ covered, until }。沒有暫停（含舊房間沒有 display）是 { covered: false, until: null }。
+// 全場暫停（display/pause）對自己這一局：{ cover, until, cast }（player-model.js 的 pauseView）。
 function pauseOf(m) {
-  return pauseHold(m.room.display?.pause, m.game, m.state, ctx.cardData?.data.settings, serverTime(ctx.session));
+  return pauseView(m.room.display, m.game, m.state, ctx.cardData?.data.settings, serverTime(ctx.session));
 }
 
 function setCovered(value) {
@@ -404,9 +398,8 @@ function setCovered(value) {
   pauseLayer.focus({ preventScroll: true });
 }
 
-// 暫停層：暫停字樣、目前的廣播（不管這支手機收起了沒；沒有廣播、已經收回時不放）、自己的連線狀態。
-function pauseNodes(m) {
-  const cast = broadcastOf(m.room.display);
+// 暫停層：暫停字樣、目前的廣播 cast（不管這支手機收起了沒；沒有廣播、已經收回時是 null，不放）、自己的連線狀態。
+function pauseNodes(cast) {
   return [
     h('span', { class: 'pause-mark', attrs: { 'aria-hidden': 'true' } }),
     h('h2', { class: 'pause-title', attrs: { id: 'player-pause-title' }, text: '暫停中' }),
@@ -419,7 +412,7 @@ function pauseNodes(m) {
 // 最上面一條與暫停層。until 有值（暫停前就開著的倒數還在跑）時先寫「這個倒數結束後全場暫停」，到點重畫時蓋上。
 // 蓋不蓋只看 pauseOf：最上面一條或層上的內容組不起來（丟出錯誤）時也照樣蓋上、擋住操作。
 function renderConsole(m) {
-  const { covered: cover, until } = pauseOf(m);
+  const { cover, until, cast } = pauseOf(m);
   pauseWake = wakeAt(pauseWake, until);
   try {
     buzzOnNew(m.room.display);
@@ -429,7 +422,7 @@ function renderConsole(m) {
     ].filter(Boolean);
     topBar.hidden = nodes.length === 0;
     patchChildren(topBar, nodes);
-    if (cover) patchChildren(pauseLayer, pauseNodes(m));
+    if (cover) patchChildren(pauseLayer, pauseNodes(cast));
   } finally {
     setCovered(cover);
   }
@@ -513,13 +506,9 @@ function buzzToggle() {
 }
 
 function buzzOnNew(display) {
-  const cast = broadcastOf(display);
-  if (buzzSeen.code !== ctx.code) {
-    buzzSeen = { code: ctx.code, seq: cast?.seq ?? 0 };
-    return;
-  }
-  if (!cast || cast.seq <= buzzSeen.seq) return;
-  buzzSeen.seq = cast.seq;
+  const step = buzzStep(buzzSeen, ctx.code, broadcastOf(display));
+  buzzSeen = step.seen;
+  if (!step.buzz) return;
   // 還沒碰過這一頁（剛重新整理）時瀏覽器不准震，不叫，免得留下警告。
   if (!canBuzz() || buzzOff() || navigator.userActivation?.hasBeenActive === false) return;
   try {
