@@ -1858,10 +1858,12 @@ export function trackScreen(session, code, initial = {}) {
   };
 }
 
-// 批次動作的進度回呼（畫面給的）：丟錯不影響批次，剩下的桌照做、做完的桌照樣回傳。
+// 批次動作的進度回呼（畫面給的）：不會被等待（不 await 它回傳的 Promise）；丟錯、或 async 回呼回傳被拒的 Promise，都不影響批次，
+// 剩下的桌照做、做完的桌照樣回傳。
 function reportProgress(onProgress, step) {
   try {
-    onProgress(step);
+    const back = onProgress(step);
+    if (typeof back?.catch === 'function') back.catch(() => {}); // 被拒的 Promise 也接住，不留給沒有人處理
   } catch {
     // 畫面自己的錯，這裡不處理
   }

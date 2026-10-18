@@ -1,6 +1,6 @@
 // 主持人控制台的純函式：全場日落鐘（剩餘、已進行、到點、暫停、繼續、加減的上下限，寫入的欄位跟資料庫規則的式子一致）、shouldEnd 帶鐘、
 // 批次動作的計畫（全部開始、全部開始第 2 場、能推的全推）、在等誰、挑棄牌、投影端的音效、玩家端的暫停層、排行與全場最高分、
-// 廣播與場景的格式、clockOf、網頁版本號。資料用範例資料，不依賴正式資料。
+// 廣播與場景的格式、clockOf、網頁版本號，以及 store.js 批次動作的進度回呼（不用模擬器）。資料用範例資料，不依賴正式資料。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,7 @@ import {
   waitingFor,
 } from '../../play/js/game.js';
 import { BROADCAST_MAX_LENGTH, SCENE_IDS, clockOf, isValidBroadcast, isValidScene, normalizeBroadcast } from '../../play/js/rules.js';
+import { advanceAll, startAll } from '../../play/js/store.js';
 import { loadDataFolder } from '../../scripts/lib/datafiles.mjs';
 
 const sampleDir = fileURLToPath(new URL('../fixtures/data-example/', import.meta.url));
@@ -631,4 +632,42 @@ test('a scene is one of the five ids, with an optional page 0–20', () => {
 
 test('the web version is a positive whole number', () => {
   assert.ok(Number.isInteger(WEB_VERSION) && WEB_VERSION >= 2, String(WEB_VERSION));
+});
+
+test('a progress callback that is an async function and fails stops neither start all nor advance all, and leaves no unhandled rejection', async () => {
+  const unhandled = [];
+  const record = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', record);
+  try {
+    // 連不上資料庫的連線：每一桌讀房間時就出錯，錯誤記在那一桌的結果裡；進度照樣每一桌回報一次。
+    const offline = {
+      uid: 'host',
+      get db() {
+        throw new Error('no database in this test');
+      },
+    };
+    const steps = [];
+    const failing = async (step) => {
+      steps.push([step.done, step.total, step.key]);
+      await null;
+      throw new Error('the progress bar failed to draw');
+    };
+    const plan = { match: 1, start: [{ key: '1', table: 1 }, { key: '2', table: 2 }], started: [], clock: null };
+    const started = await startAll(offline, 'ABCD', plan, {}, { onProgress: failing });
+    assert.deepEqual(
+      started.results.map(({ key, started: ok, error }) => [key, ok, error?.message]),
+      [
+        ['1', false, 'no database in this test'],
+        ['2', false, 'no database in this test'],
+      ],
+    );
+    assert.equal(started.clock, null);
+    const moved = await advanceAll(offline, 'ABCD', { advance: [{ key: '1', table: 1, round: 1, phase: 'day', ending: null }] }, {}, { onProgress: failing });
+    assert.deepEqual(moved.results.map(({ key, advanced, error }) => [key, advanced, error?.message]), [['1', false, 'no database in this test']]);
+    assert.deepEqual(steps, [[1, 2, '1'], [2, 2, '2'], [1, 1, '1']]);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // 沒有人處理的被拒 Promise 在這之前就會報出來
+    assert.deepEqual(unhandled, [], 'every rejection of the callback was handled');
+  } finally {
+    process.off('unhandledRejection', record);
+  }
 });
