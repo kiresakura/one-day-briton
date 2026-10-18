@@ -1596,9 +1596,10 @@ export async function setMusic(session, code, on, { track = MUSIC_TRACKS[0], exp
 // 被拒時：暫停那一筆被別台改了，已經是要的狀態就當作不用寫，不然丟 conflict；鐘被別台改了就重讀再試；伺服器上什麼都沒變時照
 // deniedReason 丟錯，只有原因不明（rejected）的暫停先一個鐘都不帶再試一次，讓暫停那一筆一定寫得進去（安全優先；沒停住的鐘照 clocks
 // 看得出來）。恢復不放寬：不帶鐘只寫 pause.on = false 的話，被暫停停住的鐘會一直停著，也不會再有人自動恢復它。
-// 回傳 { changed, seq, clocks }：clocks 是這次一起停住或恢復的場次（例 ['1']）。
+// 回傳 { changed, seq, clocks, nearSunset }：clocks 是這次一起停住或恢復的場次（例 ['1']）；nearSunset 是這次暫停時因為離日落不到
+// PAUSE_NEAR_SUNSET_MS 而故意不停的場次（還沒日落、正在走的鐘；恢復、沒有寫的時候都是 []）。正在走、還沒日落、兩個都不在的鐘就是沒停住的。
 // 離日落不到這麼久（毫秒）的鐘，全場暫停不停它（照常日落）：停了也沒有意義，而且這台估的時間慢一點就會讓整筆被拒，要等好幾秒才能不帶鐘重送。
-const PAUSE_NEAR_SUNSET_MS = 10_000;
+export const PAUSE_NEAR_SUNSET_MS = 10_000;
 
 export async function setPause(session, code, on, { expectSeq } = {}) {
   if (typeof on !== 'boolean') throw new StoreError('invalid-command', '暫停要給 true 或 false');
@@ -1606,16 +1607,20 @@ export async function setPause(session, code, on, { expectSeq } = {}) {
   let bare = false; // 暫停被拒、伺服器上也沒變之後：一個鐘都不帶
   for (let attempt = 1; ; attempt += 1) {
     const { room, current, seq } = await commandBase(session, code, 'display/pause', attempt === 1 ? expectSeq : undefined);
-    if ((current?.on === true) === on) return { changed: false, seq, clocks: [] };
+    if ((current?.on === true) === on) return { changed: false, seq, clocks: [], nearSunset: [] };
     const now = serverTime(session);
     const writes = {};
     const clocks = [];
+    const nearSunset = [];
     for (const match of ['1', String(MATCH_COUNT)]) {
       const clock = room.clock?.[match];
       if (!isClock(clock)) continue;
       let next = null;
-      if (on) next = bare || clockPassed(clock, now + PAUSE_NEAR_SUNSET_MS) ? null : clockPauseWrite(clock, serverTimestamp());
-      else if (current?.clocks?.[match] === true && clock.pausedAt === current.at) next = clockResumeWrite(clock, serverTimestamp());
+      if (on) {
+        const near = clockPassed(clock, now + PAUSE_NEAR_SUNSET_MS);
+        if (near && !clockPassed(clock, now)) nearSunset.push(match); // 已經日落的不算
+        next = bare || near ? null : clockPauseWrite(clock, serverTimestamp());
+      } else if (current?.clocks?.[match] === true && clock.pausedAt === current.at) next = clockResumeWrite(clock, serverTimestamp());
       if (!next) continue;
       writes[`rooms/${code}/clock/${match}`] = { ...next, by: session.uid };
       clocks.push(match);
@@ -1625,14 +1630,14 @@ export async function setPause(session, code, on, { expectSeq } = {}) {
     writes[`rooms/${code}/display/pause`] = pause;
     try {
       await update(ref(session.db), writes);
-      return { changed: true, seq: seq + 1, clocks };
+      return { changed: true, seq: seq + 1, clocks, nearSunset };
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;
       const pauseSeq = (value) => value?.display?.pause?.seq ?? 0;
       const moved = (value) => pauseSeq(value) !== seq || clocks.some((match) => (value?.clock?.[match]?.seq ?? 0) !== room.clock[match].seq);
       const seen = await waitFor(session, `rooms/${code}`, moved, await deniedWait(session, code));
       if (seen !== undefined && pauseSeq(seen) !== seq) {
-        if ((seen.display.pause.on === true) === on) return { changed: false, seq: pauseSeq(seen), clocks: [] };
+        if ((seen.display.pause.on === true) === on) return { changed: false, seq: pauseSeq(seen), clocks: [], nearSunset: [] };
         throw conflictError(seen.display.pause);
       }
       if (seen === undefined) {

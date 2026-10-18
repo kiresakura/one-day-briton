@@ -22,6 +22,7 @@ import {
   hideBroadcast,
   joinRoom,
   openMatch,
+  PAUSE_NEAR_SUNSET_MS,
   pauseClock,
   playSfx,
   processSunrise,
@@ -532,14 +533,14 @@ test('the full pause stops the running clocks in the same write and resumes only
   await pauseClock(host, code, 2); // 原本就手動暫停的鐘
   await watchers.backup.until((value) => value.clock?.[1]?.seq === 1 && value.clock?.[2]?.seq === 2, 'the backup sees both clocks');
   const paused = await setPause(backup, code, true);
-  assert.deepEqual(paused, { changed: true, seq: 1, clocks: ['1'] });
+  assert.deepEqual(paused, { changed: true, seq: 1, clocks: ['1'], nearSunset: [] });
   let room = await watchers.p1.until((value) => value.display?.pause?.on === true, 'the player sees the pause');
   assert.deepEqual([room.display.pause.clocks[1], room.display.pause.clocks[2], room.display.pause.by], [true, undefined, backup.uid]);
   assert.equal(room.clock[1].pausedAt, room.display.pause.at, 'stopped in the same write: the same server time');
   await watchers.host.until((value) => value.display?.pause?.seq === 1, 'the host sees the pause');
-  assert.deepEqual(await setPause(host, code, true), { changed: false, seq: 1, clocks: [] }, 'already paused');
+  assert.deepEqual(await setPause(host, code, true), { changed: false, seq: 1, clocks: [], nearSunset: [] }, 'already paused');
   const resumed = await setPause(host, code, false);
-  assert.deepEqual(resumed, { changed: true, seq: 2, clocks: ['1'] });
+  assert.deepEqual(resumed, { changed: true, seq: 2, clocks: ['1'], nearSunset: [] });
   room = await watchers.host.until((value) => value.display?.pause?.on === false, 'resumed');
   assert.equal(room.display.pause.clocks, undefined);
   assert.equal(room.clock[1].pausedAt, undefined, 'the clock the pause stopped runs again');
@@ -561,20 +562,20 @@ test('the full pause stops the running clocks in the same write and resumes only
     [`rooms/${code}/display/pause`]: { on: true, clocks: { 1: true }, seq: 3, at: stamp(), by: host.uid },
     [`rooms/${code}/clock/1`]: { ...clock1, pausedAt: stamp(), seq: clock1.seq + 1, by: host.uid },
   });
-  assert.deepEqual(await setPause(host, code, false, { expectSeq: 3 }), { changed: true, seq: 4, clocks: ['1'] });
+  assert.deepEqual(await setPause(host, code, false, { expectSeq: 3 }), { changed: true, seq: 4, clocks: ['1'], nearSunset: [] });
   await assert.rejects(setPause(host, code, true, { expectSeq: 3 }), codeOf('conflict'));
   await watchers.p1.until((value) => value.display?.pause?.seq === 4, 'the player sees the resume');
   // 不是主持端：等一次伺服器的現況就回 permission-denied，不會再不帶鐘重送一次（那樣要多等約 3 秒）。
   const refusedAt = Date.now();
   await assert.rejects(setPause(p1, code, true), codeOf('permission-denied'));
   assert.ok(Date.now() - refusedAt < 4500, `answered in ${Date.now() - refusedAt} ms`);
-  // 已經日落的鐘不會被暫停帶走（規則也不准暫停它，store 不把它放進那一筆）。
+  // 已經日落的鐘不會被暫停帶走（規則也不准暫停它，store 不把它放進那一筆），也不算在 nearSunset 裡（已經日落，不是快日落）。
   const other = await createRoom(host);
   await startClock(host, other, 1, 10);
   await adjustClock(host, other, 1, -10 * MINUTE);
   const passed = await read(host, `rooms/${other}/clock/1`);
   await untilServerTime(host, passed.anchor + passed.remain + 100);
-  assert.deepEqual(await setPause(host, other, true), { changed: true, seq: 1, clocks: [] });
+  assert.deepEqual(await setPause(host, other, true), { changed: true, seq: 1, clocks: [], nearSunset: [] });
   assert.equal((await read(host, `rooms/${other}/clock/1`)).seq, 2, 'the clock is left as it was');
 });
 
@@ -821,32 +822,34 @@ test('the full pause always goes in, even when a clock this host thinks is still
   let startedAt = Date.now();
   const result = await skewed(-3000, () => setPause(host, code, true));
   assert.ok(Date.now() - startedAt < 1500, `answered in ${Date.now() - startedAt} ms, not after a refusal`);
-  assert.deepEqual(result, { changed: true, seq: 1, clocks: [] }, 'the pause went in without the clock');
+  assert.deepEqual(result, { changed: true, seq: 1, clocks: [], nearSunset: ['1'] }, 'the pause went in without the clock, listed as near sunset');
   assert.equal((await read(host, `rooms/${code}/display/pause`)).on, true);
   assert.equal((await read(host, `rooms/${code}/clock/1`)).seq, 2, 'the clock that had already set was left as it was');
   // 慢 20 秒：以為還剩 19 秒，把鐘放進暫停那一筆，整筆被規則拒；伺服器上沒有變化，一個鐘都不帶再寫一次，暫停照樣寫得進去。
-  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [] });
+  // 這台以為鐘離日落還遠：不在 clocks、也不在 nearSunset，就是「沒停住」。
+  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [], nearSunset: [] });
   startedAt = Date.now();
-  assert.deepEqual(await skewed(-20_000, () => setPause(host, code, true)), { changed: true, seq: 3, clocks: [] }, 'refused once, then in without the clock');
+  assert.deepEqual(await skewed(-20_000, () => setPause(host, code, true)), { changed: true, seq: 3, clocks: [], nearSunset: [] }, 'refused once, then in without the clock');
   assert.ok(Date.now() - startedAt >= 2500, 'it waited to see that nothing had changed on the server');
   assert.equal((await read(host, `rooms/${code}/clock/1`)).seq, 2);
 });
 
-test('the full pause leaves out a clock less than 10 seconds before sunset at once: that clock runs on, the other one is stopped and later resumed', TIMEOUT, async (t) => {
+test('the full pause leaves out a clock less than 10 seconds before sunset at once and lists it as near sunset: that clock runs on, the other one is stopped and later resumed', TIMEOUT, async (t) => {
   const { code } = await consoleRoom(t);
   await startClock(host, code, 1, 10);
   await adjustClock(host, code, 1, -(10 * MINUTE - 6000)); // 還剩約 6 秒
   await createClock(host, `rooms/${code}/clock/2`, 75);
   const near = await read(host, `rooms/${code}/clock/1`);
   const left = clockRemaining(near, serverTime(host));
-  assert.ok(left > 2000 && left < 10_000, String(left));
+  assert.ok(left > 2000 && left < PAUSE_NEAR_SUNSET_MS, String(left));
   const startedAt = Date.now();
-  assert.deepEqual(await setPause(host, code, true), { changed: true, seq: 1, clocks: ['2'] });
+  // 快日落的在 nearSunset、不在 clocks；遠的在 clocks、不在 nearSunset。
+  assert.deepEqual(await setPause(host, code, true), { changed: true, seq: 1, clocks: ['2'], nearSunset: ['1'] });
   assert.ok(Date.now() - startedAt < 1500, 'at once');
   let room = await read(host, `rooms/${code}`);
   assert.deepEqual([room.display.pause.clocks?.[1], room.display.pause.clocks?.[2]], [undefined, true]);
   assert.deepEqual([room.clock[1].seq, room.clock[1].pausedAt, typeof room.clock[2].pausedAt], [near.seq, undefined, 'number'], 'only the clock far from sunset is stopped');
-  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: ['2'] });
+  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: ['2'], nearSunset: [] });
   room = await read(host, `rooms/${code}`);
   assert.deepEqual([room.clock[1].seq, room.clock[2].pausedAt], [near.seq, undefined]);
 });
@@ -862,7 +865,7 @@ test('a refused resume of the full pause is reported, not written without its cl
     await disconnect(solo);
   });
   await startClock(solo, code, 1, 75);
-  assert.deepEqual(await setPause(solo, code, true), { changed: true, seq: 1, clocks: ['1'] });
+  assert.deepEqual(await setPause(solo, code, true), { changed: true, seq: 1, clocks: ['1'], nearSunset: [] });
   const clock = await read(solo, `rooms/${code}/clock/1`);
   goOffline(solo.db);
   const bogus = put(solo, `rooms/${code}/clock/1`, { ...clock, remain: clock.remain + 1 }).then(() => null, (error) => error);
@@ -876,7 +879,7 @@ test('a refused resume of the full pause is reported, not written without its cl
   const room = await read(host, `rooms/${code}`);
   assert.deepEqual([room.display.pause.on, room.display.pause.seq, room.display.pause.clocks?.[1]], [true, 1, true], 'still paused, still listing the clock');
   assert.deepEqual([room.clock[1].seq, room.clock[1].pausedAt], [clock.seq, room.display.pause.at], 'the clock is still stopped by this pause');
-  assert.deepEqual(await setPause(solo, code, false), { changed: true, seq: 2, clocks: ['1'] }, 'pressing again resumes it');
+  assert.deepEqual(await setPause(solo, code, false), { changed: true, seq: 2, clocks: ['1'], nearSunset: [] }, 'pressing again resumes it');
 });
 
 test('no room clock starts during the full pause, not by hand and not as the last step of start all', TIMEOUT, async (t) => {
@@ -927,7 +930,7 @@ test('resuming the full pause leaves alone a clock that was resumed and paused a
   assert.deepEqual((await setPause(host, code, true)).clocks, ['1']);
   assert.equal((await resumeClock(host, code, 1)).changed, true, 'by hand during the pause');
   assert.equal((await pauseClock(host, code, 1)).changed, true, 'and paused again by hand');
-  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [] });
+  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [], nearSunset: [] });
   assert.equal(typeof (await read(host, `rooms/${code}/clock/1`)).pausedAt, 'number', 'still paused: the host paused it');
 });
 
