@@ -45,6 +45,8 @@ const NOTICE_WAIT_MS = 2000; // 請求處理了、輪次卻沒動（被退回）
 const RESEND_MS = 20_000; // 送出的請求這麼久主持端都沒處理，就再送一次
 const RESENDS = 2; // 同一個請求最多再送幾次
 const RETRY_MS = 2000; // 送不出去之後隔多久再試
+const AGAIN_MS = 30_000; // 這一輪送不出去（放棄了）之後，隔多久再送一次「結束這一輪」
+const AGAINS = 2; // 放棄之後最多再送幾次「結束這一輪」
 const REMIND_MS = 5 * 60_000; // 坐在進行中的一局裡、房間一直沒有變動時，最多隔多久印一行「還在等」
 const CLOSE_MS = 5000; // 結束時離開玩家名單、移除上線狀態、斷線各最多等多久
 
@@ -270,6 +272,15 @@ export async function startBot(options) {
     say(m, `被退回（${what}）：${reason ? (REJECT_REASONS[reason] ?? reason) : '沒有收到原因'}，改做別的`);
   };
 
+  // 這一輪送不出去（出牌、結束這一輪都送不出去，或連結束這一輪都被退回）：先不送，請主持端按「下一階段」；
+  // 隔 AGAIN_MS 再送一次「結束這一輪」，最多 AGAINS 次（局面一直沒變，主持端也沒按的話）。
+  const giveUp = (m) => {
+    turn.gaveUp = true;
+    turn.gaveUpAt = Date.now();
+    const later = turn.agains < AGAINS ? `（${AGAIN_MS / 1000} 秒後再送一次結束這一輪）` : '';
+    say(m, `這一輪送不出去，請主持端按下一階段${later}`);
+  };
+
   const respondIntent = (view, now) => {
     const { pending } = view;
     if (pending.by === uid || answered.has(pending.id) || now >= responseDeadline(pending)) return null;
@@ -287,7 +298,9 @@ export async function startBot(options) {
     const status = dayStatus(view, view.round);
     if (status.done || status.current !== uid) return null;
     const slot = `${m.key}:${view.round}:${status.turn.index}:${status.turn.plays}`;
-    if (turn.slot !== slot) turn = { slot, skip: new Set(), tries: 0, pass: null, sent: null, handledAt: null, retryAt: 0, gaveUp: false };
+    if (turn.slot !== slot) {
+      turn = { slot, skip: new Set(), tries: 0, pass: null, sent: null, handledAt: null, retryAt: 0, gaveUp: false, gaveUpAt: 0, agains: 0 };
+    }
     const handled = m.game.lastSeq?.[uid] ?? 0;
     const { sent } = turn;
     if (sent) {
@@ -304,13 +317,17 @@ export async function startBot(options) {
         if (Date.now() - turn.handledAt < NOTICE_WAIT_MS) return null;
       }
       rejected(m, sent.type === 'play' ? `出牌 ${cardName(sent.card)}` : '結束這一輪', reason);
-      if (sent.type === 'play') turn.skip.add(sent.card);
-      else turn.gaveUp = true; // 連結束這一輪都被退回：主持端認為不是我，等局面變了再說
       turn.sent = null;
       turn.handledAt = null;
+      if (sent.type === 'play') turn.skip.add(sent.card);
+      else giveUp(m); // 連結束這一輪都被退回：主持端認為不是我，等局面變了再說
     }
     if (seen.request && seen.request.seq > handled) return null; // 還有一筆沒處理的請求（例如響應），等它
-    if (turn.gaveUp || Date.now() < turn.retryAt) return null;
+    if (turn.gaveUp) {
+      if (turn.agains >= AGAINS || Date.now() - turn.gaveUpAt < AGAIN_MS) return null;
+      return { kind: 'pass', key: `again:${slot}:${turn.agains}`, again: true };
+    }
+    if (Date.now() < turn.retryAt) return null;
     turn.pass ??= chance(policy.passChance + policy.passStep * status.turn.plays, random);
     const options = turn.pass || turn.tries >= MAX_TRIES ? [] : playOptions(view, uid, data, { skip: turn.skip, random });
     if (options.length > 0) return { kind: 'play', key: `play:${slot}:${turn.tries}`, ...pickOne(options, random) };
@@ -425,10 +442,13 @@ export async function startBot(options) {
         say(m, playText(m, intent));
       } else if (intent.kind === 'pass') {
         const seq = await requestPass(session, code);
-        turn.tries += 1;
+        if (intent.again) {
+          turn.agains += 1;
+          turn.gaveUp = false;
+        } else turn.tries += 1;
         turn.sent = { type: 'pass', seq, at: Date.now(), resends: 0 };
         stats.passes += 1;
-        say(m, '結束這一輪');
+        say(m, intent.again ? `隔了 ${AGAIN_MS / 1000} 秒，再送一次結束這一輪` : '結束這一輪');
       } else if (intent.kind === 'resend') {
         const previous = turn.sent;
         const seq = previous.type === 'play' ? await requestPlay(session, code, previous.request) : await requestPass(session, code);
@@ -461,13 +481,16 @@ export async function startBot(options) {
       if (intent.tag) tried(intent.tag, false);
       else if (intent.kind === 'respond') answered.set(intent.pending, { reported: true });
       else if (intent.kind === 'resend') turn.sent = { ...turn.sent, at: Date.now(), resends: turn.sent.resends + 1 };
-      else {
+      say(m, `送不出去：${error instanceof StoreError ? error.message : `連線有問題（${error.message}）`}`);
+      if (intent.again) {
+        turn.agains += 1;
+        giveUp(m);
+      } else if (intent.kind === 'play' || intent.kind === 'pass') {
         turn.tries += 1;
         turn.retryAt = Date.now() + RETRY_MS;
         if (intent.kind === 'play') turn.skip.add(intent.card);
-        if (turn.tries > MAX_TRIES) turn.gaveUp = true; // 出牌與結束這一輪都送不出去：等這一輪的局面變了再說
+        if (turn.tries > MAX_TRIES) giveUp(m); // 出牌與結束這一輪都送不出去：等這一輪的局面變了再說
       }
-      say(m, `送不出去：${error instanceof StoreError ? error.message : `連線有問題（${error.message}）`}`);
     }
   };
 
