@@ -498,8 +498,8 @@ function leaveButton(text = '離開房間') {
   return h('button', { class: 'btn btn-block leave', type: 'button', data: { act: 'leave' }, text });
 }
 
-function roomFoot() {
-  return h('div', { class: 'room-foot', data: { key: 'room-foot' } }, h('p', { class: 'room-line' }, '房號 ', h('span', { class: 'num', text: ctx.code })), buzzToggle(), leaveButton());
+function roomFoot(m) {
+  return h('div', { class: 'room-foot', data: { key: 'room-foot' } }, h('p', { class: 'room-line' }, '房號 ', h('span', { class: 'num', text: ctx.code })), buzzToggle(m.room.display), leaveButton());
 }
 
 // ---- 新廣播時短震一次（可以關；瀏覽器不支援震動就不震、也不放開關） ----
@@ -519,8 +519,9 @@ function buzzOff() {
   }
 }
 
-function buzzToggle() {
-  if (!canBuzz()) return null;
+// 房間沒有 display（舊房間、主持端還沒用過控制台）就不會有廣播，不放開關。
+function buzzToggle(display) {
+  if (!canBuzz() || !display) return null;
   const on = !buzzOff();
   return h('button', { class: 'btn-link buzz-toggle', type: 'button', data: { act: 'buzz' }, attrs: { 'aria-pressed': String(on) }, text: `新廣播時震動：${on ? '開' : '關'}` });
 }
@@ -1432,9 +1433,9 @@ function combinedPanel(m) {
 function rolePanel(m) {
   if (m.prep) {
     const lines = handoverLines(m);
-    return [section('role-wait', 'is-plain', h('p', { text: lines ? lines.text : `${matchText(m.match)}不收新人，請找工作人員` }), lines?.give ? h('p', { text: lines.give }) : null), roomFoot()];
+    return [section('role-wait', 'is-plain', h('p', { text: lines ? lines.text : `${matchText(m.match)}不收新人，請找工作人員` }), lines?.give ? h('p', { text: lines.give }) : null), roomFoot(m)];
   }
-  if (m.wait) return [section('role-wait', 'is-plain', h('p', { text: m.wait })), roomFoot()];
+  if (m.wait) return [section('role-wait', 'is-plain', h('p', { text: m.wait })), roomFoot(m)];
   const { seat } = m;
   const role = ctx.cardData.index.roles.get(seat.role);
   return [
@@ -1447,7 +1448,7 @@ function rolePanel(m) {
     section('missions', 'list-card', h('h2', { class: 'card-title', text: '使命' }), h('ul', { class: 'diamond-list' }, (role?.missions ?? []).map((text) => h('li', { text })))),
     section('privileges', 'list-card', h('h2', { class: 'card-title', text: '特權' }), h('ul', { class: 'plain-list' }, (role?.privileges ?? []).map((text) => h('li', { text })))),
     h('p', { class: 'hint center', data: { key: 'destiny-note' }, text: '隱藏天命不在這裡——按住右下角「天命」才看得到' }),
-    roomFoot(),
+    roomFoot(m),
   ];
 }
 
