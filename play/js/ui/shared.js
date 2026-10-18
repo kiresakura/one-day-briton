@@ -464,12 +464,25 @@ export function scoreRules() {
   return scoreSettings(ctx.cardData?.data.settings);
 }
 
-// 局號 key 那一場的全場日落鐘。沒給 key 時（舊的呼叫方式只給 game）在最近一次的房間資料裡找這一局（同一份資料裡的同一個物件）；
+// 局號 key 那一場的全場日落鐘。沒給 key 時（舊的呼叫方式只給 game）在房間資料 room 裡找這一局（同一份資料裡的同一個物件）；
 // 找不到就是 null（照各桌的 startedAt）。
-function clockFor(game, key, room = ctx.latestRoom) {
+function clockFor(game, key, room) {
   if (key !== null && key !== undefined) return clockOf(room, key);
   const found = Object.entries(room?.games ?? {}).find(([, value]) => value === game);
   return found ? clockOf(room, found[0]) : null;
+}
+
+// endReasonNow 的算法（純函式，測試用同一套）：room 是房間資料（沒給 key 時在裡面找這一局），now 是伺服器時間；沒有設定是 null。
+export function endReasonIn(room, game, state, settings, now, key = null) {
+  if (!settings) return null;
+  return endReasonAt(game, state, settings, now, clockFor(game, key, room));
+}
+
+// wakeAtSunset 的算法（純函式）：到點要重畫的時刻（伺服器時間）；不會到點（全場鐘暫停中、沒開局又沒有鐘）或沒有設定是 null。
+export function sunsetWakeAt(room, game, settings, now, key = null) {
+  if (!settings) return null;
+  const status = sunsetStatus(game, settings, now, clockFor(game, key, room));
+  return typeof status?.sunsetAt === 'number' ? status.sunsetAt : null;
 }
 
 // 這一回合是不是最後一回合（這一回合黑夜揭曉後按「下一階段」就算分）：原因或 null。主持端的「下一階段（算分）」「最後一回合」、
@@ -477,15 +490,15 @@ function clockFor(game, key, room = ctx.latestRoom) {
 // key 是局號；舊的呼叫方式 endReasonNow(game, state) 照樣可以用（全場鐘從最近一次的房間資料找）。
 export function endReasonNow(game, state, key = null) {
   if (!game?.seats || !ctx.cardData || !state || state.phase === 'end') return null;
-  return endReasonAt(game, state, ctx.cardData.data.settings, serverTime(ctx.session), clockFor(game, key));
+  return endReasonIn(ctx.latestRoom, game, state, ctx.cardData.data.settings, serverTime(ctx.session), key);
 }
 
 // 日落鐘到點時重畫一次（「這是最後一回合」、按鈕跟著換）：有全場鐘照鐘的日落時刻，暫停中不會到點就不排（鐘一變房間就會重畫）。
 // key 同 endReasonNow。
 export function wakeAtSunset(game, key = null) {
   if (!ctx.cardData) return;
-  const status = sunsetStatus(game, ctx.cardData.data.settings, serverTime(ctx.session), clockFor(game, key));
-  if (typeof status?.sunsetAt === 'number') rerenderAt(status.sunsetAt);
+  const at = sunsetWakeAt(ctx.latestRoom, game, ctx.cardData.data.settings, serverTime(ctx.session), key);
+  if (at !== null) rerenderAt(at);
 }
 
 // 天命那一項：內容與是否達成（終局時公開）。
