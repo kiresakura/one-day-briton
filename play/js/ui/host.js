@@ -1591,8 +1591,11 @@ function actionsPanel(view) {
   let startWhy = common;
   if (!startWhy && start.start.length === 0) startWhy = start.started.length && start.skip.length === 0 ? `${start.started.length} 桌都開始了` : start.started.length || start.skip.length ? '沒有可以開的桌' : '第 1 場都結束了';
   let openWhy = off ? OFFLINE_TEXT : paused ? PAUSED_TEXT : data ? null : noDataText();
-  if (!openWhy && !open) openWhy = `還沒有桌打完${matchText(1)}`;
-  else if (!openWhy && open.ready.length === 0) openWhy = '天命都要先判定完';
+  if (!openWhy && !open) {
+    // 已經有桌在第 2 場（開了或打完）時，不是「還沒打完第 1 場」，而是沒有要開的桌了。
+    const inSecond = second && second.start.length + second.started.length + second.skip.length > 0;
+    openWhy = inSecond ? `沒有打完${matchText(1)}、還沒開${matchText(2)}的桌` : `還沒有桌打完${matchText(1)}`;
+  } else if (!openWhy && open.ready.length === 0) openWhy = '天命都要先判定完';
   let secondWhy = common;
   if (!secondWhy && second.start.length === 0) secondWhy = second.started.length ? `${matchText(2)}都開始了` : second.skip.length ? '沒有可以開的桌' : `還沒有桌開${matchText(2)}`;
 
