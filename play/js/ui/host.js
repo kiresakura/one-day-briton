@@ -2138,7 +2138,7 @@ function consoleDialog(room) {
       });
     }
     case 'resume': {
-      const manual = manualPausedMatches(room);
+      const manual = manualPausedMatches(room, now);
       return dialogNode({
         title: '恢復全場？',
         text: '手機與投影拿掉暫停畫面；被這次暫停停住的日落鐘接著走。',

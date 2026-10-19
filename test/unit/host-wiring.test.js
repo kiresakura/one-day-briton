@@ -350,3 +350,18 @@ test('恢復全場：確認框點名手動暫停的鐘；恢復之後結果條�
   assert.deepEqual(sent('setPause'), [[false, { expectSeq: 3 }]]);
   assert.match(resultText(), /第 1 場日落鐘還在暫停（手動暫停的），要繼續請在日落鐘面板按繼續/);
 });
+
+test('恢復全場：暫停中已經被減到 0（已日落）的手動暫停鐘，確認框與結果條都不提醒', async () => {
+  await start(NOW + 50 * MINUTE);
+  const pause = { on: true, seq: 5, at: fake.now - MINUTE, by: 'hostA' };
+  await show(roomWith(clockAt(0, { paused: true, seq: 7 }), pause));
+  click(byAct('pause-off')[0]);
+  await settle();
+  assert.equal(dialog()?.dataset.key, 'confirm-resume');
+  assert.doesNotMatch(textOf(dialog()), /手動暫停/);
+  fake.replies.setPause = async () => ({ changed: true, seq: 6, clocks: [], nearSunset: [] });
+  click(byAct('confirm-console')[0]);
+  await settle();
+  assert.deepEqual(sent('setPause'), [[false, { expectSeq: 5 }]]);
+  assert.equal(resultText(), '✓ 恢復全場了');
+});

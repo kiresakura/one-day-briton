@@ -117,12 +117,13 @@ export function nearSunsetLine(matches) {
   return `${namesOf(matches)}日落鐘剩不到 ${NEAR_SECONDS} 秒：快日落・照常日落、不停（各桌這一回合結束後算分）`;
 }
 
-// 手動暫停的場次（暫停著、不是被這次全場暫停停住的）：恢復全場不會讓它們繼續。
-export function manualPausedMatches(room) {
+// 手動暫停的場次（暫停著、不是被這次全場暫停停住的）：恢復全場不會讓它們繼續，恢復確認框與結果條要提醒自己按繼續。暫停中已經被減到 0
+// 的（已日落）不算：日落了不能再繼續，不用提醒。
+export function manualPausedMatches(room, now) {
   const pause = room?.display?.pause ?? null;
   return CLOCK_KEYS.filter((match) => {
     const clock = room?.clock?.[match];
-    return isClock(clock) && clockPaused(clock) && !heldByPause(clock, pause, match);
+    return isClock(clock) && clockPaused(clock) && !clockPassed(clock, now) && !heldByPause(clock, pause, match);
   });
 }
 
@@ -155,7 +156,7 @@ export function pauseReport(on, result, before, after, now) {
   }
   const pause = before?.display?.pause ?? null;
   const missed = clocks.filter((match) => changed && heldByPause(before.clock[match], pause, match) && !done.includes(match));
-  const manual = manualPausedMatches(before).filter((match) => clockPaused(latest?.clock?.[match]) && !clockPassed(latest.clock[match], now));
+  const manual = manualPausedMatches(before, now).filter((match) => clockPaused(latest?.clock?.[match]) && !clockPassed(latest.clock[match], now));
   parts.push(changed ? '恢復全場了' : '本來就沒有全場暫停');
   if (done.length) parts.push(`${namesOf(done)}日落鐘接著走`);
   if (missed.length) parts.push(`${namesOf(missed)}日落鐘沒有跟著繼續（暫停中被動過），要的話在日落鐘面板按繼續`);

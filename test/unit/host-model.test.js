@@ -201,9 +201,11 @@ test('快日落的場次（全場暫停確認框先講）與手動暫停的場�
   assert.deepEqual(nearSunsetMatches(room({ 1: clock(8_000, { paused: true }), 2: clock(-1) }), NOW), []);
   assert.deepEqual(nearSunsetMatches(room({ 2: clock(10_000) }), NOW), ['2']);
   assert.equal(nearSunsetLine(['1']), '第 1 場日落鐘剩不到 10 秒：快日落・照常日落、不停（各桌這一回合結束後算分）');
-  assert.deepEqual(manualPausedMatches(room({ 1: held(30 * MINUTE), 2: clock(20 * MINUTE, { paused: true }) }, PAUSE)), ['2']);
-  assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE, { paused: true }) })), ['1']);
-  assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE) })), []);
+  assert.deepEqual(manualPausedMatches(room({ 1: held(30 * MINUTE), 2: clock(20 * MINUTE, { paused: true }) }, PAUSE), NOW), ['2']);
+  assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE, { paused: true }) }), NOW), ['1']);
+  assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE) }), NOW), []);
+  // 暫停中已經被減到 0（已日落）的手動暫停鐘不提醒：日落了不能再繼續。
+  assert.deepEqual(manualPausedMatches(room({ 1: clock(0, { paused: true }), 2: clock(1, { paused: true }) }, PAUSE), NOW), ['2']);
 });
 
 test('全場暫停之後的結果條：停住的、快日落照常日落（不叫人手動暫停）、沒停住的（可以手動暫停，恢復時不會自動繼續）', () => {
@@ -260,6 +262,17 @@ test('恢復全場之後的結果條：接著走的、沒跟著繼續的、還�
   });
   // 手動暫停的鐘提不提醒只看房間資料：回傳就算把第 2 場也列進 clocks，寫完還停著就提醒。
   assert.match(pauseReport(false, { changed: true, clocks: ['1', '2'], nearSunset: [] }, before, before, later).text, /第 2 場日落鐘還在暫停（手動暫停的）/);
+});
+
+test('恢復全場之後的結果條：暫停中已經被減到 0（已日落）的手動暫停鐘不提醒，按下去時就是、寫完時才是都一樣', () => {
+  const later = NOW + 300;
+  const done = { ok: true, warn: false, text: '恢復全場了；第 1 場日落鐘接著走' };
+  const zero = clock(0, { paused: true });
+  // 按下去時第 2 場就已經減到 0。
+  assert.deepEqual(pauseReport(false, { changed: true, clocks: ['1'], nearSunset: [] }, room({ 1: held(30 * MINUTE), 2: zero }, PAUSE), room({ 1: clock(30 * MINUTE), 2: zero }), later), done);
+  // 按下去時第 2 場還剩 20 分（手動暫停），寫完時別台已經把它減到 0。
+  const before = room({ 1: held(30 * MINUTE), 2: clock(20 * MINUTE, { paused: true }) }, PAUSE);
+  assert.deepEqual(pauseReport(false, { changed: true, clocks: ['1'], nearSunset: [] }, before, room({ 1: clock(30 * MINUTE), 2: zero }), later), done);
 });
 
 test('局面的指紋：「這回合結束後算分」、兩個全場鐘的序號、黑夜的桌該不該算分（鐘到了）變了都會變；不相干的不變', () => {
