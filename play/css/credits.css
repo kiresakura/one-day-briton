@@ -1,4 +1,4 @@
-/* 署名頁（credits.html）：每張圖的作品、作者、館藏、授權與來源；縮圖跟遊戲裡一樣疊在紙色上（multiply）。 */
+/* 署名頁（credits.html）：每張圖與投影的每項影音的作品、作者、館藏、授權與來源；縮圖跟遊戲裡一樣疊在紙色上（multiply）。 */
 
 .credits {
   max-width: 720px;
@@ -78,6 +78,21 @@
 .credit-thumb.is-wide {
   width: 112px;
   height: 28px;
+}
+
+/* 影音不放縮圖（不讓這一頁去載 play/media/ 的檔）：同一格寫「影片」「音樂」「音效」「底圖」。 */
+.credit-kind {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-min);
+  font-weight: 700;
 }
 
 .credit-body {
