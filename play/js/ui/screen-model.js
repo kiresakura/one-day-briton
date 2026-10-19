@@ -1,5 +1,6 @@
 // 投影畫面的純函式：舞台大小與版面、場景與頁數、日落鐘的文字、每桌桌牌要寫什麼、排行與頒獎的頁、素材表與下載進度、
-// 素材來源頁要列的內容。不碰畫面、不碰資料庫（screen.js 拿這些結果畫），Node 測試直接呼叫。
+// 素材來源頁要列的內容，以及 screen.js 每秒照做的判斷（背景影片要不要重建、日落鐘聲要不要響）。
+// 不碰畫面、不碰資料庫（screen.js 拿這些結果畫），Node 測試直接呼叫。
 // cards 是卡牌資料 { data, index }（gamedata.js 讀到並檢查過的；還沒讀到時給 null，名稱就退回編號）。
 import {
   clockPaused,
@@ -382,6 +383,15 @@ export function bellKey(match, clock) {
   return `${match}:${clock?.startedAt ?? ''}`;
 }
 
+// 每秒的日落鐘聲（screen.js 的 tick 照做）：{ ring, mark }。seen 是這台的 { primed, bells }（bells 是響過的鐘，Set）：
+// 第一次讀到房間（primed 還是 false）時已經日落的鐘先記成響過、不補；之後照 bellsDue，全場暫停（display/pause）中到點的
+// 先不響，恢復後第一秒補響。audible＝聲音開著、不是預覽框：不能出聲時 ring 是空的，mark 照樣記（之後開了聲音也不補）。
+export function bellTick(room, now, seen, audible) {
+  const passed = seen.primed ? [] : passedClocks(room, now);
+  const due = bellsDue(room, now, new Set([...seen.bells, ...passed]), room?.display?.pause?.on === true);
+  return { ring: audible ? due.ring : [], mark: [...passed, ...due.mark] };
+}
+
 // 已經日落的鐘（第一次讀到房間時用：這些不補響）。
 export function passedClocks(room, now) {
   const keys = [];
@@ -450,6 +460,15 @@ const LOOPS = { opening: 'loop-1', rules: 'loop-2', standings: 'loop-3', awards:
 
 export function loopFor(sceneId) {
   return LOOPS[sceneId] ?? null;
+}
+
+// 背景影片這一畫怎麼做（screen.js 的 updateLoop 照做）：{ key, rebuild }。sceneId 是目前的場景（還沒讀到房間、房號不對時 null），
+// url 是這個場景背景影片的網址（場景沒有背景影片、素材沒下載好時 null），openingIsVideo＝開場影片正在播（蓋著時先不放背景影片）。
+// key 是（場景, 網址），不放時是空字串；rebuild＝key 跟上一次（prevKey）不同：拆掉舊的，key 不是空的就建一支新的。
+// key 一樣就照舊、不重建（重建會從頭重播，房間每次更新都重建的話背景影片一直重來）。
+export function loopStep(prevKey, sceneId, url, openingIsVideo) {
+  const key = sceneId && url && !openingIsVideo ? `${sceneId} ${url}` : '';
+  return { key, rebuild: key !== prevKey };
 }
 
 // 影音素材的清單：play/media/credits.json（素材來源，每筆的 files 列出檔名與大小，格式同 play/assets/credits.json）。

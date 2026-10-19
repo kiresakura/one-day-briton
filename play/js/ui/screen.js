@@ -13,7 +13,7 @@ import { createAudio } from './screen-audio.js';
 import {
   MEDIA,
   awardPages,
-  bellsDue,
+  bellTick,
   clockText,
   creditsSummary,
   fogEntries,
@@ -22,6 +22,7 @@ import {
   headerClockText,
   joinAddress,
   loopFor,
+  loopStep,
   matchLine,
   mediaFilesIn,
   mediaProgressText,
@@ -30,7 +31,6 @@ import {
   openingStep,
   openingWaitText,
   pageIndex,
-  passedClocks,
   projectorParams,
   rulesPages,
   sceneOf,
@@ -248,14 +248,11 @@ function tick() {
   if (room) {
     const now = serverTime(view.session);
     // 日落自動響鐘：全場鐘到點時在本機播一次鐘聲（每場一次），不寫資料庫。第一次讀到時已經日落的鐘不補；
-    // 全場暫停中到點的先不響、恢復後第一秒補響（bellsDue）。聲音沒開時照樣記下，之後開了聲音也不補。
-    if (!view.seen.primed) {
-      for (const key of passedClocks(room, now)) view.seen.bells.add(key);
-      view.seen.primed = true;
-    }
-    const bells = bellsDue(room, now, view.seen.bells, room.display?.pause?.on === true);
+    // 全場暫停中到點的先不響、恢復後第一秒補響。聲音沒開時照樣記下，之後開了聲音也不補（判斷都在 bellTick）。
+    const bells = bellTick(room, now, view.seen, view.audioOn && !view.preview);
     for (const key of bells.mark) view.seen.bells.add(key);
-    if (view.audioOn && !view.preview) for (const match of bells.ring) audio.play('bell');
+    view.seen.primed = true;
+    for (const match of bells.ring) audio.play('bell');
   }
   for (const [key, flash] of view.flashes) if (flash.until <= Date.now()) view.flashes.delete(key);
   if (view.opening.until && view.opening.until <= Date.now()) stopOpening();
@@ -294,13 +291,14 @@ function patch(layer, nodes) {
 
 // 背景影片（標題、規則、排行、頒獎）由這裡管：（場景, 網址）變了才建一次 <video>。先用屬性設靜音、重複播、不全螢幕
 // （setAttribute('muted') 不會真的靜音），再設 src、播放；換場景或拿掉時停掉、清掉 src、移除，不留在背景解碼。開場影片蓋著時先不播。
+// 要不要重建、放哪一支都照 loopStep。
 function updateLoop(sceneId) {
-  const id = sceneId && view.opening.node?.tagName !== 'VIDEO' ? loopFor(sceneId) : null;
+  const id = sceneId ? loopFor(sceneId) : null;
   const url = id ? mediaUrl(id) : null;
-  const key = url ? `${sceneId} ${url}` : '';
-  if (key === view.loop.key) return;
+  const { key, rebuild } = loopStep(view.loop.key, sceneId, url, view.opening.node?.tagName === 'VIDEO');
+  if (!rebuild) return;
   stopLoop();
-  if (!url) return;
+  if (!key) return;
   const node = document.createElement('video');
   node.className = 'projector-bg-video';
   node.setAttribute('aria-hidden', 'true');

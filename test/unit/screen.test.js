@@ -9,6 +9,7 @@ import {
   STAGES,
   awardPages,
   bellKey,
+  bellTick,
   bellsDue,
   clockText,
   creditsSummary,
@@ -20,6 +21,7 @@ import {
   horizonProgress,
   joinAddress,
   loopFor,
+  loopStep,
   matchLine,
   mediaFilesIn,
   mediaProgressText,
@@ -361,6 +363,40 @@ test('a sunset reached during a room pause rings once on the first second after 
   assert.deepEqual(rings, [1, 2], 'match 1 waits out the paused second, then each match rings once');
 });
 
+test('every second the projector does what bellTick says: clocks past at first read stay silent, a room pause holds the bell, no sound still marks', () => {
+  // 第一次讀到房間：第 2 場的鐘早就日落 → 記成響過、不響；第 1 場還有 2 秒。seen 不會被改，由呼叫端記。
+  const r = room({ clock: { 1: clock({ remain: 30 * MINUTE + 2000 }), 2: clock({ remain: MINUTE }) } });
+  const seen = { primed: false, bells: new Set() };
+  const step = (at, audible = true) => {
+    const result = bellTick(r, at, seen, audible);
+    for (const key of result.mark) seen.bells.add(key);
+    seen.primed = true;
+    return result;
+  };
+  assert.deepEqual(bellTick(r, NOW, seen, true), { ring: [], mark: [bellKey(2, r.clock[2])] });
+  assert.equal(seen.bells.size, 0, 'bellTick does not write into seen');
+  assert.deepEqual(step(NOW), { ring: [], mark: [bellKey(2, r.clock[2])] });
+  assert.deepEqual(step(NOW + 1000), { ring: [], mark: [] });
+  // 第 1 場在全場暫停中日落（暫停不停快日落的鐘）：暫停中不響也不記，恢復後第一秒補響一次。
+  r.display = { pause: { on: true } };
+  assert.deepEqual(step(NOW + 2000), { ring: [], mark: [] }, 'held while the room is paused');
+  assert.deepEqual(step(NOW + 3000), { ring: [], mark: [] });
+  r.display = { pause: { on: false } };
+  assert.deepEqual(step(NOW + 4000), { ring: [1], mark: [bellKey(1, r.clock[1])] }, 'rings on the first second after the pause');
+  assert.deepEqual(step(NOW + 5000), { ring: [], mark: [] }, 'exactly once');
+
+  // 聲音沒開（或預覽框）：日落那一秒不響但照樣記下，之後開了聲音也不補響。
+  const quiet = room({ clock: { 1: clock({ remain: 30 * MINUTE + 1000 }) } });
+  const quietSeen = { primed: true, bells: new Set() };
+  const muted = bellTick(quiet, NOW + 1000, quietSeen, false);
+  assert.deepEqual(muted, { ring: [], mark: [bellKey(1, quiet.clock[1])] });
+  for (const key of muted.mark) quietSeen.bells.add(key);
+  assert.deepEqual(bellTick(quiet, NOW + 2000, quietSeen, true), { ring: [], mark: [] });
+  // 已經讀過房間（primed）之後才日落的鐘照樣響，不會被當成「開頁時已經日落」。
+  assert.deepEqual(bellTick(quiet, NOW + 2000, { primed: true, bells: new Set() }, true).ring, [1]);
+  assert.deepEqual(bellTick(quiet, NOW + 2000, { primed: false, bells: new Set() }, true).ring, []);
+});
+
 // 突變測試抓不到的地方各補一條：版面門檻的邊界、開頁時暫停中的鐘、剛好日落、第 2 場的全場鐘、排行最多 5 人、排隊中的素材。
 test('layout boundaries: 1.50 and 1.559 windows are 4:3, from 1.58 on (16:10, 16:9) it is 16:9', () => {
   assert.equal(stageLayout(1024, 683).layout, '4x3', '1.50');
@@ -540,6 +576,34 @@ test('background loops belong to the title, rules, standings and awards scenes a
     ['loop-1', 'loop-2', 'loop-3', 'loop-3', null, null],
   );
   for (const id of ['loop-1', 'loop-2', 'loop-3']) assert.equal(MEDIA.find((item) => item.id === id)?.kind, 'video', id);
+});
+
+test('a background loop is built once per scene and file, not on every render, and not while the opening video plays', () => {
+  const url = 'blob:loop-1';
+  const title = loopStep('', 'opening', url, false);
+  assert.deepEqual(title, { key: `opening ${url}`, rebuild: true });
+  // 標題頁停 60 秒（每秒重畫、房間也一直更新）：只建一次。
+  let key = '';
+  let built = 0;
+  for (let second = 0; second < 60; second += 1) {
+    const next = loopStep(key, 'opening', url, false);
+    if (next.rebuild && next.key) built += 1;
+    key = next.key;
+  }
+  assert.equal(built, 1);
+  assert.deepEqual(loopStep(title.key, 'opening', url, false), { key: title.key, rebuild: false });
+  // 開場影片開始播：拆掉背景影片；播放中重畫也不放；播完再建一次。
+  assert.deepEqual(loopStep(title.key, 'opening', url, true), { key: '', rebuild: true });
+  assert.deepEqual(loopStep('', 'opening', url, true), { key: '', rebuild: false });
+  assert.deepEqual(loopStep('', 'rules', 'blob:loop-2', true), { key: '', rebuild: false }, 'the opening video covers every scene');
+  assert.deepEqual(loopStep('', 'opening', url, false), title);
+  // 換場景（同一支檔也重建）、換網址也重建；總覽沒有背景影片、素材還沒好、還沒讀到房間：拆掉，之後不再動。
+  const standings = loopStep('', 'standings', 'blob:loop-3', false);
+  assert.deepEqual(loopStep(standings.key, 'awards', 'blob:loop-3', false), { key: 'awards blob:loop-3', rebuild: true });
+  assert.equal(loopStep(title.key, 'opening', 'blob:loop-1-again', false).rebuild, true);
+  assert.deepEqual(loopStep(standings.key, 'overview', null, false), { key: '', rebuild: true });
+  assert.deepEqual(loopStep('', 'overview', null, false), { key: '', rebuild: false });
+  assert.deepEqual(loopStep(title.key, null, url, false), { key: '', rebuild: true });
 });
 
 test('the media list in media/credits.json names the files to download, with or without sizes', () => {
