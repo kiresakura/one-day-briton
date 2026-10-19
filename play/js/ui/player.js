@@ -399,7 +399,8 @@ function pauseOf(m) {
   return pauseView(m.room.display, m.game, m.state, ctx.cardData?.data.settings, serverTime(ctx.session));
 }
 
-// 蓋上時焦點移到暫停層；拿掉時移回蓋上前的地方（那個元素還在畫面上才移，不然留給瀏覽器）。
+// 蓋上時焦點移到暫停層；拿掉時移回蓋上前的地方。蓋上前沒有焦點就留給瀏覽器；那個元素在暫停中被重畫拿掉、藏起來或停用了
+// （焦點移不過去）時退回目前的分頁鈕，不落到 body。
 function setCovered(value) {
   if (covered === value) return;
   covered = value;
@@ -413,7 +414,9 @@ function setCovered(value) {
   }
   const back = focusBack;
   focusBack = null;
-  if (back?.isConnected && back !== document.body && !pauseLayer.contains(back)) back.focus?.({ preventScroll: true });
+  if (!back || back === document.body) return;
+  if (back.isConnected && !pauseLayer.contains(back)) back.focus?.({ preventScroll: true });
+  if (document.activeElement !== back) document.querySelector('.tab-bar .tab[aria-pressed="true"]')?.focus({ preventScroll: true });
 }
 
 // 暫停層：暫停字樣、目前的廣播 cast（不管這支手機收起了沒；沒有廣播、已經收回時是 null，不放）、自己的連線狀態。
@@ -1680,10 +1683,21 @@ function setHolding(value) {
 
 // ---- 畫面 ----
 
+// 暫停層排在最後蓋（焦點退回時分頁鈕已經是這一畫的），但不靠前面各區塊：哪一段丟出錯誤也照樣蓋上、擋住操作（錯誤照常往上傳）。
 export function renderPlayer(room, me) {
   markPresent();
   watchAll();
   const m = model(room, me);
+  try {
+    renderView(m);
+  } finally {
+    renderConsole(m);
+  }
+  markTruncated($('player-view'));
+}
+
+// 標頭、分頁、動作列、按住看的天命。
+function renderView(m) {
   const { state } = m;
   document.body.dataset.phase = toneOf(m);
   wakeAtSunset(m);
@@ -1721,8 +1735,6 @@ export function renderPlayer(room, me) {
   patchChildren($('player-actions'), bar);
   for (const button of document.querySelectorAll('.tab-bar .tab[data-tab]')) button.setAttribute('aria-pressed', String(button.dataset.tab === tab));
   if (holding) patchChildren($('destiny-sheet'), destinySheet(m));
-  renderConsole(m);
-  markTruncated($('player-view'));
 }
 
 // ---- 事件（委派）：按鈕上的 data-act 決定做什麼，做的時候讀當下的局面 ----
