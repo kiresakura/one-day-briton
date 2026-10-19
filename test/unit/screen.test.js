@@ -259,14 +259,26 @@ test('tables waiting, between matches and finished say so', () => {
   r.tables[1] = { round: 6, phase: 'end', fog: 50 };
   r.games[1] = game(1, { final: final(1, [20, 31, 18]) });
   const ended = tableCard(r, 1, cards, NOW);
-  assert.equal(ended.status, '第 1 場結束・第 1 名 第1桌b');
+  assert.equal(ended.status, '第 1 場結束・第 1 名 31 分');
+  assert.deepEqual([ended.kicker, ended.name], ['第 1 場第 1 名', '第1桌b']);
   assert.deepEqual(ended.art, { kind: 'roles', id: 'r2' });
   assert.equal(ended.fog, null);
   r.tables['1-2'] = { round: 1, phase: 'sunrise', fog: 0 };
   assert.equal(tableCard(r, 1, cards, NOW).status, '第 2 場準備中・交接角色卡');
   r.games['1-2'] = game(1, { final: final(1, [20, 10, 30]) });
   r.tables['1-2'] = { round: 5, phase: 'end', fog: 30 };
-  assert.equal(tableCard(r, 1, cards, NOW).status, '兩場合計第 1 名 第1桌c', '20+20=40, 31+10=41, 18+30=48');
+  assert.equal(tableCard(r, 1, cards, NOW).status, '兩場合計 48 分', '20+20=40, 31+10=41, 18+30=48');
+  // 兩場合計同分並列：名字只在名稱那一行（不在狀態再寫一次「兩場合計第 1 名」與名字），狀態寫分數與幾人並列。
+  r.players.t1a.name = '維多利亞時代倫敦的忠實臣';
+  r.players.t1c.name = 'ＷＷＷＷＷＷＷＷＷＷＷＷ';
+  r.games['1-2'] = game(1, { final: final(1, [28, 10, 30]) });
+  const tied = tableCard(r, 1, cards, NOW);
+  assert.deepEqual([tied.kicker, tied.name, tied.status], ['兩場合計第 1 名', '維多利亞時代倫敦的忠實臣、ＷＷＷＷＷＷＷＷＷＷＷＷ', '兩場合計 48 分・2 人並列'], '20+28=48, 31+10=41, 18+30=48');
+  assert.equal(tied.art, null, 'no single role badge for a tie');
+  // 第 1 場同分並列也一樣
+  r.tables = { 1: { round: 6, phase: 'end', fog: 50 } };
+  r.games = { 1: game(1, { final: final(1, [31, 31, 18]) }) };
+  assert.deepEqual([tableCard(r, 1, cards, NOW).name, tableCard(r, 1, cards, NOW).status], ['維多利亞時代倫敦的忠實臣、第1桌b', '第 1 場結束・第 1 名 31 分・2 人並列']);
 });
 
 test('the header clock follows the match being played; without a room clock each card shows its own', () => {

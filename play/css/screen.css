@@ -1014,6 +1014,11 @@ html.is-projector body {
   -webkit-line-clamp: 1;
 }
 
+/* 結束的桌：名稱是第 1 名的名字（同分並列時好幾個），給 3 行，兩個 12 字的並列冠軍也看得到全名；狀態那一行只寫分數。 */
+.projector-card.is-end .projector-card-name {
+  -webkit-line-clamp: 3;
+}
+
 /* 狀態那一行：最多 2 行，超過的截掉（長的先縮小一號，見 screen-scenes.js 的 STATUS_LONG）。 */
 .projector-card-status {
   display: -webkit-box;
@@ -1345,6 +1350,10 @@ html.is-projector body {
   -webkit-line-clamp: 1;
   font-size: 30px;
   line-height: 36px;
+}
+
+.projector[data-layout='4x3'] .projector-card.is-end .projector-card-name {
+  -webkit-line-clamp: 3;
 }
 
 .projector[data-layout='4x3'] .projector-card-status {

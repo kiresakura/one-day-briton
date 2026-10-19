@@ -250,13 +250,16 @@ export function tableCard(room, table, cards, now, header = null) {
     const leaders = (standing?.rows ?? []).filter((row) => row.rank === 1).map((row) => row.uid);
     const firstRole = leaders.length === 1 ? (game.seats?.[leaders[0]]?.role ?? null) : null;
     const combined = match === MATCH_COUNT && standing?.basis === 'combined';
+    // 名字只寫在名稱那一行（最多 3 行，兩個 12 字的並列冠軍也排得下）；狀態那一行寫第 1 名的分數，同分寫幾人並列。
+    const top = (standing?.rows ?? []).find((row) => row.rank === 1) ?? null;
+    const score = top ? `${top.total} 分${leaders.length > 1 ? `・${leaders.length} 人並列` : ''}` : '—';
     return {
       ...card,
       band: `${matchLabel(match)}結束`,
       art: firstRole ? { kind: 'roles', id: firstRole } : null,
       kicker: combined ? '兩場合計第 1 名' : `${matchLabel(match)}第 1 名`,
       name: leaders.length ? names(room, leaders) : '—',
-      status: combined ? `兩場合計第 1 名 ${names(room, leaders)}` : `${matchLabel(match)}結束・第 1 名 ${leaders.length ? names(room, leaders) : '—'}`,
+      status: combined ? `兩場合計 ${score}` : `${matchLabel(match)}結束・第 1 名 ${score}`,
       fog: null,
     };
   }
