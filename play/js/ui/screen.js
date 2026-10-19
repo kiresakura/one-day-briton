@@ -673,10 +673,14 @@ function playOpening(seq) {
 }
 
 function playOpeningVideo(node, end) {
-  node.play().catch(() => {
-    // 聲音還沒解鎖時改成靜音播（瀏覽器准靜音自動播放）。
-    node.muted = true;
-    node.play().catch(end);
+  node.play().catch((error) => {
+    // 被暫停打斷（AbortError）：要不要接著播由 pause 事件決定；已經換掉的不管。
+    if (view.opening.node !== node || error?.name === 'AbortError') return;
+    // 聲音還沒解鎖時改成靜音播（瀏覽器准靜音自動播放）；靜音也不准，或是別的錯誤，就收掉回到標題頁。
+    if (error?.name === 'NotAllowedError' && !node.muted) {
+      node.muted = true;
+      playOpeningVideo(node, end);
+    } else end();
   });
 }
 
