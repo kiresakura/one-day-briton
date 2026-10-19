@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.15"
+    "node": "^22.15.0 || >=23.5.0"
   },
   "scripts": {
     "test": "node scripts/data-check.mjs && node --test \"test/unit/*.test.js\"",
