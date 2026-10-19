@@ -14,6 +14,7 @@ globalThis.localStorage ??= { getItem: () => null, setItem() {}, removeItem() {}
 const realInterval = globalThis.setInterval;
 globalThis.setInterval = () => 0; // 畫面的每秒更新：測試不用跑，也不要讓測試結束不了
 const host = await import('../../play/js/ui/host.js');
+const { scheduleWakeup } = await import('../../play/js/ui/shared.js');
 globalThis.setInterval = realInterval;
 
 const {
@@ -270,4 +271,33 @@ test('投影端狀態：確認碼、這台、聲音、場景跟上沒、跟不�
   // 還沒有切過場景：都算跟上。
   assert.equal(screenRows(screens, null, now, 'me')[1].synced, true);
   assert.deepEqual(screenRows(null, scene, now, 'me'), []);
+});
+
+test('到點重畫的排程：同一個時刻只排一次、已經過了的不排；觸發時把自己的時刻拿掉（加減鐘後舊時刻不留）', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const wakeups = new Map();
+  const runs = [];
+  const run = (label) => () => runs.push(label);
+  assert.equal(scheduleWakeup(wakeups, 10_000, 500, run('a')), true);
+  assert.equal(scheduleWakeup(wakeups, 10_000, 500, run('a2')), false); // 同一個時刻：不再排
+  assert.equal(scheduleWakeup(wakeups, 9_000, 0, run('past')), false); // 已經到了：不排、不記
+  assert.equal(scheduleWakeup(wakeups, 9_500, -20, run('past')), false);
+  assert.deepEqual([...wakeups.keys()], [10_000]);
+  t.mock.timers.tick(549);
+  assert.deepEqual(runs, []);
+  t.mock.timers.tick(1); // 剩的時間＋50 毫秒
+  assert.deepEqual(runs, ['a']);
+  assert.equal(wakeups.size, 0);
+  // 鐘被加減：原本的時刻到了照樣重畫一次，之後表裡只剩新的時刻；新的到了也拿掉。
+  scheduleWakeup(wakeups, 20_000, 1_000, run('old'));
+  scheduleWakeup(wakeups, 80_000, 61_000, run('new'));
+  t.mock.timers.tick(1_050);
+  assert.deepEqual([...wakeups.keys()], [80_000]);
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(runs, ['a', 'old', 'new']);
+  assert.equal(wakeups.size, 0);
+  // 拿掉之後同一個時刻（還沒到）可以再排。
+  assert.equal(scheduleWakeup(wakeups, 10_000, 100, run('again')), true);
+  t.mock.timers.tick(150);
+  assert.deepEqual(runs, ['a', 'old', 'new', 'again']);
 });

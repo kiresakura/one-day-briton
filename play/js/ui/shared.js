@@ -256,9 +256,19 @@ setInterval(() => {
 
 // 到了伺服器時間 at 時重畫一次（同一個時間只排一次）。
 export function rerenderAt(at) {
-  if (wakeups.has(at)) return;
-  const left = at - serverTime(ctx.session);
-  wakeups.set(at, { timer: left > 0 ? setTimeout(rerender, left + 50) : null });
+  scheduleWakeup(wakeups, at, at - serverTime(ctx.session), rerender);
+}
+
+// 排一個到點的計時器：wakeups 是「時刻 → { timer }」，同一個時刻還沒到時只排一次；left（毫秒）≤ 0 的不排。計時器觸發時先把自己的
+// 時刻從 wakeups 拿掉再 run：加減鐘換了時刻，舊的時刻到了就不再留在表裡。回傳這次有沒有排。
+export function scheduleWakeup(wakeups, at, left, run) {
+  if (wakeups.has(at) || !(left > 0)) return false;
+  const timer = setTimeout(() => {
+    wakeups.delete(at);
+    run();
+  }, left + 50);
+  wakeups.set(at, { timer });
+  return true;
 }
 
 // ---- 事件（M7） ----
