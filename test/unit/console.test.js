@@ -671,3 +671,37 @@ test('a progress callback that is an async function and fails stops neither star
     process.off('unhandledRejection', record);
   }
 });
+
+test('a progress callback that never settles holds up neither start all nor advance all: both come back with every table', async () => {
+  // 連不上資料庫的連線（同上）；回呼回傳一個永遠不會 settle 的 Promise（例如等一段被取消的動畫）。批次不等回呼，照樣做完回來。
+  const offline = {
+    uid: 'host',
+    get db() {
+      throw new Error('no database in this test');
+    },
+  };
+  const steps = [];
+  const never = (step) => {
+    steps.push([step.done, step.total]);
+    return new Promise(() => {});
+  };
+  // 等到批次回來，最多 2 秒（等回呼的話永遠回不來）。
+  const within = async (promise) => {
+    let timer;
+    const late = new Promise((resolve) => (timer = setTimeout(() => resolve('timed out'), 2000)));
+    try {
+      return await Promise.race([promise, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const plan = { match: 1, start: [{ key: '1', table: 1 }, { key: '2', table: 2 }], started: [], clock: null };
+  const started = await within(startAll(offline, 'ABCD', plan, {}, { onProgress: never }));
+  assert.notEqual(started, 'timed out', 'start all came back');
+  assert.deepEqual(started.results.map(({ key }) => key), ['1', '2']);
+  const advance = [{ key: '1', table: 1, round: 1, phase: 'day', ending: null }, { key: '2', table: 2, round: 1, phase: 'day', ending: null }];
+  const moved = await within(advanceAll(offline, 'ABCD', { advance }, {}, { onProgress: never }));
+  assert.notEqual(moved, 'timed out', 'advance all came back');
+  assert.deepEqual(moved.results.map(({ key }) => key), ['1', '2']);
+  assert.deepEqual(steps, [[1, 2], [2, 2], [1, 2], [2, 2]]);
+});

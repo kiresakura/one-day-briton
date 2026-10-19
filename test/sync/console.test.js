@@ -162,7 +162,7 @@ async function nightRevealed(code, round, { from = 'day', key = 2 } = {}) {
 const put = (session, path, value) => set(ref(session.db, path), value);
 const stamp = () => serverTimestamp();
 const command = (session, fields, seq) => ({ ...fields, seq, at: stamp(), by: session.uid });
-// 直接開一個全場鐘（規則照收；store 的 startClock 要等第 2 場開了才開第 2 場的鐘，這裡不用先打完第 1 場）。
+// 直接開一個全場鐘（規則照收；store 的 startClock 要等第 2 場有一桌開局了才開第 2 場的鐘，這裡不用先打完第 1 場、開第 2 場）。
 const createClock = (session, path, minutes) => put(session, path, { startedAt: stamp(), minutes, anchor: stamp(), remain: minutes * MINUTE, adjust: 0, seq: 1, by: session.uid });
 // 一筆直接寫入（write 是送出它的函式）的結果：'allowed'、'denied'（被規則拒）；其他錯誤（包括送出前就丟的）照原文寫出來，跟預期比一定不符。
 const outcome = (write) =>
@@ -852,6 +852,33 @@ test('the full pause leaves out a clock less than 10 seconds before sunset at on
   assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: ['2'], nearSunset: [] });
   room = await read(host, `rooms/${code}`);
   assert.deepEqual([room.clock[1].seq, room.clock[2].pausedAt], [near.seq, undefined]);
+});
+
+test('the resend without clocks after a refusal still lists a clock that is near sunset by then; the far clock is in neither list', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await startClock(host, code, 1, 10);
+  await createClock(host, `rooms/${code}/clock/2`, 75);
+  await adjustClock(host, code, 1, -10 * MINUTE); // 只剩約 1.5 秒
+  const clock = await read(host, `rooms/${code}/clock/1`);
+  await untilServerTime(host, clock.anchor + clock.remain + 500); // 伺服器那邊已經日落半秒
+  // 這台估的時間慢 12 秒：第一次以為鐘 1 還剩約 11.5 秒，放進暫停那一筆、整筆被拒；等約 3 秒後不帶鐘重送時以為只剩約 8.5 秒，
+  // 照樣列在 nearSunset（兩次都離 10 秒的門檻 1.5 秒以上）。遠的鐘 2 沒停住：兩邊都不在。
+  const startedAt = Date.now();
+  const result = await skewed(-12_000, () => setPause(host, code, true));
+  assert.ok(Date.now() - startedAt >= 2500, 'refused once, then sent without clocks');
+  assert.deepEqual(result, { changed: true, seq: 1, clocks: [], nearSunset: ['1'] });
+  assert.equal((await read(host, `rooms/${code}/clock/2`)).pausedAt, undefined, 'the far clock was not stopped');
+});
+
+test('a clock paused by hand less than 10 seconds before sunset is in neither list of the full pause and stays paused after the resume', TIMEOUT, async (t) => {
+  const { code } = await consoleRoom(t);
+  await startClock(host, code, 1, 10);
+  await adjustClock(host, code, 1, -(10 * MINUTE - 6000)); // 還剩約 6 秒
+  assert.equal((await pauseClock(host, code, 1)).changed, true);
+  // 手動暫停中的鐘不會走：雖然只剩約 6 秒，暫停中不會日落，不是快日落；也不是被這次全場暫停停住的。
+  assert.deepEqual(await setPause(host, code, true), { changed: true, seq: 1, clocks: [], nearSunset: [] });
+  assert.deepEqual(await setPause(host, code, false), { changed: true, seq: 2, clocks: [], nearSunset: [] });
+  assert.equal(typeof (await read(host, `rooms/${code}/clock/1`)).pausedAt, 'number', 'still paused: the host paused it');
 });
 
 test('a refused resume of the full pause is reported, not written without its clocks: the pause and the clocks it stopped stay as they were', TIMEOUT, async (t) => {
