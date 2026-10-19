@@ -36,7 +36,7 @@ function clock(left, { paused = false, adjust = 0, seq = 3 } = {}) {
   return record;
 }
 
-test('減到快 0：走著的鐘減完照這台的時間剩不到 10 秒就確認（剩 40 秒復原、剩 60–70 秒 −1 分、剩 302–310 秒 −5 分都會）', () => {
+test('減到快 0：走著的鐘減完照這台的時間剩 10 秒以內就確認（剩 40 秒復原、剩 60–70 秒 −1 分、剩 302–310 秒 −5 分都會）', () => {
   assert.equal(CLOCK_MARGIN_MS, 1500);
   assert.equal(PAUSE_NEAR_SUNSET_MS, 10_000);
   assert.equal(zeroAfter(clock(40_000), -MINUTE, NOW), true); // 「＋1」之後剩 40 秒按「復原」
@@ -133,7 +133,7 @@ test('「暫停日落鐘？」確認框：全場暫停中沒停住的鐘多一�
   assert.deepEqual(toggleDialogLines({ clock: { 1: clock(15_000, { paused: true }) }, display: { pause } }, '1', NOW), []);
 });
 
-test('全場暫停中的鐘：被這次暫停停住、手動暫停的、快日落（不到 10 秒，照常日落）、沒被停住；沒有暫停或已經日落是 null', () => {
+test('全場暫停中的鐘：被這次暫停停住、手動暫停的、快日落（剩 10 秒以內，照常日落）、沒被停住；沒有暫停或已經日落是 null', () => {
   assert.equal(PAUSE_NEAR_SUNSET_MS, 10_000);
   assert.equal(clockPauseState(room({ 1: held(30 * MINUTE) }, PAUSE), '1', NOW), 'held');
   assert.equal(heldByPause(held(30 * MINUTE), PAUSE, 1), true);
@@ -200,7 +200,7 @@ test('快日落的場次（全場暫停確認框先講）與手動暫停的場�
   assert.deepEqual(nearSunsetMatches(room({ 1: clock(8_000), 2: clock(30 * MINUTE) }), NOW), ['1']);
   assert.deepEqual(nearSunsetMatches(room({ 1: clock(8_000, { paused: true }), 2: clock(-1) }), NOW), []);
   assert.deepEqual(nearSunsetMatches(room({ 2: clock(10_000) }), NOW), ['2']);
-  assert.equal(nearSunsetLine(['1']), '第 1 場日落鐘剩不到 10 秒：快日落・照常日落、不停（各桌這一回合結束後算分）');
+  assert.equal(nearSunsetLine(['1']), '第 1 場日落鐘剩 10 秒以內：快日落・照常日落、不停（各桌這一回合結束後算分）');
   assert.deepEqual(manualPausedMatches(room({ 1: held(30 * MINUTE), 2: clock(20 * MINUTE, { paused: true }) }, PAUSE), NOW), ['2']);
   assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE, { paused: true }) }), NOW), ['1']);
   assert.deepEqual(manualPausedMatches(room({ 1: clock(30 * MINUTE) }), NOW), []);
@@ -216,7 +216,7 @@ test('全場暫停之後的結果條：停住的、快日落照常日落（不�
     text: '全場暫停了；第 1 場日落鐘一起停住',
   });
   const near = pauseReport(true, { changed: true, clocks: [], nearSunset: ['1'] }, room({ 1: clock(8_000) }), null, later);
-  assert.deepEqual(near, { ok: true, warn: true, text: '全場暫停了；第 1 場日落鐘快日落（不到 10 秒）・照常日落、不停：各桌這一回合結束後算分' });
+  assert.deepEqual(near, { ok: true, warn: true, text: '全場暫停了；第 1 場日落鐘快日落（剩 10 秒以內）・照常日落、不停：各桌這一回合結束後算分' });
   assert.doesNotMatch(near.text, /按暫停/);
   // 被拒後不帶鐘重送：遠的鐘沒停住。
   assert.deepEqual(pauseReport(true, { changed: true, clocks: [], nearSunset: [] }, room({ 1: clock(40 * MINUTE) }), null, later), {
@@ -227,7 +227,7 @@ test('全場暫停之後的結果條：停住的、快日落照常日落（不�
   // 兩場：第 1 場快日落、第 2 場停住；本來就手動暫停的、寫完時已經日落的都不算沒停住。
   assert.equal(
     pauseReport(true, { changed: true, clocks: ['2'], nearSunset: ['1'] }, room({ 1: clock(8_000), 2: clock(50 * MINUTE) }), null, later).text,
-    '全場暫停了；第 2 場日落鐘一起停住；第 1 場日落鐘快日落（不到 10 秒）・照常日落、不停：各桌這一回合結束後算分',
+    '全場暫停了；第 2 場日落鐘一起停住；第 1 場日落鐘快日落（剩 10 秒以內）・照常日落、不停：各桌這一回合結束後算分',
   );
   assert.deepEqual(pauseReport(true, { changed: true, clocks: [], nearSunset: [] }, room({ 1: clock(30 * MINUTE, { paused: true }), 2: clock(200) }), null, later), {
     ok: true,

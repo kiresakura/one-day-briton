@@ -2619,7 +2619,7 @@ const actions = {
   'clock-start': ({ match }) => openConsoleConfirm({ kind: 'clock-start', match: Number(match) }, `[data-act="clock-start"][data-match="${match}"]`),
   'clock-pause': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: true, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-pause"][data-match="${match}"]`),
   'clock-resume': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: false, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-resume"][data-match="${match}"]`),
-  // 加減不確認；走著的鐘減完剩不到 10 秒、暫停中的鐘減到 0（日落後加不回來；照 store 的餘裕算）才確認：照 host-model.js 的 stepPlan。
+  // 加減不確認；走著的鐘減完剩 10 秒以內、暫停中的鐘減到 0（日落後加不回來；照 store 的餘裕算）才確認：照 host-model.js 的 stepPlan。
   // 帶著畫面上那個鐘的序號：別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
   'clock-adjust': ({ match, delta }) => {
     const clock = ctx.latestRoom?.clock?.[match];
