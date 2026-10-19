@@ -2,10 +2,8 @@
 // 結果條怎麼寫、確認框打開後局面變了沒、全場動作與全場暫停中每桌按鈕的停用原因。畫面在 host.js，測試在 test/unit/host-model.test.js。
 import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, endReasonAt, isClock } from '../game.js';
 import { MATCH_COUNT, activeKey, clockOf } from '../rules.js';
-import { PAUSE_NEAR_SUNSET_MS } from '../store.js';
+import { CLOCK_MARGIN_MS, PAUSE_NEAR_SUNSET_MS } from '../store.js';
 
-// 走著的鐘，store.js 照「現在＋這麼多毫秒」判斷日落與加減（減到底時會剩約 1.5 秒）。同 store.js 的 CLOCK_MARGIN_MS（store.js 還沒有匯出它）。
-export const CLOCK_MARGIN_MS = 1500;
 export const PAUSED_TEXT = '全場暫停中';
 export const OFFLINE_TEXT = '離線中，連回來才能操作';
 const CLOCK_KEYS = ['1', String(MATCH_COUNT)];

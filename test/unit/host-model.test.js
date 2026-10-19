@@ -3,9 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { clockStartWrite } from '../../play/js/game.js';
-import { PAUSE_NEAR_SUNSET_MS } from '../../play/js/store.js';
+import { CLOCK_MARGIN_MS, PAUSE_NEAR_SUNSET_MS } from '../../play/js/store.js';
 import {
-  CLOCK_MARGIN_MS,
   OFFLINE_TEXT,
   PAUSED_TEXT,
   actionWhy,

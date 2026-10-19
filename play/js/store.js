@@ -1484,8 +1484,8 @@ export async function setStartOrder(session, code, key, order) {
 // 只有這些指令失敗（rules-outdated），開局、推進、結算都不受影響。日落鐘的欄位一律由 game.js 的 clock*Write 算（規則用同樣的式子驗算）。
 
 // 走著的日落鐘：主持端估的伺服器時間可能比實際慢一點，判斷「日落了沒」與「減到 0」時把現在當作再晚這麼多（毫秒），
-// 寫進去的剩餘才不會在伺服器那邊變成負的被規則擋下（減到底時會剩約這麼多秒）。
-const CLOCK_MARGIN_MS = 1500;
+// 寫進去的剩餘才不會在伺服器那邊變成負的被規則擋下（減到底時會剩約這麼多秒）。匯出給控制台照同一個餘裕先判斷（host-model.js）。
+export const CLOCK_MARGIN_MS = 1500;
 
 function conflictError(latest) {
   const error = new StoreError('conflict', '別台主持端剛改過，請看最新的狀態再操作');
