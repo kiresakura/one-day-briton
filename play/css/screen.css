@@ -304,16 +304,21 @@ html.is-projector body {
   background: #000;
 }
 
-/* 等開場影片下載：標題頁照常看得到，蓋一層半透明、正中寫進度。 */
+/* 等開場影片下載：標題頁照常看得到，蓋一層半透明，進度寫在下方安全邊以內（不壓標題與副標）；有廣播條時排在廣播條上面。 */
 .projector-video.is-wait {
   background: color-mix(in srgb, #000 55%, transparent);
 }
 
 .projector-opening-wait {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  inset: var(--pj-safe);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.projector.has-broadcast .projector-opening-wait {
+  bottom: calc(var(--pj-safe) + var(--pj-broadcast) + 20px);
 }
 
 .projector-opening-wait-text {

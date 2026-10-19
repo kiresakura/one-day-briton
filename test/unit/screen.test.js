@@ -6,6 +6,7 @@ import { dayStatus } from '../../play/js/game.js';
 import { isRoomCode, normalizeRoomCode } from '../../play/js/rules.js';
 import {
   MEDIA,
+  MEDIA_STALL_MS,
   STAGES,
   awardPages,
   bellKey,
@@ -40,6 +41,7 @@ import {
   scenePageCount,
   sfxStep,
   stageLayout,
+  stallWatch,
   standingsView,
   tableCard,
   wallClock,
@@ -580,6 +582,41 @@ test('the opening video waits for its download with a progress line, and falls b
   assert.equal(openingWaitText({ status: 'loading', loaded: 3_240_000, total: 18_000_000 }), '開場影片下載中（3.2／18 MB）');
   assert.equal(openingWaitText({ status: 'loading', loaded: 3_240_000, total: 0 }), '開場影片下載中（3.2 MB）');
   assert.equal(openingWaitText({ status: 'waiting', loaded: 0, total: 0 }), '開場影片下載中（0.0 MB）');
+});
+
+test('a media download that gets no new bytes for 30 s is stopped once and then falls back like a failed one', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  assert.equal(MEDIA_STALL_MS, 30_000);
+  let stalls = 0;
+  const watch = stallWatch(MEDIA_STALL_MS, () => {
+    stalls += 1;
+  });
+  // 等伺服器回應也算：29.999 秒還沒有回應不算卡住
+  t.mock.timers.tick(29_999);
+  assert.equal(stalls, 0);
+  // 位元組一直進來（每段間隔不到 30 秒）就一直等
+  watch.progress();
+  t.mock.timers.tick(20_000);
+  watch.progress();
+  t.mock.timers.tick(29_999);
+  assert.equal(stalls, 0, 'bytes keep coming');
+  t.mock.timers.tick(1);
+  assert.equal(stalls, 1, '30 s since the last byte');
+  // 已經中止：晚到的一段不再重新計時，只中止一次
+  watch.progress();
+  t.mock.timers.tick(60_000);
+  assert.equal(stalls, 1, 'only once');
+  // 下完、失敗、不用下載時 stop()：之後不會再中止
+  const finished = stallWatch(MEDIA_STALL_MS, () => {
+    stalls += 1;
+  });
+  t.mock.timers.tick(10_000);
+  finished.progress();
+  finished.stop();
+  t.mock.timers.tick(120_000);
+  assert.equal(stalls, 1);
+  // 中止的下載記成 failed：等著的那一次開場改用佔位，不再寫「下載中」
+  assert.equal(openingMode({ status: 'failed', loaded: 3_200_000, total: 18_000_000 }, true), 'placeholder');
 });
 
 test('background loops belong to the title, rules, standings and awards scenes and are media files', () => {

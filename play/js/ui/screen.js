@@ -12,6 +12,7 @@ import { qrSvgOrNull } from './qr.js';
 import { createAudio } from './screen-audio.js';
 import {
   MEDIA,
+  MEDIA_STALL_MS,
   awardPages,
   bellTick,
   clockText,
@@ -36,6 +37,7 @@ import {
   sceneOf,
   sfxStep,
   stageLayout,
+  stallWatch,
   standingsView,
   tableCard,
   wallClock,
@@ -516,10 +518,13 @@ async function preload() {
 
 const EXPECTED_TYPE = { video: /^video\//, audio: /^audio\//, image: /^image\//, json: /json/ };
 
+// 連續 MEDIA_STALL_MS 沒有新的位元組（連線停住、不出錯）就中止下載，跟下載失敗一樣改用佔位。
 async function fetchMedia(item) {
   const entry = view.media.get(item.id);
+  const abort = new AbortController();
+  const watch = stallWatch(MEDIA_STALL_MS, () => abort.abort());
   try {
-    const response = await fetch(new URL(`../../media/${item.file}`, import.meta.url));
+    const response = await fetch(new URL(`../../media/${item.file}`, import.meta.url), { signal: abort.signal });
     if (!response.ok) {
       entry.status = 'missing';
       return;
@@ -536,10 +541,12 @@ async function fetchMedia(item) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      watch.progress();
       chunks.push(value);
       entry.loaded += value.length;
       scheduleRender();
     }
+    watch.stop();
     const blob = new Blob(chunks, { type });
     if (item.kind === 'json') {
       view.credits.media = JSON.parse(await blob.text());
@@ -551,6 +558,7 @@ async function fetchMedia(item) {
   } catch {
     entry.status = 'failed';
   } finally {
+    watch.stop();
     if (item.id === 'opening') openingDownloaded();
     if (item.id === 'music-opening') updateMusic(); // 開場音樂正在播佔位的話，換成檔案
     scheduleRender();
@@ -612,7 +620,8 @@ function playOpening(seq) {
     });
     view.opening.until = Date.now() + OPENING_MAX_MS;
   } else if (mode === 'wait') {
-    // 等下載：標題頁照常顯示，上面蓋一層寫進度（render 每次更新數字）。不設最晚收掉的時間，換場景才收。
+    // 等下載：標題頁照常顯示，上面蓋一層寫進度（render 每次更新數字）。不設最晚收掉的時間：下完接著播、換場景就收，
+    // 下載失敗或卡住（fetchMedia 連續 MEDIA_STALL_MS 沒有新的位元組就中止）時退回佔位（openingDownloaded）。
     node = h('div', { class: 'projector-opening-wait' }, waitNote(entry));
     view.opening.until = 0;
   } else {

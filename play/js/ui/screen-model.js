@@ -523,6 +523,33 @@ export function openingWaitText(entry) {
   return total > 0 ? `開場影片下載中（${megabytes(loaded)}／${megabytes(Math.max(total, loaded))} MB）` : `開場影片下載中（${megabytes(loaded)} MB）`;
 }
 
+// 下載素材時連續這麼久沒有收到新的位元組（含等伺服器回應）就中止，照下載失敗處理、改用佔位：連線停住但不出錯時，
+// 「開場影片下載中」不會一直蓋在標題頁上。
+export const MEDIA_STALL_MS = 30_000;
+
+// 下載卡住的計時：建立時開始計時，每收到一段資料呼叫 progress() 重新計時；連續 ms 沒有 progress 就呼叫 onStall（只一次）。
+// 下載結束（下完、失敗、不用下載）時呼叫 stop()。計時器用全域的 setTimeout／clearTimeout（測試裡換成 node:test 的 mock timers）。
+export function stallWatch(ms, onStall) {
+  let timer = null;
+  let done = false;
+  const arm = () => {
+    clearTimeout(timer);
+    if (done) return;
+    timer = setTimeout(() => {
+      done = true;
+      onStall();
+    }, ms);
+  };
+  arm();
+  return {
+    progress: arm,
+    stop() {
+      done = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
 // 位元組 → MB（小於 10 留一位小數）。
 export function megabytes(bytes) {
   const mb = (Number(bytes) || 0) / 1_000_000;
