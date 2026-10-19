@@ -1397,10 +1397,15 @@ function consoleMode() {
   return folded ? 'fold' : 'bar';
 }
 
-// 毫秒 → 「33:52」（分鐘可以超過 60）。剩餘無條件進位（還沒到不會先顯示 0:00），已進行（up）捨去。
+// 毫秒 → 「09:44」，一小時以上「1:14:59」：同投影的鐘（screen-model.js 的 clockText，這裡不載入投影的模組），主持人說的跟台下看到的
+// 一樣。剩餘無條件進位（還沒到不會先顯示 00:00），已進行（up）捨去。
 export function clockText(ms, { up = false } = {}) {
-  const total = Math.max(0, up ? Math.floor(ms / 1000) : Math.ceil(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const value = Number(ms) || 0;
+  const total = Math.max(0, up ? Math.floor(value / 1000) : Math.ceil(value / 1000));
+  const two = (part) => String(part).padStart(2, '0');
+  const hours = Math.floor(total / 3600);
+  const rest = `${two(Math.floor((total % 3600) / 60))}:${two(total % 60)}`;
+  return hours > 0 ? `${hours}:${rest}` : rest;
 }
 
 // 伺服器時間 → 這台的時刻「18:44」（seconds 時「18:44:05」）。offset＝伺服器時間 − 本機時間。

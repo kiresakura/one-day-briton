@@ -51,15 +51,29 @@ test('控制台預設開：寬 1360、高 860 以上（兩個都要到）', () =
   assert.equal(consoleWide(1024, 768), false);
 });
 
-test('日落鐘的字：剩餘無條件進位（還沒到不顯示 0:00），已進行捨去，分鐘可以超過 60，負的當 0', () => {
-  assert.equal(clockText(0), '0:00');
-  assert.equal(clockText(1), '0:01');
-  assert.equal(clockText(59_001), '1:00');
-  assert.equal(clockText(75 * MINUTE), '75:00');
-  assert.equal(clockText(105 * MINUTE + 5_000), '105:05');
-  assert.equal(clockText(-3_000), '0:00');
-  assert.equal(clockText(59_999, { up: true }), '0:59');
+test('日落鐘的字同投影：一小時以下 09:44、以上 1:14:59；剩餘無條件進位（還沒到不顯示 00:00），已進行捨去，負的當 0', () => {
+  assert.equal(clockText(0), '00:00');
+  assert.equal(clockText(1), '00:01');
+  assert.equal(clockText(59_001), '01:00');
+  assert.equal(clockText(9 * MINUTE + 44_000), '09:44');
+  assert.equal(clockText(60 * MINUTE - 1), '1:00:00'); // 59:59.999 進位成整整一小時
+  assert.equal(clockText(60 * MINUTE - 1_000), '59:59');
+  assert.equal(clockText(74 * MINUTE + 59_000), '1:14:59');
+  assert.equal(clockText(75 * MINUTE), '1:15:00');
+  assert.equal(clockText(105 * MINUTE + 5_000), '1:45:05');
+  assert.equal(clockText(-3_000), '00:00');
+  assert.equal(clockText(Number.NaN), '00:00');
+  assert.equal(clockText(59_999, { up: true }), '00:59');
   assert.equal(clockText(41 * MINUTE + 8_400, { up: true }), '41:08');
+  assert.equal(clockText(60 * MINUTE + 999, { up: true }), '1:00:00');
+  assert.equal(clockText(60 * MINUTE - 1, { up: true }), '59:59');
+});
+
+test('日落鐘的字跟投影的 clockText 逐毫秒一樣（剩餘）', async () => {
+  const { clockText: screenText } = await import('../../play/js/ui/screen-model.js');
+  for (const ms of [0, 1, 999, 1_000, 1_001, 59_001, 9 * MINUTE + 44_000, 60 * MINUTE - 1, 60 * MINUTE, 74 * MINUTE + 59_000, 75 * MINUTE, 105 * MINUTE + 5_000, -3_000]) {
+    assert.equal(clockText(ms), screenText(ms), `${ms} ms`);
+  }
 });
 
 test('時刻：伺服器時間扣掉時間差，寫成這台的 18:44（可以帶秒）', () => {
