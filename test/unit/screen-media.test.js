@@ -2,7 +2,18 @@
 // 位元組，看連續 30 秒沒有新的位元組時有沒有中止、位元組一直來時會不會被誤判；收到中止時假的回應與讀取丟 AbortError，跟瀏覽器一樣。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MEDIA_RETRY_MS, MEDIA_STALL_MS, download, mediaProgressText, mediaStates, mediaTrouble, readStream, retryDelay } from '../../play/js/ui/screen-model.js';
+import {
+  MEDIA_RETRY_MS,
+  MEDIA_STALL_MS,
+  download,
+  fetchWithRetries,
+  mediaProgressText,
+  mediaStates,
+  mediaTrouble,
+  openingMode,
+  readStream,
+  retryDelay,
+} from '../../play/js/ui/screen-model.js';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -153,4 +164,106 @@ test('下載狀態：失敗的分成重試中與已放棄；角落一直寫「n 
   assert.equal(mediaTrouble([ready, gaveUp]), true);
   assert.equal(mediaTrouble([ready, missing, { ...retrying, status: 'loading' }]), false);
   assert.equal(mediaTrouble([ready, { status: 'failed', loaded: 0, total: 0 }]), false, 'no retry state');
+});
+
+// ---- 素材清單（credits.json）下載失敗也重下（screen.js 的 preload 照 fetchWithRetries 下清單，下好了才下載素材）----
+
+// 假的「下載一次」：第 i 次照 results[i] 把 entry.status 寫成那個結果（用完了一直用最後一個），記下第幾次、什麼時候。
+function fakeAttempts(entry, results, now = () => 0) {
+  const calls = [];
+  const fetchOnce = async () => {
+    calls.push(now());
+    entry.status = results[Math.min(calls.length, results.length) - 1];
+  };
+  return { fetchOnce, calls };
+}
+
+test('素材清單下載失敗就隔 5、15、45 秒重下；4 次都失敗就放棄，沒有第 5 次，每次失敗都通知', async () => {
+  const entry = { status: 'waiting', tries: 0, retry: null, list: true };
+  const { fetchOnce, calls } = fakeAttempts(entry, ['failed']);
+  const waits = [];
+  const seen = [];
+  const status = await fetchWithRetries(entry, fetchOnce, {
+    wait: async (ms) => waits.push(ms),
+    onFail: () => seen.push(`${entry.tries}:${entry.retry}`),
+  });
+  assert.equal(status, 'failed');
+  assert.equal(calls.length, 4, 'first try and 3 retries, no 5th');
+  assert.deepEqual(waits, [5_000, 15_000, 45_000]);
+  assert.deepEqual(seen, ['1:pending', '2:pending', '3:pending', '4:gave-up']);
+  assert.equal(entry.retry, 'gave-up');
+});
+
+test('素材清單重下成功就回來（清掉重試）；不存在（404）不重下', async () => {
+  const entry = { status: 'waiting', tries: 0, retry: null, list: true };
+  const { fetchOnce, calls } = fakeAttempts(entry, ['failed', 'failed', 'ready']);
+  const waits = [];
+  assert.equal(await fetchWithRetries(entry, fetchOnce, { wait: async (ms) => waits.push(ms) }), 'ready');
+  assert.equal(calls.length, 3);
+  assert.deepEqual(waits, [5_000, 15_000]);
+  assert.equal(entry.retry, null);
+  const missing = { status: 'waiting', tries: 0, retry: null, list: true };
+  const once = fakeAttempts(missing, ['missing']);
+  const none = [];
+  assert.equal(await fetchWithRetries(missing, once.fetchOnce, { wait: async (ms) => none.push(ms) }), 'missing');
+  assert.equal(once.calls.length, 1);
+  assert.deepEqual(none, []);
+});
+
+test('素材清單停 35 秒：第 30 秒中止、5 秒後重下，第 35 秒要第二次、下完才回來（真的 download＋假時間）', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const entry = { status: 'waiting', tries: 0, retry: null, list: true };
+  const stalled = fakeFetch({ respondAfter: 0, gaps: [500, 35_000, 500] });
+  const fine = fakeFetch({ respondAfter: 0, gaps: [500] });
+  const starts = [];
+  const fetchOnce = async () => {
+    starts.push(Date.now());
+    try {
+      const chunks = await download(starts.length === 1 ? stalled.fetchImpl : fine.fetchImpl, 'media/credits.json');
+      entry.status = chunks ? 'ready' : 'missing';
+    } catch {
+      entry.status = 'failed';
+    }
+  };
+  const state = settle(fetchWithRetries(entry, fetchOnce, { wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }));
+  await advance(t, 30_000);
+  assert.equal(entry.status, 'waiting', 'still downloading at 30 s (last bytes at 0.5 s)');
+  await advance(t, 1_000);
+  assert.equal(entry.status, 'failed');
+  assert.equal(entry.retry, 'pending');
+  assert.equal(starts.length, 1, 'waiting 5 s before the retry');
+  await advance(t, 5_000);
+  assert.equal(starts.length, 2);
+  assert.ok(starts[1] - starts[0] >= 35_000 && starts[1] - starts[0] <= 36_000, `second try at ${starts[1] - starts[0]} ms`);
+  await advance(t, 1_000);
+  assert.equal(state.value, 'ready');
+  assert.equal(entry.retry, null);
+});
+
+test('素材清單在等重下或已放棄：開場影片不等下載、用佔位；清單下載中或下好了照舊等開場影片', () => {
+  const queued = { status: 'waiting', loaded: 0, total: 0, url: null };
+  assert.equal(openingMode(queued, true, { status: 'failed', retry: 'pending', list: true }), 'placeholder');
+  assert.equal(openingMode(queued, true, { status: 'failed', retry: 'gave-up', list: true }), 'placeholder');
+  assert.equal(openingMode(queued, true, { status: 'loading', retry: 'pending', list: true }), 'wait', 'the list is downloading again');
+  assert.equal(openingMode(queued, true, { status: 'ready', retry: null, list: true }), 'wait');
+  assert.equal(openingMode({ status: 'ready', url: 'blob:x' }, true, { status: 'failed', retry: 'gave-up', list: true }), 'video');
+});
+
+test('素材清單重試中／已放棄：角落整行寫清單，一直留著；清單下好了照舊寫素材', () => {
+  const others = [
+    { status: 'waiting', loaded: 0, total: 0 },
+    { status: 'waiting', loaded: 0, total: 0 },
+  ];
+  const pending = { status: 'failed', loaded: 0, total: 0, retry: 'pending', list: true };
+  const gaveUp = { status: 'failed', loaded: 0, total: 0, retry: 'gave-up', list: true };
+  assert.equal(mediaProgressText([pending, ...others], true), '素材清單下載失敗・先用佔位（重試中）');
+  assert.equal(mediaTrouble([pending, ...others]), true);
+  const missing = others.map(() => ({ status: 'missing', loaded: 0, total: 0 }));
+  assert.equal(mediaProgressText([gaveUp, ...missing], true), '素材清單下載失敗・先用佔位（已放棄）');
+  assert.equal(mediaTrouble([gaveUp, ...missing]), true);
+  assert.equal(mediaProgressText([gaveUp, ...missing], false), '按「開始投影」後才下載影片與音效');
+  // 清單重下中（loading）、下好了：照舊
+  assert.equal(mediaProgressText([{ ...pending, status: 'loading', loaded: 500, total: 1_000 }, ...others], true), '素材下載中 0.0／0.0 MB');
+  const list = { status: 'ready', loaded: 1_000, total: 1_000, retry: null, list: true };
+  assert.equal(mediaProgressText([list, { status: 'ready', loaded: 28_000_000, total: 28_000_000 }], true), '素材已下載 28 MB');
 });

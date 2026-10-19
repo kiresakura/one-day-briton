@@ -512,10 +512,13 @@ export function mediaStates(items) {
   return out;
 }
 
-// 下載的狀態 → 開始投影頁與角落的那一行。items 是 [{ status: waiting｜loading｜ready｜missing｜failed, loaded, total, retry }]。
-// 有下載失敗的（重試中或已放棄）時，下載中也寫「n 個用佔位（重試中）」。
+// 下載的狀態 → 開始投影頁與角落的那一行。items 是 [{ status: waiting｜loading｜ready｜missing｜failed, loaded, total, retry, list }]，
+// list 為真的那一筆是素材清單（credits.json）。有下載失敗的（重試中或已放棄）時，下載中也寫「n 個用佔位（重試中）」。
+// 素材清單下載失敗時其他素材都還沒開始（等清單重下）或不會下載（放棄了），整行只寫清單：「素材清單下載失敗・先用佔位（重試中）」。
 export function mediaProgressText(items, started) {
   if (!started) return '按「開始投影」後才下載影片與音效';
+  const list = items.find((item) => item?.list);
+  if (list?.status === 'failed' && list.retry) return `素材清單下載失敗・先用佔位（${list.retry === 'gave-up' ? '已放棄' : '重試中'}）`;
   const { loading, ready, placeholder, retrying, gaveUp } = mediaStates(items);
   const loaded = items.reduce((sum, item) => sum + (item.loaded ?? 0), 0);
   const total = items.reduce((sum, item) => sum + (item.total ?? item.loaded ?? 0), 0);
@@ -535,10 +538,11 @@ export function mediaTrouble(items) {
 }
 
 // 開場影片這次怎麼播：素材下載好了 'video'；已經開始下載、這個檔還在排隊或下載中 'wait'（先寫進度，下載完再播）；
-// 沒有素材、下載失敗、或沒按「開始投影」（不下載）'placeholder'。entry 是 view.media 裡 opening 那一筆。
-export function openingMode(entry, preloading) {
+// 沒有素材、下載失敗、或沒按「開始投影」（不下載）'placeholder'。entry 是 view.media 裡 opening 那一筆，list 是素材清單那一筆：
+// 清單下載失敗、正在等重下（或已放棄）時也是 'placeholder'，不等清單重下（清單停住時照樣第 30 秒中止、退佔位）。
+export function openingMode(entry, preloading, list = null) {
   if (entry?.status === 'ready' && entry.url) return 'video';
-  if (preloading && (entry?.status === 'waiting' || entry?.status === 'loading')) return 'wait';
+  if (preloading && list?.status !== 'failed' && (entry?.status === 'waiting' || entry?.status === 'loading')) return 'wait';
   return 'placeholder';
 }
 
@@ -611,6 +615,26 @@ export function retryDelay(tries) {
   if (!(tries >= 1)) return null;
   if (tries > MEDIA_RETRY_MS.length) return null;
   return MEDIA_RETRY_MS[tries - 1];
+}
+
+// 下載到不再失敗為止（screen.js 的 preload 用來下素材清單：清單下好、確定沒有或放棄了才開始下載素材）。fetchOnce() 下載一次、
+// 把結果寫進 entry（view.media 裡那一筆）；失敗（status 'failed'：停住被中止、連線中斷、格式不對）就 tries＋1，照 retryDelay
+// 用 wait(ms) 等 5／15／45 秒再下，第 3 次重試也失敗就放棄（retry＝'gave-up'）。每次失敗之後呼叫 onFail()（重畫、等著的開場
+// 影片退佔位）。沒失敗時清掉 retry。回傳最後的 status。
+export async function fetchWithRetries(entry, fetchOnce, { wait, onFail = () => {} }) {
+  for (;;) {
+    await fetchOnce();
+    if (entry.status !== 'failed') {
+      entry.retry = null;
+      return entry.status;
+    }
+    entry.tries += 1;
+    const delay = retryDelay(entry.tries);
+    entry.retry = delay === null ? 'gave-up' : 'pending';
+    onFail();
+    if (delay === null) return entry.status;
+    await wait(delay);
+  }
 }
 
 // 位元組 → MB（小於 10 留一位小數）。

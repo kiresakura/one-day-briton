@@ -17,6 +17,7 @@ import {
   bellTick,
   clockText,
   creditsSummary,
+  fetchWithRetries,
   fogEntries,
   fogFlashText,
   headerClock,
@@ -75,7 +76,7 @@ const view = {
   flashes: new Map(), // 局號 → { text, until }
   opening: { until: 0, node: null, mode: null, seq: null }, // 正在播的開場：mode＝video｜wait（等下載）｜placeholder，seq 是那一次的場景 seq，until 是最晚收掉的時間
   loop: { key: '', node: null }, // 正在播的背景影片：key＝場景＋網址
-  media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null, tries: 0, retry: null }])), // tries＝失敗幾次，retry＝pending｜gave-up
+  media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null, tries: 0, retry: null, list: item.kind === 'json' }])), // tries＝失敗幾次，retry＝pending｜gave-up，list＝素材清單
   preloading: false,
   mediaNoteUntil: 0,
   credits: { images: null, media: null, loading: false },
@@ -489,12 +490,20 @@ function mediaUrl(id) {
 
 // 素材預載：按「開始投影」後才開始。先讀素材清單（media/credits.json），只下載清單上列到的檔，一次兩個；清單不在（素材還沒放進來）
 // 就全部用佔位、不去要其他檔。清單裡沒寫檔名時逐一試素材表上的檔。檔不存在（404）或格式不對就記成佔位。
+// 清單下載失敗（停住被中止、連線中斷、格式不對）時照素材的退避重下（fetchWithRetries：5／15／45 秒，第 3 次重試也失敗就放棄），
+// 下好了才開始下載素材；放棄了就全部用佔位。清單在等重下時，等著的開場影片退佔位，清單與開場影片下完後下一次播開場就用檔案。
 // 預覽框與手機、主持端都不會走到這裡。
 async function preload() {
   if (view.preloading || view.preview) return;
   view.preloading = true;
   const list = MEDIA.find((item) => item.kind === 'json');
-  await fetchMedia(list);
+  await fetchWithRetries(view.media.get(list.id), () => fetchMedia(list), {
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    onFail() {
+      openingDownloaded();
+      scheduleRender();
+    },
+  });
   const listed = view.media.get(list.id).status === 'ready' ? mediaFilesIn(view.credits.media) : new Map();
   const queue = [];
   for (const item of MEDIA) {
@@ -615,7 +624,7 @@ function loadCredits() {
 function playOpening(seq) {
   stopOpening();
   const entry = view.media.get('opening');
-  const mode = openingMode(entry, view.preloading);
+  const mode = openingMode(entry, view.preloading, view.media.get('credits'));
   const layer = view.layers.video;
   let node;
   if (mode === 'video') {
@@ -661,11 +670,12 @@ function waitNote(entry) {
   return h('p', { class: 'projector-opening-wait-text', attrs: { role: 'status' }, text: openingWaitText(entry) });
 }
 
-// 開場影片下載完、失敗，或確定沒有這個檔：還在等的那一次開場（場景還是開場、seq 沒變）就接著播影片（或退回佔位）；已經換掉就收起來。
+// 開場影片下載完、失敗，或確定沒有這個檔（素材清單下載失敗時也是）：還在等的那一次開場（場景還是開場、seq 沒變）就接著播影片
+// （或退回佔位）；已經換掉就收起來。
 function openingDownloaded() {
   if (view.opening.mode !== 'wait') return;
   const entry = view.media.get('opening');
-  if (openingMode(entry, view.preloading) === 'wait') return;
+  if (openingMode(entry, view.preloading, view.media.get('credits')) === 'wait') return;
   const scene = sceneOf(view.room?.display);
   if (scene.id === 'opening' && scene.seq === view.opening.seq) playOpening(scene.seq);
   else stopOpening();
