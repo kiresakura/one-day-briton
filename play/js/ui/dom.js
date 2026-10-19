@@ -41,7 +41,9 @@ function append(node, children) {
 
 // 把 parent 的子節點更新成 next（節點陣列）：有 data-key 的照 key 對、沒有的照順序對；對到同樣標籤的節點就地改屬性與文字，
 // 不換掉。這樣別人的動作觸發重畫時，捲動位置、焦點、打開中的下拉選單、選取的牌都不會被打斷。
+// next 裡的 null／undefined／false 跟 h() 一樣略過（「可能沒有」的區塊可以直接放在陣列裡）。
 export function patchChildren(parent, next) {
+  next = next.filter((node) => node !== null && node !== undefined && node !== false);
   const old = [...parent.childNodes];
   const byKey = new Map();
   const unkeyed = [];
