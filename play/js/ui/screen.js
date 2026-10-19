@@ -12,8 +12,8 @@ import { qrSvgOrNull } from './qr.js';
 import { createAudio } from './screen-audio.js';
 import {
   MEDIA,
-  MEDIA_STALL_MS,
   awardPages,
+  download,
   bellTick,
   clockText,
   creditsSummary,
@@ -37,7 +37,6 @@ import {
   sceneOf,
   sfxStep,
   stageLayout,
-  stallWatch,
   standingsView,
   tableCard,
   wallClock,
@@ -518,35 +517,32 @@ async function preload() {
 
 const EXPECTED_TYPE = { video: /^video\//, audio: /^audio\//, image: /^image\//, json: /json/ };
 
-// 連續 MEDIA_STALL_MS 沒有新的位元組（連線停住、不出錯）就中止下載，跟下載失敗一樣改用佔位。
+// 下載一次（screen-model.js 的 download）：連續 MEDIA_STALL_MS 沒有新的位元組（連線停住、不出錯）就中止，跟下載失敗一樣記成 failed。
 async function fetchMedia(item) {
   const entry = view.media.get(item.id);
-  const abort = new AbortController();
-  const watch = stallWatch(MEDIA_STALL_MS, () => abort.abort());
+  let type = '';
   try {
-    const response = await fetch(new URL(`../../media/${item.file}`, import.meta.url), { signal: abort.signal });
-    if (!response.ok) {
-      entry.status = 'missing';
-      return;
-    }
-    const type = response.headers.get('content-type') ?? '';
-    if (!EXPECTED_TYPE[item.kind].test(type)) {
-      entry.status = 'failed';
-      return;
-    }
-    entry.status = 'loading';
-    entry.total = Number(response.headers.get('content-length')) || entry.total || 0;
-    const reader = response.body.getReader();
-    const chunks = [];
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      watch.progress();
-      chunks.push(value);
-      entry.loaded += value.length;
-      scheduleRender();
-    }
-    watch.stop();
+    const chunks = await download((url, options) => fetch(url, options), new URL(`../../media/${item.file}`, import.meta.url), {
+      check(response) {
+        if (!response.ok) {
+          entry.status = 'missing';
+          return false;
+        }
+        type = response.headers.get('content-type') ?? '';
+        if (!EXPECTED_TYPE[item.kind].test(type)) {
+          entry.status = 'failed';
+          return false;
+        }
+        entry.status = 'loading';
+        entry.total = Number(response.headers.get('content-length')) || entry.total || 0;
+        return true;
+      },
+      onChunk(chunk) {
+        entry.loaded += chunk.length;
+        scheduleRender();
+      },
+    });
+    if (!chunks) return;
     const blob = new Blob(chunks, { type });
     if (item.kind === 'json') {
       view.credits.media = JSON.parse(await blob.text());
@@ -558,7 +554,6 @@ async function fetchMedia(item) {
   } catch {
     entry.status = 'failed';
   } finally {
-    watch.stop();
     if (item.id === 'opening') openingDownloaded();
     if (item.id === 'music-opening') updateMusic(); // 開場音樂正在播佔位的話，換成檔案
     scheduleRender();

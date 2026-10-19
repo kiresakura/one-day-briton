@@ -216,7 +216,7 @@ const STATUS_LONG = 24;
 // 不會從中間換行（「〈盧德分子的大／鐵鎚〉」）。比一行還長的段落照常換行，接在後面的字可以排在同一行，不會多佔一行。
 const PART_KEEP = 12;
 
-function statusParts(text) {
+export function statusParts(text) {
   return String(text)
     .split(/(?<=・)|(?=〈)/)
     .map((part) => h('span', { class: `projector-card-part${part.length <= PART_KEEP ? ' is-keep' : ''}`, text: part }));

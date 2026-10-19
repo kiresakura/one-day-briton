@@ -550,6 +550,33 @@ export function stallWatch(ms, onStall) {
   };
 }
 
+// 下載一個素材（screen.js 的 fetchMedia）：fetchImpl(url, { signal }) 拿回應，check(response) 回 false 就不讀內容（不存在、格式不對），
+// 讀的時候每收到一段呼叫 onChunk(chunk)。連續 stallMs 沒有新的位元組（含等回應）就中止：fetchImpl 或讀取丟出的錯照樣往外丟。
+// 回傳讀到的所有段落（沒讀時 null）。
+export async function download(fetchImpl, url, { check = () => true, onChunk = () => {}, stallMs = MEDIA_STALL_MS } = {}) {
+  const abort = new AbortController();
+  const watch = stallWatch(stallMs, () => abort.abort());
+  try {
+    const response = await fetchImpl(url, { signal: abort.signal });
+    if (!check(response)) return null;
+    return await readStream(response.body.getReader(), watch, onChunk);
+  } finally {
+    watch.stop();
+  }
+}
+
+// 把串流讀完：每一段都讓卡住的計時重新開始（watch.progress）、交給 onChunk，最後回傳所有段落。
+export async function readStream(reader, watch, onChunk) {
+  const chunks = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return chunks;
+    watch.progress();
+    chunks.push(value);
+    onChunk(value);
+  }
+}
+
 // 位元組 → MB（小於 10 留一位小數）。
 export function megabytes(bytes) {
   const mb = (Number(bytes) || 0) / 1_000_000;
