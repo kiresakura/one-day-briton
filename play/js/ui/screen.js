@@ -50,7 +50,7 @@ const RETRY_MS = 10_000; // 找不到房間時多久再試一次
 const FLASH_MS = 10_000; // 迷霧越過門檻時桌牌閃一下、顯示事件名稱多久
 const OPENING_PLACEHOLDER_MS = 14_000; // 開場影片的佔位（終局圖慢慢放大＋標題）多長
 const OPENING_MAX_MS = 180_000; // 開場影片最長播多久（影片卡住時照樣回到標題頁）
-const OPENING_RESUMES = 3; // 開場影片被瀏覽器自己暫停時，最多接著播幾次
+const OPENING_RESUMES = 3; // 開場影片被瀏覽器自己暫停時，最多接著播幾次（用完改成靜音再播一次）
 const WAKE_NOTE = '這台電腦請把螢幕休眠設成「永不」';
 const MEDIA_NOTE_MS = 10_000; // 素材下載完（或確定沒有素材、重下成功）之後，左下角的結果留多久；有下載失敗的（重試中、已放棄）一直留著
 const SCENE_IMAGES = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night' };
@@ -639,12 +639,15 @@ function playOpening(seq) {
     };
     node.addEventListener('ended', end, { once: true });
     node.addEventListener('error', end, { once: true });
-    // 有聲影片在放上畫面之前就開始播，Chrome 播約 0.1 秒就自己暫停：先放上畫面、顯示圖層，最後才播（start）。
-    // 之後還是被瀏覽器暫停的話（不是 stopOpening、也不是播完），接著播，最多 OPENING_RESUMES 次。
+    // 有的時候 Chrome 會在有聲影片開始播約 0.1 秒時自己暫停（原因還沒查到）。先放上畫面、顯示圖層，最後才播（start）；
+    // 被暫停的話（不是 stopOpening、也不是播完）接著播，最多 OPENING_RESUMES 次；用完改成靜音再播，靜音也被暫停就收掉
+    // 回到標題頁，不會停在一個畫面。
     let resumes = 0;
     node.addEventListener('pause', () => {
-      if (view.opening.node !== node || node.ended || resumes >= OPENING_RESUMES) return;
-      resumes += 1;
+      if (view.opening.node !== node || node.ended) return;
+      if (resumes < OPENING_RESUMES) resumes += 1;
+      else if (!node.muted) node.muted = true;
+      else return end();
       playOpeningVideo(node, end);
     });
     start = () => playOpeningVideo(node, end);
