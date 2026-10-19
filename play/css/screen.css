@@ -1786,12 +1786,14 @@ html.is-projector body {
   gap: 14px;
 }
 
+/* 署名裡的長網址沒有空格可斷，overflow-wrap: anywhere 讓它在文字欄裡斷行，不伸出去。 */
 .projector-credit {
   padding-left: 20px;
   border-left: 3px solid var(--gold);
   font-size: 22px;
   line-height: 30px;
   color: var(--night-ink);
+  overflow-wrap: anywhere;
 }
 
 .projector-credits-more {
@@ -1799,6 +1801,7 @@ html.is-projector body {
   font-size: 26px;
   line-height: 36px;
   color: var(--night-accent);
+  overflow-wrap: anywhere;
 }
 
 .projector[data-layout='4x3'] .projector-award-title {
@@ -1837,9 +1840,28 @@ html.is-projector body {
   font-size: 52px;
 }
 
+/* 4:3 的素材來源頁比 16:9 窄、署名折成更多行：有廣播時安全區底部讓出廣播條，內容要放得進廣播條上面。字級不變，
+   收緊標題下方、署名之間與最後兩段的間距和行高。 */
+.projector[data-layout='4x3'] .projector-awards.is-credits .projector-award-title {
+  margin-bottom: 14px;
+}
+
+.projector[data-layout='4x3'] .projector-credits {
+  gap: 8px;
+}
+
 .projector[data-layout='4x3'] .projector-credit {
   font-size: 23px;
-  line-height: 29px;
+  line-height: 28px;
+}
+
+.projector[data-layout='4x3'] .projector-credits-more {
+  margin-top: 14px;
+  line-height: 32px;
+}
+
+.projector[data-layout='4x3'] .projector-credits-more + .projector-credits-more {
+  margin-top: 4px;
 }
 
 /* 頒獎、規則換頁：簡單的揭曉動畫（淡入上移，冠軍頁的封蠟章蓋下來）。 */
