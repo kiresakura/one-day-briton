@@ -91,6 +91,7 @@ import {
   PAUSE_HOLD_TEXT,
   actionWhy,
   clockPauseState,
+  leftAfter,
   manualPausedMatches,
   nearSunsetLine,
   nearSunsetMatches,
@@ -2100,15 +2101,18 @@ function consoleDialog(room) {
         : dialogNode({ title: `繼續${matchText(request.match)}的日落鐘？`, text: '從現在起接著倒數，暫停的時間不算。', why, ok: '繼續' });
     }
     case 'clock-zero': {
+      // 走著的鐘減完只剩幾秒（store 寫入時多留 1.5 秒，所以減到底也還剩一兩秒）：寫「減完只剩 00:02，幾乎馬上日落」；暫停中剛好減到 0。
       const clock = room.clock?.[request.match];
       const why = off ?? (!isClock(clock) ? '這一場還沒有全場日落鐘' : clock.seq !== request.seq ? '別台剛改過這個鐘，請取消再看一次' : clockGuards(room, request.match, now).minus);
       const left = isClock(clock) ? clockText(clockRemaining(clock, now)) : '';
+      const after = isClock(clock) && !clockPaused(clock) ? leftAfter(clock, request.delta, now) : null;
+      const step = `${request.undo ? '復原要' : ''}減 ${deltaText(request.delta).slice(1)}`;
       return dialogNode({
-        title: `把${matchText(request.match)}的日落鐘減到 0？`,
-        text: `現在剩 ${left}，${request.undo ? '復原要' : ''}減 ${deltaText(request.delta).slice(1)}就直接日落：各桌這一回合結束就算分。日落之後不能再加回來。`,
+        title: after === null ? `把${matchText(request.match)}的日落鐘減到 0？` : `把${matchText(request.match)}的日落鐘減到只剩 ${clockText(after)}？`,
+        text: `現在剩 ${left}，${after === null ? `${step}就直接日落` : `${step}之後只剩 ${clockText(after)}，幾乎馬上日落`}：各桌這一回合結束就算分。日落之後不能再加回來。`,
         why,
         danger: true,
-        ok: '減到 0（日落）',
+        ok: after === null ? '減到 0（日落）' : '照樣減（幾乎馬上日落）',
       });
     }
     case 'pause': {
@@ -2603,7 +2607,7 @@ const actions = {
   'clock-start': ({ match }) => openConsoleConfirm({ kind: 'clock-start', match: Number(match) }, `[data-act="clock-start"][data-match="${match}"]`),
   'clock-pause': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: true, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-pause"][data-match="${match}"]`),
   'clock-resume': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: false, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-resume"][data-match="${match}"]`),
-  // 加減不確認；減到 0（直接日落、加不回來；照 store 的餘裕算，見 host-model.js 的 zeroAfter）才確認。帶著畫面上那個鐘的序號：
+  // 加減不確認；走著的鐘減完剩不到 10 秒、暫停中的鐘減到 0（日落後加不回來；照 store 的餘裕算，見 host-model.js 的 zeroAfter）才確認。帶著畫面上那個鐘的序號：
   // 別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
   'clock-adjust': ({ match, delta }) => {
     const clock = ctx.latestRoom?.clock?.[match];

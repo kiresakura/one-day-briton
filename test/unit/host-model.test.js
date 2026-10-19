@@ -10,6 +10,7 @@ import {
   actionWhy,
   clockPauseState,
   heldByPause,
+  leftAfter,
   manualPausedMatches,
   nearSunsetLine,
   nearSunsetMatches,
@@ -31,29 +32,49 @@ function clock(left, { paused = false, adjust = 0, seq = 3 } = {}) {
   return record;
 }
 
-test('減到 0：走著的鐘照 store 的 1.5 秒餘裕算（剩 40 秒復原 −1 分、剩 61 秒 −1 分、剩 60–61.5 秒都會）', () => {
+test('減到快 0：走著的鐘減完照這台的時間剩不到 10 秒就確認（剩 40 秒復原、剩 60–70 秒 −1 分、剩 302–310 秒 −5 分都會）', () => {
   assert.equal(CLOCK_MARGIN_MS, 1500);
+  assert.equal(PAUSE_NEAR_SUNSET_MS, 10_000);
   assert.equal(zeroAfter(clock(40_000), -MINUTE, NOW), true); // 「＋1」之後剩 40 秒按「復原」
-  assert.equal(zeroAfter(clock(61_000), -MINUTE, NOW), true);
   assert.equal(zeroAfter(clock(60_000), -MINUTE, NOW), true);
-  assert.equal(zeroAfter(clock(61_500), -MINUTE, NOW), true);
-  assert.equal(zeroAfter(clock(61_501), -MINUTE, NOW), false);
-  assert.equal(zeroAfter(clock(62_000), -MINUTE, NOW), false);
-  assert.equal(zeroAfter(clock(301_000), -5 * MINUTE, NOW), true);
-  assert.equal(zeroAfter(clock(302_000), -5 * MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(61_000), -MINUTE, NOW), true);
+  assert.equal(zeroAfter(clock(61_501), -MINUTE, NOW), true);
+  assert.equal(zeroAfter(clock(62_000), -MINUTE, NOW), true); // 減完剩 2 秒（以前不確認）
+  assert.equal(zeroAfter(clock(65_000), -MINUTE, NOW), true); // 剩 5 秒
+  assert.equal(zeroAfter(clock(70_000), -MINUTE, NOW), true); // 剛好剩 10 秒
+  assert.equal(zeroAfter(clock(70_001), -MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(71_000), -MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(302_000), -5 * MINUTE, NOW), true);
+  assert.equal(zeroAfter(clock(310_000), -5 * MINUTE, NOW), true);
+  assert.equal(zeroAfter(clock(310_001), -5 * MINUTE, NOW), false);
 });
 
-test('減到 0：暫停中照現在算，剛好等於也會；加的、沒有鐘的不會', () => {
+test('減完剩多少：照這台的時間；走著的鐘減到底時 store 照「現在＋1.5 秒」夾，所以還剩約 1.5 秒；不是減、已經日落的是 null', () => {
+  assert.equal(leftAfter(clock(62_000), -MINUTE, NOW), 2_000);
+  assert.equal(leftAfter(clock(65_000), -MINUTE, NOW), 5_000);
+  assert.equal(leftAfter(clock(70_000), -MINUTE, NOW), 10_000);
+  assert.equal(leftAfter(clock(40_000), -MINUTE, NOW), CLOCK_MARGIN_MS);
+  assert.equal(leftAfter(clock(40_000, { paused: true }), -MINUTE, NOW), 0);
+  assert.equal(leftAfter(clock(65_000, { paused: true }), -MINUTE, NOW), 5_000);
+  assert.equal(leftAfter(clock(65_000), MINUTE, NOW), null);
+  assert.equal(leftAfter(clock(1_000), -MINUTE, NOW), null);
+  assert.equal(leftAfter(null, -MINUTE, NOW), null);
+});
+
+test('減到 0：暫停中照現在算，剛好減到 0 才會（剩幾秒不算，暫停中還加得回來）；加的、沒有鐘的不會', () => {
   assert.equal(zeroAfter(clock(MINUTE, { paused: true }), -MINUTE, NOW), true);
   assert.equal(zeroAfter(clock(MINUTE + 1, { paused: true }), -MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(62_000, { paused: true }), -MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(65_000, { paused: true }), -MINUTE, NOW), false);
   assert.equal(zeroAfter(clock(10_000, { paused: true }), -MINUTE, NOW), true);
   assert.equal(zeroAfter(clock(10_000), MINUTE, NOW), false);
   assert.equal(zeroAfter(null, -MINUTE, NOW), false);
 });
 
-test('減到 0：累計上限讓它減不到 0 時不算；已經日落（照 store 的餘裕）的不算，store 會拒絕', () => {
-  // 累計已經 −29 分 30 秒：這一次最多再減 30 秒，剩 50 秒減不到 0。
+test('減到 0：累計上限讓它減完還剩 10 秒以上時不算；已經日落（照 store 的餘裕）的不算，store 會拒絕', () => {
+  // 累計已經 −29 分 30 秒：這一次最多再減 30 秒，剩 50 秒減完還剩 20 秒；剩 38 秒減完剩 8 秒。
   assert.equal(zeroAfter(clock(50_000, { adjust: -(29 * MINUTE + 30_000) }), -MINUTE, NOW), false);
+  assert.equal(zeroAfter(clock(38_000, { adjust: -(29 * MINUTE + 30_000) }), -MINUTE, NOW), true);
   assert.equal(zeroAfter(clock(20_000, { adjust: -(29 * MINUTE + 30_000) }), -MINUTE, NOW), true);
   assert.equal(zeroAfter(clock(-1_000), -MINUTE, NOW), false);
   assert.equal(zeroAfter(clock(1_000), -MINUTE, NOW), false);

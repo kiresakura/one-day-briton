@@ -22,15 +22,23 @@ export function tablesText(items) {
   return `第 ${items.map((item) => item.table).join('、')} 桌`;
 }
 
-// 加減 delta 毫秒（負的是減）會不會把鐘減到 0（直接日落，日落後加不回來）：照 store.js 的 adjustClock 算，走著的鐘看「現在＋
-// CLOCK_MARGIN_MS」、暫停中的看現在，再照 game.js 的 clockAdjustWrite 夾（單次、累計上限、剩餘不小於 0）。照那個時間已經日落的
-// 不算（store 會丟 clock-passed，什麼都不會寫）。
-export function zeroAfter(clock, delta, now) {
-  if (!isClock(clock) || !(delta < 0)) return false;
+// 減 delta 毫秒（負的）之後照這台估的時間（now）還剩多少毫秒：照 store.js 的 adjustClock 算，走著的鐘看「現在＋CLOCK_MARGIN_MS」、
+// 暫停中的看現在，再照 game.js 的 clockAdjustWrite 夾（單次、累計上限、剩餘不小於 0；走著的鐘減到底時照 now 看還剩約 1.5 秒）。
+// 不是減、沒有鐘、照那個時間已經日落（store 會丟 clock-passed，什麼都不會寫）是 null。
+export function leftAfter(clock, delta, now) {
+  if (!isClock(clock) || !(delta < 0)) return null;
   const at = now + (clockPaused(clock) ? 0 : CLOCK_MARGIN_MS);
-  if (clockPassed(clock, at)) return false;
+  if (clockPassed(clock, at)) return null;
   const next = clockAdjustWrite(clock, delta, at);
-  return next !== null && clockPassed(next, at);
+  return next === null ? null : Math.max(0, clockRemaining(next, now));
+}
+
+// 減 delta 毫秒會不會（幾乎）直接日落、要先確認（日落後加不回來）：走著的鐘減完照這台估的時間剩不到 PAUSE_NEAR_SUNSET_MS 就算
+// （store 寫入時多留 1.5 秒、網路慢一兩秒時它照晚一點的時間夾，剩幾秒跟剩 0 一樣來不及）；暫停中的鐘剛好減到 0 才算（暫停中還加得回來）。
+export function zeroAfter(clock, delta, now) {
+  const left = leftAfter(clock, delta, now);
+  if (left === null) return false;
+  return clockPaused(clock) ? left <= 0 : left <= PAUSE_NEAR_SUNSET_MS;
 }
 
 // 結果條的「復原」能不能按（null＝可以；會減到 0 的另外先確認）。
