@@ -818,7 +818,7 @@ test('the full pause always goes in, even when a clock this host thinks is still
   await adjustClock(host, code, 1, -10 * MINUTE); // 只剩約 1.5 秒
   const clock = await read(host, `rooms/${code}/clock/1`);
   await untilServerTime(host, clock.anchor + clock.remain + 500); // 伺服器那邊已經日落半秒
-  // 這台估的時間慢 3 秒：以為還剩 2.5 秒。離日落不到 10 秒的鐘第一次就不帶，所以不會被拒，不用等。
+  // 這台估的時間慢 3 秒：以為還剩 2.5 秒。離日落 10 秒以內的鐘第一次就不帶，所以不會被拒，不用等。
   let startedAt = Date.now();
   const result = await skewed(-3000, () => setPause(host, code, true));
   assert.ok(Date.now() - startedAt < 1500, `answered in ${Date.now() - startedAt} ms, not after a refusal`);

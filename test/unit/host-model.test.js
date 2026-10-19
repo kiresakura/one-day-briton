@@ -75,7 +75,7 @@ test('減到 0：暫停中照現在算，剛好減到 0 才會（剩幾秒不算
   assert.equal(zeroAfter(null, -MINUTE, NOW), false);
 });
 
-test('減到 0：累計上限讓它減完還剩 10 秒以上時不算；已經日落（照 store 的餘裕）的不算，store 會拒絕', () => {
+test('減到 0：累計上限讓它減完還剩超過 10 秒時不算；已經日落（照 store 的餘裕）的不算，store 會拒絕', () => {
   // 累計已經 −29 分 30 秒：這一次最多再減 30 秒，剩 50 秒減完還剩 20 秒；剩 38 秒減完剩 8 秒。
   assert.equal(zeroAfter(clock(50_000, { adjust: -(29 * MINUTE + 30_000) }), -MINUTE, NOW), false);
   assert.equal(zeroAfter(clock(38_000, { adjust: -(29 * MINUTE + 30_000) }), -MINUTE, NOW), true);
