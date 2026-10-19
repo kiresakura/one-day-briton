@@ -2,6 +2,9 @@
   "name": "one-day-briton",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.15"
+  },
   "scripts": {
     "test": "node scripts/data-check.mjs && node --test \"test/unit/*.test.js\"",
     "test:sync": "scripts/with-java.sh firebase emulators:exec --only auth,database --project demo-one-day-briton \"node --test --test-force-exit test/sync/*.test.js\"",

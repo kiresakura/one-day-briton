@@ -12,7 +12,7 @@
 npm install
 ```
 
-需要 Node.js 22 以上。連本機模擬器的話另外要 Java 21 以上（見 [`play/README.md`](../play/README.md) 的「需要什麼」）；只連正式站不需要 Java。
+需要 Node.js 22.15 以上（或 23.5 以上；開發時用 24）。連本機模擬器的話另外要 Java 21 以上（見 [`play/README.md`](../play/README.md) 的「需要什麼」）；只連正式站不需要 Java。
 
 ## 用法（五步）
 
