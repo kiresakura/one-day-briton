@@ -27,12 +27,14 @@ import {
   matchLine,
   mediaFilesIn,
   mediaProgressText,
+  mediaTrouble,
   musicOn,
   openingMode,
   openingStep,
   openingWaitText,
   pageIndex,
   projectorParams,
+  retryDelay,
   rulesPages,
   sceneOf,
   sfxStep,
@@ -49,7 +51,7 @@ const FLASH_MS = 10_000; // 迷霧越過門檻時桌牌閃一下、顯示事件�
 const OPENING_PLACEHOLDER_MS = 14_000; // 開場影片的佔位（終局圖慢慢放大＋標題）多長
 const OPENING_MAX_MS = 180_000; // 開場影片最長播多久（影片卡住時照樣回到標題頁）
 const WAKE_NOTE = '這台電腦請把螢幕休眠設成「永不」';
-const MEDIA_NOTE_MS = 10_000; // 素材下載完（或確定沒有素材）之後，左下角的結果留多久
+const MEDIA_NOTE_MS = 10_000; // 素材下載完（或確定沒有素材、重下成功）之後，左下角的結果留多久；有下載失敗的（重試中、已放棄）一直留著
 const SCENE_IMAGES = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night' };
 
 const sceneImage = (name) => `./assets/scenes/${name}-${ART.scene === 'b' ? 'b' : 'a'}.webp`;
@@ -73,7 +75,7 @@ const view = {
   flashes: new Map(), // 局號 → { text, until }
   opening: { until: 0, node: null, mode: null, seq: null }, // 正在播的開場：mode＝video｜wait（等下載）｜placeholder，seq 是那一次的場景 seq，until 是最晚收掉的時間
   loop: { key: '', node: null }, // 正在播的背景影片：key＝場景＋網址
-  media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null }])),
+  media: new Map(MEDIA.map((item) => [item.id, { status: 'waiting', loaded: 0, total: 0, url: null, tries: 0, retry: null }])), // tries＝失敗幾次，retry＝pending｜gave-up
   preloading: false,
   mediaNoteUntil: 0,
   credits: { images: null, media: null, loading: false },
@@ -417,7 +419,7 @@ function cornerModel() {
   return {
     connection: connectionModel(),
     sound: view.started && !view.audioOn && !view.preview,
-    media: view.preloading && (loading || view.mediaNoteUntil > Date.now()) ? mediaProgressText(items, true) : '',
+    media: view.preloading && (loading || mediaTrouble(items) || view.mediaNoteUntil > Date.now()) ? mediaProgressText(items, true) : '',
     placeholder: music.playing && music.placeholder ? '開場音樂：佔位' : '',
     wakeNote: !view.preview && view.started && view.wake.noteUntil > Date.now() ? WAKE_NOTE : '',
     fullscreen: view.started && !view.preview && !view.fullscreen && Boolean(document.documentElement.requestFullscreen),
@@ -507,7 +509,7 @@ async function preload() {
   openingDownloaded(); // 清單上沒有開場影片：等著的那一次改用佔位
   render();
   const worker = async () => {
-    while (queue.length) await fetchMedia(queue.shift());
+    while (queue.length) await loadMedia(queue.shift());
   };
   await Promise.all([worker(), worker()]);
   view.mediaNoteUntil = Date.now() + MEDIA_NOTE_MS;
@@ -517,10 +519,28 @@ async function preload() {
 
 const EXPECTED_TYPE = { video: /^video\//, audio: /^audio\//, image: /^image\//, json: /json/ };
 
+// 下載一個素材；失敗（含連線停住被中止、連線中斷）就照 retryDelay 隔一段時間自己再下一次（不佔 preload 的兩個下載位子），重試 3 次
+// 都失敗就放棄（retry＝'gave-up'），這一頁都用佔位。重下成功時背景影片在下一次重畫接上，開場影片下一次播開場就用檔案。
+async function loadMedia(item) {
+  const entry = view.media.get(item.id);
+  await fetchMedia(item);
+  if (entry.status !== 'failed') {
+    if (entry.retry && entry.status === 'ready') view.mediaNoteUntil = Date.now() + MEDIA_NOTE_MS;
+    entry.retry = null;
+    return;
+  }
+  entry.tries += 1;
+  const delay = retryDelay(entry.tries);
+  entry.retry = delay === null ? 'gave-up' : 'pending';
+  if (delay !== null) setTimeout(() => loadMedia(item), delay);
+  scheduleRender();
+}
+
 // 下載一次（screen-model.js 的 download）：連續 MEDIA_STALL_MS 沒有新的位元組（連線停住、不出錯）就中止，跟下載失敗一樣記成 failed。
 async function fetchMedia(item) {
   const entry = view.media.get(item.id);
   let type = '';
+  entry.loaded = 0;
   try {
     const chunks = await download((url, options) => fetch(url, options), new URL(`../../media/${item.file}`, import.meta.url), {
       check(response) {
@@ -553,6 +573,7 @@ async function fetchMedia(item) {
     entry.status = 'ready';
   } catch {
     entry.status = 'failed';
+    entry.loaded = 0;
   } finally {
     if (item.id === 'opening') openingDownloaded();
     if (item.id === 'music-opening') updateMusic(); // 開場音樂正在播佔位的話，換成檔案
@@ -616,7 +637,7 @@ function playOpening(seq) {
     view.opening.until = Date.now() + OPENING_MAX_MS;
   } else if (mode === 'wait') {
     // 等下載：標題頁照常顯示，上面蓋一層寫進度（render 每次更新數字）。不設最晚收掉的時間：下完接著播、換場景就收，
-    // 下載失敗或卡住（fetchMedia 連續 MEDIA_STALL_MS 沒有新的位元組就中止）時退回佔位（openingDownloaded）。
+    // 下載失敗或卡住（fetchMedia 連續 MEDIA_STALL_MS 沒有新的位元組就中止）時退回佔位（openingDownloaded）；背景照樣重下，下次播開場就用檔案。
     node = h('div', { class: 'projector-opening-wait' }, waitNote(entry));
     view.opening.until = 0;
   } else {

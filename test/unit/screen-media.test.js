@@ -2,7 +2,7 @@
 // 位元組，看連續 30 秒沒有新的位元組時有沒有中止、位元組一直來時會不會被誤判；收到中止時假的回應與讀取丟 AbortError，跟瀏覽器一樣。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MEDIA_STALL_MS, download, readStream } from '../../play/js/ui/screen-model.js';
+import { MEDIA_RETRY_MS, MEDIA_STALL_MS, download, mediaProgressText, mediaStates, mediaTrouble, readStream, retryDelay } from '../../play/js/ui/screen-model.js';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -120,3 +120,37 @@ test('readStream：每一段都告訴卡住的計時（progress），交給 onCh
   );
 });
 
+// ---- 下載失敗之後重下（screen.js 的 loadMedia 照 retryDelay 排；角落照 mediaProgressText、mediaTrouble 寫）----
+
+test('下載失敗（含停住被中止、連線中斷）的素材隔 5、15、45 秒重下；重試 3 次都失敗就放棄', () => {
+  assert.deepEqual(MEDIA_RETRY_MS, [5_000, 15_000, 45_000]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(retryDelay), [5_000, 15_000, 45_000, null, null]);
+  assert.equal(retryDelay(0), null);
+});
+
+test('下載狀態：失敗的分成重試中與已放棄；角落一直寫「n 個用佔位（重試中／已放棄）」，其他還在下載時也寫', () => {
+  const ready = { status: 'ready', loaded: 28_000_000, total: 28_000_000 };
+  const retrying = { status: 'failed', loaded: 0, total: 4_300_000, retry: 'pending' };
+  const gaveUp = { status: 'failed', loaded: 0, total: 4_300_000, retry: 'gave-up' };
+  const missing = { status: 'missing', loaded: 0, total: 0 };
+  const loading = { status: 'loading', loaded: 1_000_000, total: 18_000_000 };
+  const states = mediaStates([ready, retrying, gaveUp, missing, loading]);
+  assert.deepEqual(
+    [states.loading, states.ready, states.placeholder, states.retrying, states.gaveUp].map((list) => list.length),
+    [1, 1, 3, 1, 1],
+  );
+  assert.equal(mediaProgressText([ready, retrying], true), '素材已下載 28 MB・1 個用佔位（重試中）');
+  assert.equal(mediaProgressText([ready, gaveUp], true), '素材已下載 28 MB・1 個用佔位（已放棄）');
+  assert.equal(mediaProgressText([ready, retrying, gaveUp, missing], true), '素材已下載 28 MB・3 個用佔位（1 個重試中、1 個已放棄）');
+  assert.equal(mediaProgressText([loading, ready, retrying], true), '素材下載中 29／50 MB・1 個用佔位（重試中）');
+  assert.equal(mediaProgressText([retrying], true), '素材已下載 0.0 MB・1 個用佔位（重試中）', 'nothing ready yet but a retry is coming');
+  // 沒有失敗的照舊：下載中不寫佔位，下載完寫幾個用佔位，都沒有時寫「先用佔位」
+  assert.equal(mediaProgressText([loading, missing], true), '素材下載中 1.0／18 MB');
+  assert.equal(mediaProgressText([ready, missing], true), '素材已下載 28 MB・1 個用佔位');
+  assert.equal(mediaProgressText([missing], true), '還沒有影音素材，先用佔位（畫面與合成音效）');
+  // 角落：有失敗的就一直寫（不只下載完的 10 秒）；重下中（loading）、沒有失敗的不算
+  assert.equal(mediaTrouble([ready, retrying]), true);
+  assert.equal(mediaTrouble([ready, gaveUp]), true);
+  assert.equal(mediaTrouble([ready, missing, { ...retrying, status: 'loading' }]), false);
+  assert.equal(mediaTrouble([ready, { status: 'failed', loaded: 0, total: 0 }]), false, 'no retry state');
+});

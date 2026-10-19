@@ -495,17 +495,43 @@ export function mediaFilesIn(list) {
   return files.size ? files : null;
 }
 
-// 下載的狀態 → 開始投影頁的那一行。items 是 [{ status: waiting｜loading｜ready｜missing｜failed, loaded, total }]。
+// 下載的狀態分成幾堆（items 的子集）：loading（排隊或下載中）、ready、placeholder（其他，都用佔位），placeholder 裡下載失敗的
+// 再分 retrying（retry 是 'pending'：等著重下）與 gaveUp（'gave-up'：重試也都失敗了）。
+export function mediaStates(items) {
+  const out = { loading: [], ready: [], placeholder: [], retrying: [], gaveUp: [] };
+  for (const item of items) {
+    const state = item?.status;
+    if (state === 'waiting' || state === 'loading') out.loading.push(item);
+    else if (state === 'ready') out.ready.push(item);
+    else {
+      out.placeholder.push(item);
+      if (state === 'failed' && item.retry === 'pending') out.retrying.push(item);
+      if (state === 'failed' && item.retry === 'gave-up') out.gaveUp.push(item);
+    }
+  }
+  return out;
+}
+
+// 下載的狀態 → 開始投影頁與角落的那一行。items 是 [{ status: waiting｜loading｜ready｜missing｜failed, loaded, total, retry }]。
+// 有下載失敗的（重試中或已放棄）時，下載中也寫「n 個用佔位（重試中）」。
 export function mediaProgressText(items, started) {
   if (!started) return '按「開始投影」後才下載影片與音效';
-  const loading = items.filter((item) => item.status === 'waiting' || item.status === 'loading');
-  const ready = items.filter((item) => item.status === 'ready');
+  const { loading, ready, placeholder, retrying, gaveUp } = mediaStates(items);
   const loaded = items.reduce((sum, item) => sum + (item.loaded ?? 0), 0);
   const total = items.reduce((sum, item) => sum + (item.total ?? item.loaded ?? 0), 0);
-  if (loading.length) return `素材下載中 ${megabytes(loaded)}／${megabytes(Math.max(total, loaded))} MB`;
-  if (ready.length === 0) return '還沒有影音素材，先用佔位（畫面與合成音效）';
-  const missing = items.length - ready.length;
-  return `素材已下載 ${megabytes(loaded)} MB${missing ? `・${missing} 個用佔位` : ''}`;
+  const failed = retrying.length + gaveUp.length > 0;
+  const count = (n, text) => (n === placeholder.length ? text : `${n} 個${text}`);
+  const why = [retrying.length ? count(retrying.length, '重試中') : '', gaveUp.length ? count(gaveUp.length, '已放棄') : ''].filter(Boolean).join('、');
+  const note = placeholder.length ? `・${placeholder.length} 個用佔位${why ? `（${why}）` : ''}` : '';
+  if (loading.length) return `素材下載中 ${megabytes(loaded)}／${megabytes(Math.max(total, loaded))} MB${failed ? note : ''}`;
+  if (ready.length === 0 && !failed) return '還沒有影音素材，先用佔位（畫面與合成音效）';
+  return `素材已下載 ${megabytes(loaded)} MB${note}`;
+}
+
+// 角落要不要一直寫素材的狀態：有下載失敗的（重試中或已放棄）就一直寫，不只下載完的那 10 秒。
+export function mediaTrouble(items) {
+  const { retrying, gaveUp } = mediaStates(items);
+  return retrying.length + gaveUp.length > 0;
 }
 
 // 開場影片這次怎麼播：素材下載好了 'video'；已經開始下載、這個檔還在排隊或下載中 'wait'（先寫進度，下載完再播）；
@@ -575,6 +601,16 @@ export async function readStream(reader, watch, onChunk) {
     chunks.push(value);
     onChunk(value);
   }
+}
+
+// 下載失敗（含停住被中止、連線中斷）的素材隔多久再下（毫秒）：第 1、2、3 次失敗之後各等這麼久；重試 3 次都失敗就放棄，這一頁都用佔位。
+export const MEDIA_RETRY_MS = [5_000, 15_000, 45_000];
+
+// 第 tries 次失敗之後隔多久再下；不再試時回 null。
+export function retryDelay(tries) {
+  if (!(tries >= 1)) return null;
+  if (tries > MEDIA_RETRY_MS.length) return null;
+  return MEDIA_RETRY_MS[tries - 1];
 }
 
 // 位元組 → MB（小於 10 留一位小數）。
