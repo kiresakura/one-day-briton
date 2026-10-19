@@ -1014,6 +1014,12 @@ html.is-projector body {
   -webkit-line-clamp: 1;
 }
 
+/* 響應窗口中迷霧剛越過門檻（閃動的 10 秒）：名稱回到 2 行，事件全名看得到（底部那一行放不下長的事件名）。
+   4:3 的名稱本來就是 1 行、寬度放得下最長的事件名，不改。 */
+.projector:not([data-layout='4x3']) .projector-card.is-flash .projector-card-name.is-one-line {
+  -webkit-line-clamp: 2;
+}
+
 /* 結束的桌：名稱是第 1 名的名字（同分並列時好幾個），給 3 行，兩個 12 字的並列冠軍也看得到全名；狀態那一行只寫分數。 */
 .projector-card.is-end .projector-card-name {
   -webkit-line-clamp: 3;

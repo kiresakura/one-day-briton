@@ -191,7 +191,7 @@ function tableCard(card, now) {
           card.seal ? h('span', { class: `projector-seal${card.seal === '否決' ? ' is-failed' : ''}`, text: card.seal }) : null,
           card.countdown ? countdown(card.countdown, now) : null,
         ),
-        // 有響應窗口時名稱只留 1 行；狀態那一行最多 2 行（長的縮字，再長就截掉）。
+        // 有響應窗口時名稱只留 1 行（16:9 迷霧閃動的 10 秒回到 2 行，事件全名看得到）；狀態那一行最多 2 行（長的縮字，再長就截掉）。
         h(
           'div',
           { class: 'projector-card-text' },
@@ -212,13 +212,13 @@ function tableCard(card, now) {
 
 // 狀態那一行超過這麼多字就縮小一號（最長的暱稱＋牌名在 16:9 的桌牌上也排得進 2 行）。
 const STATUS_LONG = 24;
-// 短的一段不從中間斷開（「黑夜揭曉：2 人豪賭・」「2 人分贓・」「2 人睡覺」各自是一段，在「・」之後換行）；
-// 比一行還長的段落照常換行，接在後面的字可以排在同一行，不會多佔一行。
+// 短的一段不從中間斷開（「黑夜揭曉：2 人豪賭・」「2 人分贓・」「2 人睡覺」各自是一段，在「・」之後換行）；〈牌名〉也自己一段，
+// 不會從中間換行（「〈盧德分子的大／鐵鎚〉」）。比一行還長的段落照常換行，接在後面的字可以排在同一行，不會多佔一行。
 const PART_KEEP = 12;
 
 function statusParts(text) {
   return String(text)
-    .split(/(?<=・)/)
+    .split(/(?<=・)|(?=〈)/)
     .map((part) => h('span', { class: `projector-card-part${part.length <= PART_KEEP ? ' is-keep' : ''}`, text: part }));
 }
 
