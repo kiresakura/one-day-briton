@@ -143,6 +143,9 @@ const stops = [];
 // 最上面一條（捲動時也留在畫面上方）：「這個倒數結束後全場暫停」與全場廣播；動作列與分頁列在畫面底部，不會被它蓋到。
 const topBar = h('div', { class: 'player-top', attrs: { id: 'player-top', role: 'status' }, hidden: true });
 $('screen-player').prepend(topBar);
+// 頁首（斷線、卡牌資料有問題的提示條，所有畫面共用，也固定在頂端）有東西時，最上面一條排在它下面、不被蓋住：量頁首的高度給 CSS。
+const pageTop = document.querySelector('.topbar');
+new ResizeObserver(() => $('screen-player').style.setProperty('--topbar-h', `${Math.round(pageTop.getBoundingClientRect().height)}px`)).observe(pageTop);
 // 全場暫停層：蓋住整個玩家畫面；底下的區塊設成 inert，按不到也移不了焦點。
 const pauseLayer = h('div', { class: 'pause-layer', attrs: { id: 'player-pause', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'player-pause-title', 'aria-describedby': 'player-pause-text', tabindex: '-1' }, hidden: true });
 $('screen-player').append(pauseLayer);

@@ -43,8 +43,8 @@ export const END_REASON_TEXT = { sunset: '日落鐘到了', maxRounds: '到了�
 export const ACHIEVEMENT_LABELS = { parliament: '議會之聲', gear: '齒輪大師' };
 export const RESOURCE_LABELS = { pounds: '英鎊', influence: '影響力' };
 
-// 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框放在頂列下方（host.css），錯誤 8 秒後自己消失（字多的久一點；
-// 滑鼠停在上面時先不消失），按 × 可以先關掉；下一次按按鈕時照樣清掉。
+// 頁首的提示訊息：message 空字串＝清掉。主持畫面上提示框放在頂列下方（host.css）。主持畫面與玩家畫面上錯誤 8 秒後自己消失
+// （字多的久一點；滑鼠停在上面時先不消失；玩家畫面捲動時不會一直蓋著最上面一條），按 × 可以先關掉；下一次按按鈕時照樣清掉。
 const NOTICE_MS = 8000;
 let noticeTimer = null;
 
@@ -57,7 +57,7 @@ export function notify(message = '') {
 
 function fadeNotice() {
   clearTimeout(noticeTimer);
-  if ($('screen-host').hidden) return;
+  if ($('screen-host').hidden && $('screen-player').hidden) return;
   noticeTimer = setTimeout(() => notify(), NOTICE_MS + Math.max(0, $('notice-text').textContent.length - 30) * 200);
 }
 
