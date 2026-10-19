@@ -99,9 +99,11 @@ import {
   pauseReport,
   pausedWhy,
   planSignature,
+  stepPlan,
   tablesText,
+  toggleDialogLines,
+  undoPlan,
   undoWhy,
-  zeroAfter,
 } from './host-model.js';
 import {
   END_REASON_TEXT,
@@ -2101,10 +2103,8 @@ function consoleDialog(room) {
       });
     }
     case 'clock-toggle': {
-      const guards = clockGuards(room, request.match, now);
       const why = off ?? toggleWhy(room, request, now);
-      // 全場暫停中手動暫停沒被停住的鐘：它不在這次暫停的紀錄裡，恢復全場時不會跟著繼續。
-      const lines = guards?.hold === 'free' ? [{ text: '全場恢復時不會自動繼續，要記得手動繼續', problem: true }] : [];
+      const lines = toggleDialogLines(room, request.match, now);
       return request.pause
         ? dialogNode({ title: `暫停${matchText(request.match)}的日落鐘？`, text: '暫停時鐘不走、不會到點；投影的鐘寫「暫停」。玩家手機上沒有鐘，畫面不變。', lines, why, ok: '暫停日落鐘' })
         : dialogNode({ title: `繼續${matchText(request.match)}的日落鐘？`, text: '從現在起接著倒數，暫停的時間不算。', why, ok: '繼續' });
@@ -2619,33 +2619,23 @@ const actions = {
   'clock-start': ({ match }) => openConsoleConfirm({ kind: 'clock-start', match: Number(match) }, `[data-act="clock-start"][data-match="${match}"]`),
   'clock-pause': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: true, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-pause"][data-match="${match}"]`),
   'clock-resume': ({ match }) => openConsoleConfirm({ kind: 'clock-toggle', match: Number(match), pause: false, seq: ctx.latestRoom?.clock?.[match]?.seq }, `[data-act="clock-resume"][data-match="${match}"]`),
-  // 加減不確認；走著的鐘減完剩不到 10 秒、暫停中的鐘減到 0（日落後加不回來；照 store 的餘裕算，見 host-model.js 的 zeroAfter）才確認。帶著畫面上那個鐘的序號：
-  // 別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
+  // 加減不確認；走著的鐘減完剩不到 10 秒、暫停中的鐘減到 0（日落後加不回來；照 store 的餘裕算）才確認：照 host-model.js 的 stepPlan。
+  // 帶著畫面上那個鐘的序號：別台剛改過就不會疊上去（＋1 加 ＋1 變 ＋2）。
   'clock-adjust': ({ match, delta }) => {
     const clock = ctx.latestRoom?.clock?.[match];
-    if (!isClock(clock)) return;
     const amount = Number(delta);
-    if (zeroAfter(clock, amount, serverTime(ctx.session))) {
-      openConsoleConfirm({ kind: 'clock-zero', match: Number(match), delta: amount, seq: clock.seq }, `[data-act="clock-adjust"][data-match="${match}"][data-delta="${delta}"]`);
-      return;
-    }
-    runAdjust(Number(match), amount, clock.seq);
+    const plan = stepPlan(clock, amount, serverTime(ctx.session));
+    if (plan === 'confirm') openConsoleConfirm({ kind: 'clock-zero', match: Number(match), delta: amount, seq: clock.seq }, `[data-act="clock-adjust"][data-match="${match}"][data-delta="${delta}"]`);
+    else if (plan === 'send') runAdjust(Number(match), amount, clock.seq);
+    else rerender();
   },
-  // 復原＝反方向調一次：一樣先看會不會減到 0（會就開同一個確認框）；已經日落就不送（鈕本來就停用）。
+  // 復原＝反方向調一次：一樣先看會不會（幾乎）直接日落（會就開同一個確認框）；已經日落就不送（鈕本來就停用）。照 host-model.js 的 undoPlan。
   'clock-undo': () => {
-    const undo = outcome?.undo;
-    const clock = undo ? ctx.latestRoom?.clock?.[undo.match] : null;
-    if (!undo || !isClock(clock)) return;
-    const now = serverTime(ctx.session);
-    if (undoWhy(clock, now)) {
-      rerender();
-      return;
-    }
-    if (zeroAfter(clock, undo.delta, now)) {
-      openConsoleConfirm({ kind: 'clock-zero', match: undo.match, delta: undo.delta, seq: undo.seq, undo: true }, '[data-act="clock-undo"]');
-      return;
-    }
-    runAdjust(undo.match, undo.delta, undo.seq, { undo: true });
+    const undo = outcome?.undo ?? null;
+    const plan = undoPlan(undo, undo ? ctx.latestRoom?.clock?.[undo.match] : null, serverTime(ctx.session));
+    if (plan === 'confirm') openConsoleConfirm({ kind: 'clock-zero', match: undo.match, delta: undo.delta, seq: undo.seq, undo: true }, '[data-act="clock-undo"]');
+    else if (plan === 'send') runAdjust(undo.match, undo.delta, undo.seq, { undo: true });
+    else rerender();
   },
   scene: ({ scene }) => {
     const room = ctx.latestRoom;

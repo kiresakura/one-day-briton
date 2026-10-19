@@ -47,6 +47,19 @@ export function undoWhy(clock, now) {
   return clockPassed(clock, now) ? '已經日落了，不能復原' : null;
 }
 
+// 日落鐘「－5／－1／＋1／＋5」按下去怎麼做（host.js 的處理函式只照這個做）：'confirm'＝先開確認框（會幾乎直接日落，見 zeroAfter）、
+// 'send'＝直接送、'disabled'＝不送（沒有鐘、已經日落；鈕本來就停用，只重畫）。
+export function stepPlan(clock, delta, now) {
+  if (!isClock(clock) || clockPassed(clock, now)) return 'disabled';
+  return zeroAfter(clock, delta, now) ? 'confirm' : 'send';
+}
+
+// 結果條「復原」（undo＝{ match, delta, seq }，反方向調一次）按下去怎麼做：同上；沒有可以復原的、undoWhy 有原因（已經日落）是 'disabled'。
+export function undoPlan(undo, clock, now) {
+  if (!undo || undoWhy(clock, now)) return 'disabled';
+  return zeroAfter(clock, undo.delta, now) ? 'confirm' : 'send';
+}
+
 // 這個鐘是不是被這一次全場暫停停住的：記在 pause.clocks，而且停住的時刻就是暫停那一筆的時刻（store.js 的 setPause 恢復時只恢復這種）。
 export function heldByPause(clock, pause, match) {
   return pause?.clocks?.[match] === true && clockPaused(clock) && clock.pausedAt === pause.at;
@@ -86,6 +99,11 @@ export const PAUSE_HOLD_TEXT = {
   near: '快日落・照常日落、不停',
   free: '沒被全場暫停停住（可手動暫停）',
 };
+
+// 「暫停日落鐘？」確認框多寫的行：全場暫停中手動暫停沒被停住（free）的鐘，它不在這次暫停的紀錄裡，恢復全場時不會跟著繼續。
+export function toggleDialogLines(room, match, now) {
+  return clockPauseState(room, match, now) === 'free' ? [{ text: '全場恢復時不會自動繼續，要記得手動繼續', problem: true }] : [];
+}
 
 // 正在走、還沒日落、離日落不到 PAUSE_NEAR_SUNSET_MS 的場次（全場暫停不會停住它們）：全場暫停的確認框先講一句。
 export function nearSunsetMatches(room, now) {

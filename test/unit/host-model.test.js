@@ -18,6 +18,9 @@ import {
   pauseReport,
   pausedWhy,
   planSignature,
+  stepPlan,
+  toggleDialogLines,
+  undoPlan,
   undoWhy,
   zeroAfter,
 } from '../../play/js/ui/host-model.js';
@@ -95,6 +98,40 @@ test('復原：已經日落就停用並寫原因；沒有鐘也停用；其他�
 const PAUSE = { on: true, seq: 1, at: NOW - 5_000, by: 'a', clocks: { 1: true } };
 const held = (left) => ({ ...clock(left, { paused: true }), pausedAt: PAUSE.at });
 const room = (clocks, pause = null) => ({ clock: clocks, display: pause ? { pause } : {} });
+
+test('「－1」等加減鈕怎麼做：會幾乎直接日落先確認、其他直接送；沒有鐘、已經日落不送', () => {
+  assert.equal(stepPlan(clock(62_000), -MINUTE, NOW), 'confirm');
+  assert.equal(stepPlan(clock(70_000), -MINUTE, NOW), 'confirm');
+  assert.equal(stepPlan(clock(70_001), -MINUTE, NOW), 'send');
+  assert.equal(stepPlan(clock(62_000, { paused: true }), -MINUTE, NOW), 'send'); // 暫停中還加得回來
+  assert.equal(stepPlan(clock(MINUTE, { paused: true }), -MINUTE, NOW), 'confirm');
+  assert.equal(stepPlan(clock(5_000), MINUTE, NOW), 'send');
+  assert.equal(stepPlan(clock(1_000), -MINUTE, NOW), 'send'); // 照 store 的餘裕已經日落：送出去由 store 回 clock-passed
+  assert.equal(stepPlan(clock(0), MINUTE, NOW), 'disabled');
+  assert.equal(stepPlan(clock(0, { paused: true }), MINUTE, NOW), 'disabled');
+  assert.equal(stepPlan(undefined, -MINUTE, NOW), 'disabled');
+});
+
+test('「復原」怎麼做：反方向那一下會幾乎直接日落先確認；已經日落、沒有可以復原的不送', () => {
+  const undo = { match: 1, delta: -MINUTE, seq: 4 };
+  assert.equal(undoPlan(undo, clock(40_000), NOW), 'confirm'); // 「＋1」之後剩 40 秒按「復原」
+  assert.equal(undoPlan(undo, clock(65_000), NOW), 'confirm');
+  assert.equal(undoPlan(undo, clock(71_000), NOW), 'send');
+  assert.equal(undoPlan({ ...undo, delta: MINUTE }, clock(5_000), NOW), 'send'); // 復原「－1」＝加回來
+  assert.equal(undoPlan(undo, clock(0), NOW), 'disabled');
+  assert.equal(undoPlan(undo, clock(-1), NOW), 'disabled');
+  assert.equal(undoPlan(undo, undefined, NOW), 'disabled');
+  assert.equal(undoPlan(null, clock(40_000), NOW), 'disabled');
+});
+
+test('「暫停日落鐘？」確認框：全場暫停中沒停住的鐘多一行（恢復時不會自動繼續）；快日落、沒有全場暫停的不寫', () => {
+  const pause = { on: true, seq: 3, at: NOW - 2_000 };
+  const line = [{ text: '全場恢復時不會自動繼續，要記得手動繼續', problem: true }];
+  assert.deepEqual(toggleDialogLines({ clock: { 1: clock(15_000) }, display: { pause } }, '1', NOW), line);
+  assert.deepEqual(toggleDialogLines({ clock: { 1: clock(15_000) }, display: { pause } }, '1', NOW + 6_000), []);
+  assert.deepEqual(toggleDialogLines({ clock: { 1: clock(15_000) }, display: {} }, '1', NOW), []);
+  assert.deepEqual(toggleDialogLines({ clock: { 1: clock(15_000, { paused: true }) }, display: { pause } }, '1', NOW), []);
+});
 
 test('全場暫停中的鐘：被這次暫停停住、手動暫停的、快日落（不到 10 秒，照常日落）、沒被停住；沒有暫停或已經日落是 null', () => {
   assert.equal(PAUSE_NEAR_SUNSET_MS, 10_000);
