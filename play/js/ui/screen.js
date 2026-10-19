@@ -6,7 +6,6 @@
 // &preview=1：控制台的小預覽框用。不顯示開始投影頁、不出聲、不全螢幕、不防休眠、不回報狀態、不播影片，也不下載影片與音效。
 import { isRoomCode, normalizeRoomCode } from '../rules.js';
 import { serverTime, trackScreen, watchConnection, watchRoom } from '../store.js';
-import { ART } from './art.js';
 import { h, patchChildren } from './dom.js';
 import { qrSvgOrNull } from './qr.js';
 import { createAudio } from './screen-audio.js';
@@ -55,7 +54,7 @@ const WAKE_NOTE = '這台電腦請把螢幕休眠設成「永不」';
 const MEDIA_NOTE_MS = 10_000; // 素材下載完（或確定沒有素材、重下成功）之後，左下角的結果留多久；有下載失敗的（重試中、已放棄）一直留著
 const SCENE_IMAGES = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night' };
 
-const sceneImage = (name) => `./assets/scenes/${name}-${ART.scene === 'b' ? 'b' : 'a'}.webp`;
+const sceneImage = (name) => `./assets/scenes/${name}-a.webp`;
 
 const view = {
   session: null,

@@ -33,7 +33,7 @@
   color: var(--head-ink);
 }
 
-/* 場景圖有兩版，js/ui/art.js 的 ART.scene 決定（寫在 <html data-art-scene>）：A＝彩色版加暖色調和（預設）、B＝灰階疊羊皮紙。 */
+/* 場景圖：彩色版加暖色調和（半去飽和＋羊皮紙疊色）。 */
 .phase-head[data-scene='dawn'] {
   --scene: url('../assets/scenes/dawn-a.webp');
 }
@@ -48,21 +48,6 @@
 }
 .phase-head[data-scene='finale'] {
   --scene: url('../assets/scenes/finale-a.webp');
-}
-html[data-art-scene='b'] .phase-head[data-scene='dawn'] {
-  --scene: url('../assets/scenes/dawn-b.webp');
-}
-html[data-art-scene='b'] .phase-head[data-scene='day'] {
-  --scene: url('../assets/scenes/day-b.webp');
-}
-html[data-art-scene='b'] .phase-head[data-scene='dusk'] {
-  --scene: url('../assets/scenes/dusk-b.webp');
-}
-html[data-art-scene='b'] .phase-head[data-scene='night'] {
-  --scene: url('../assets/scenes/night-b.webp');
-}
-html[data-art-scene='b'] .phase-head[data-scene='finale'] {
-  --scene: url('../assets/scenes/finale-b.webp');
 }
 
 .head-top {
@@ -1487,16 +1472,12 @@ body[data-phase='night'] .result-head.is-pass .result-mark {
   font-weight: 900;
 }
 
-/* 卡背有兩版，js/ui/art.js 的 ART.cardBack 決定（寫在 <html data-art-back>）：A＝深紅（預設）、B＝淺一階。 */
+/* 卡背：深紅。 */
 .log-icon.is-play {
   border-radius: 4px;
   background: url('../assets/ui/card-back-a.webp') center / cover, var(--seal);
   color: #fff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-}
-
-html[data-art-back='b'] .log-icon.is-play {
-  background-image: url('../assets/ui/card-back-b.webp');
 }
 
 .log-icon.is-result {
