@@ -7,7 +7,7 @@
 //   node scripts/fonts/charset.mjs stats        印出字數統計（JSON），包括只出現在 JS 註解裡的漢字
 //
 // 中文字表 = 下列檔案裡出現過的每一個字元（控制字元除外）＋ 常用全形標點 ＋ 全形數字 ＋ 可列印 ASCII：
-//   play/index.html、play/js/ 底下所有 .js（含子資料夾）、play/data/*.json。
+//   play/index.html、play/credits.html（署名頁，標題用 Noto Serif TC）、play/js/ 底下所有 .js（含子資料夾）、play/data/*.json。
 // 原始碼裡用跳脫寫法表示的字元也算：JS／JSON 的 ×、\u{1F3B2}、\x41，HTML 的 &#215;、&#xD7;、&times;。
 // 拉丁字表是固定的：可列印 ASCII ＋ LATIN_EXTRA。
 import { readdir, readFile } from 'node:fs/promises';
@@ -83,7 +83,7 @@ export async function sourceFiles(root = ROOT) {
     .filter((e) => e.isFile() && e.name.endsWith('.json'))
     .map((e) => `play/data/${e.name}`)
     .sort();
-  return ['play/index.html', ...js, ...data];
+  return ['play/index.html', 'play/credits.html', ...js, ...data];
 }
 
 async function readSources(root) {

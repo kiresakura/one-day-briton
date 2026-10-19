@@ -25,7 +25,7 @@ OFL 規定：授權檔若列出「保留字型名稱」（Reserved Font Name）�
 
 `charset.mjs` 是唯一的字表來源，建置與檢查都向它要字，兩邊不會不一致。
 
-- 中文字表：`play/index.html`、`play/js/` 底下所有 `.js`（含子資料夾）、`play/data/*.json` 裡出現的每個字（控制字元除外；`×`、`&times;` 這類跳脫寫法也會換回字元），再加上常用全形標點、全形數字與可列印 ASCII。
+- 中文字表：`play/index.html`、`play/credits.html`（署名頁的標題也用 Noto Serif TC）、`play/js/` 底下所有 `.js`（含子資料夾）、`play/data/*.json` 裡出現的每個字（控制字元除外；`×`、`&times;` 這類跳脫寫法也會換回字元），再加上常用全形標點、全形數字與可列印 ASCII。
 - 拉丁字表：可列印 ASCII，加上 `§ ✶ · – — ‘ ’ “ ” … ×`。
 - CSS 的 `content:` 不在掃描範圍。畫面文字請寫在 HTML 或 JS 裡。
 

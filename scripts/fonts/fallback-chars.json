@@ -1,6 +1,10 @@
 {
   "NotoSerifTC-Bold.woff2": [
     {
+      "code": "U+23F8",
+      "char": "⏸"
+    },
+    {
       "code": "U+25B8",
       "char": "▸"
     },
@@ -22,6 +26,10 @@
     }
   ],
   "NotoSerifTC-Black.woff2": [
+    {
+      "code": "U+23F8",
+      "char": "⏸"
+    },
     {
       "code": "U+25B8",
       "char": "▸"
