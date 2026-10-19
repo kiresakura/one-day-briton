@@ -50,6 +50,7 @@ const RETRY_MS = 10_000; // 找不到房間時多久再試一次
 const FLASH_MS = 10_000; // 迷霧越過門檻時桌牌閃一下、顯示事件名稱多久
 const OPENING_PLACEHOLDER_MS = 14_000; // 開場影片的佔位（終局圖慢慢放大＋標題）多長
 const OPENING_MAX_MS = 180_000; // 開場影片最長播多久（影片卡住時照樣回到標題頁）
+const OPENING_RESUMES = 3; // 開場影片被瀏覽器自己暫停時，最多接著播幾次
 const WAKE_NOTE = '這台電腦請把螢幕休眠設成「永不」';
 const MEDIA_NOTE_MS = 10_000; // 素材下載完（或確定沒有素材、重下成功）之後，左下角的結果留多久；有下載失敗的（重試中、已放棄）一直留著
 const SCENE_IMAGES = { sunrise: 'dawn', day: 'day', dusk: 'dusk', night: 'night' };
@@ -626,6 +627,7 @@ function playOpening(seq) {
   const mode = openingMode(entry, view.preloading, view.media.get('credits'));
   const layer = view.layers.video;
   let node;
+  let start = null;
   if (mode === 'video') {
     node = h('video', { class: 'projector-video-media', attrs: { playsinline: true, preload: 'auto' } });
     node.src = entry.url;
@@ -637,11 +639,15 @@ function playOpening(seq) {
     };
     node.addEventListener('ended', end, { once: true });
     node.addEventListener('error', end, { once: true });
-    node.play().catch(() => {
-      // 聲音還沒解鎖時改成靜音播（瀏覽器准靜音自動播放）。
-      node.muted = true;
-      node.play().catch(end);
+    // 有聲影片在放上畫面之前就開始播，Chrome 播約 0.1 秒就自己暫停：先放上畫面、顯示圖層，最後才播（start）。
+    // 之後還是被瀏覽器暫停的話（不是 stopOpening、也不是播完），接著播，最多 OPENING_RESUMES 次。
+    let resumes = 0;
+    node.addEventListener('pause', () => {
+      if (view.opening.node !== node || node.ended || resumes >= OPENING_RESUMES) return;
+      resumes += 1;
+      playOpeningVideo(node, end);
     });
+    start = () => playOpeningVideo(node, end);
     view.opening.until = Date.now() + OPENING_MAX_MS;
   } else if (mode === 'wait') {
     // 等下載：標題頁照常顯示，上面蓋一層寫進度（render 每次更新數字）。不設最晚收掉的時間：下完接著播、換場景就收，
@@ -663,6 +669,15 @@ function playOpening(seq) {
   layer.classList.toggle('is-wait', mode === 'wait');
   layer.replaceChildren(node);
   layer.hidden = false;
+  start?.();
+}
+
+function playOpeningVideo(node, end) {
+  node.play().catch(() => {
+    // 聲音還沒解鎖時改成靜音播（瀏覽器准靜音自動播放）。
+    node.muted = true;
+    node.play().catch(end);
+  });
 }
 
 function waitNote(entry) {
