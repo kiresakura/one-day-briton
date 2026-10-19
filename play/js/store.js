@@ -1597,7 +1597,10 @@ export async function setMusic(session, code, on, { track = MUSIC_TRACKS[0], exp
 // deniedReason 丟錯，只有原因不明（rejected）的暫停先一個鐘都不帶再試一次，讓暫停那一筆一定寫得進去（安全優先；沒停住的鐘照 clocks
 // 看得出來）。恢復不放寬：不帶鐘只寫 pause.on = false 的話，被暫停停住的鐘會一直停著，也不會再有人自動恢復它。
 // 回傳 { changed, seq, clocks, nearSunset }：clocks 是這次一起停住或恢復的場次（例 ['1']）；nearSunset 是這次暫停時因為離日落不到
-// PAUSE_NEAR_SUNSET_MS 而故意不停的場次（還沒日落、正在走的鐘；恢復、沒有寫的時候都是 []）。正在走、還沒日落、兩個都不在的鐘就是沒停住的。
+// PAUSE_NEAR_SUNSET_MS 而故意不停的場次（還沒日落、正在走的鐘）。兩個都只是這一次按下去的結果：恢復、沒有寫（changed: false）的時候都是 []，
+// 別台主持端與重新整理後也沒有。全場暫停中每個鐘是哪一種，任何一台主持端都照房間資料分（host-model.js 的 clockPauseState）：停住了＝
+// pause.clocks[m] === true 而且 clock.pausedAt === pause.at；快日落＝正在走、還沒日落、剩不到 PAUSE_NEAR_SUNSET_MS（不給手動暫停）；
+// 沒停住＝其他正在走的（可以手動暫停，恢復時不會自動繼續）。
 // 離日落不到這麼久（毫秒）的鐘，全場暫停不停它（照常日落）：停了也沒有意義，而且這台估的時間慢一點就會讓整筆被拒，要等好幾秒才能不帶鐘重送。
 export const PAUSE_NEAR_SUNSET_MS = 10_000;
 
