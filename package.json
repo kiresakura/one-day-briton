@@ -11,6 +11,7 @@
     "test:all": "npm test && npm run test:sync",
     "data:check": "node scripts/data-check.mjs",
     "fonts:check": "node scripts/fonts/check.mjs",
+    "media:check": "node scripts/media-check.mjs",
     "data:import": "node scripts/data-import.mjs",
     "dev": "scripts/with-java.sh firebase emulators:start --only auth,database,hosting --project demo-one-day-briton",
     "bots": "node scripts/bots/cli.mjs",

@@ -1,0 +1,445 @@
+[
+  {
+    "slot": "opening-film-1",
+    "group": "media",
+    "label": "開場影片・畫面 1／3（黑衣修士橋）",
+    "files": [
+      {
+        "path": "opening.mp4",
+        "bytes": 17596993,
+        "sha256": "d21b4ab7a7d2ea6520fd6198fbe86af2fd74c0e39c2c00b41f1b3c1495644c2a"
+      }
+    ],
+    "title": "Blackfriars Bridge",
+    "creator": "Robert W. Paul",
+    "date": "1896",
+    "institution": "La Cinémathèque française (Will Day collection)",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Blackfriars_Bridge_(Robert_William_Paul,_1896).webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Blackfriars Bridge” by Robert W. Paul (1896), La Cinémathèque française (Will Day collection), via Wikimedia Commons, public domain; modified: excerpt 3.0–19.0 s, cropped to 16:9 (1412x794+8+150 of 1428x1080), scaled to 1920x1080, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, 1 s dissolve to next shot, 1.5 s fade-in from black, music added.",
+    "modifications": [
+      "excerpt 3.0–19.0 s",
+      "cropped to 16:9 (1412x794+8+150 of 1428x1080)",
+      "scaled to 1920x1080",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "1 s dissolve to next shot",
+      "1.5 s fade-in from black",
+      "music added"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/8/85/Blackfriars_Bridge_%28Robert_William_Paul%2C_1896%29.webm",
+    "commons_sha1_original": "1b5943e578c4edac3c97023563ae12ec7c479bdd",
+    "license_basis": "Commons {{PD-US-auto-expired|1943}}: author died 1943; published 1896",
+    "upstream_source": "https://www.cinematheque.fr/henri/film/154769-le-cinema-des-origines-dans-la-collection-will-day-auteurs-divers-1889-1912/",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "opening-film-2",
+    "group": "media",
+    "label": "開場影片・畫面 2／3（海德公園）",
+    "files": [
+      {
+        "path": "opening.mp4",
+        "bytes": 17596993,
+        "sha256": "d21b4ab7a7d2ea6520fd6198fbe86af2fd74c0e39c2c00b41f1b3c1495644c2a"
+      }
+    ],
+    "title": "Hyde Park Bicycling Scene",
+    "creator": "Robert W. Paul",
+    "date": "1896",
+    "institution": "",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Hyde_Park_Bicycling_Scene_1896_Robert_W_Paul_London_Royal_Park.webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Hyde Park Bicycling Scene” by Robert W. Paul (1896), via Wikimedia Commons, public domain; modified: excerpt 3.0–11.0 s, cropped to 16:9 (942x530+8+34 of 958x720), scaled to 1920x1080, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, highlights compressed, 1 s dissolves.",
+    "modifications": [
+      "excerpt 3.0–11.0 s",
+      "cropped to 16:9 (942x530+8+34 of 958x720)",
+      "scaled to 1920x1080",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "highlights compressed",
+      "1 s dissolves"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/1/17/Hyde_Park_Bicycling_Scene_1896_Robert_W_Paul_London_Royal_Park.webm",
+    "commons_sha1_original": "6870ca3dc88c238a96cc6b766bfda83a4f4e2949",
+    "license_basis": "Commons {{PD-old-auto-1923|1943}}: author died 1943; published 1896",
+    "upstream_source": "Commons source field: YouTube upload (https://www.youtube.com/watch?v=7FjK2conZBM); not downloaded from YouTube",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "opening-film-3",
+    "group": "media",
+    "label": "開場影片・畫面 3／3（西敏橋與大笨鐘）",
+    "files": [
+      {
+        "path": "opening.mp4",
+        "bytes": 17596993,
+        "sha256": "d21b4ab7a7d2ea6520fd6198fbe86af2fd74c0e39c2c00b41f1b3c1495644c2a"
+      }
+    ],
+    "title": "Le Pont de Westminster (Westminster Bridge, London)",
+    "creator": "Unknown operator (Société Lumière production)",
+    "date": "1896",
+    "institution": "",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Le_Pont_de_Westminster_-_Film_1896.webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Le Pont de Westminster (Westminster Bridge, London)” by Unknown operator (Société Lumière production) (1896), via Wikimedia Commons, public domain; modified: excerpt 13.0–38.5 s, cropped to 16:9 (1342x755+290+38 of 1920x1080 (picture area 1366x1024+278+28)), scaled to 1920x1080, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, 1 s dissolve from previous shot, 2.5 s fade-out to black.",
+    "modifications": [
+      "excerpt 13.0–38.5 s",
+      "cropped to 16:9 (1342x755+290+38 of 1920x1080 (picture area 1366x1024+278+28))",
+      "scaled to 1920x1080",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "1 s dissolve from previous shot",
+      "2.5 s fade-out to black"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/4/42/Le_Pont_de_Westminster_-_Film_1896.webm",
+    "commons_sha1_original": "973bd8abb73f30b25709dfe48dee3919509cf9a8",
+    "license_basis": "Commons {{PD-old-70}}: 1896 film, author unknown",
+    "upstream_source": "Commons source field: YouTube upload (https://www.youtube.com/watch?v=0CF4sGVG2XY); not downloaded from YouTube",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "opening-music",
+    "group": "media",
+    "label": "開場影片・配樂",
+    "files": [
+      {
+        "path": "opening.mp4",
+        "bytes": 17596993,
+        "sha256": "d21b4ab7a7d2ea6520fd6198fbe86af2fd74c0e39c2c00b41f1b3c1495644c2a"
+      }
+    ],
+    "title": "Second Suite in F for Military Band, Op. 28 No. 2 – I. March (Morris dance, Swansea Town, Claudy Banks)",
+    "creator": "Gustav Holst (composer); Concert Band of the United States Air Force Heritage of America Band (performer)",
+    "date": "composed 1911; recorded 1992 (album “Flourishes”)",
+    "institution": "United States Air Force Bands (Public Domain Music)",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Second_Suite_in_F_for_Military_Band_-_I._March,_Morris_dance,_Swansea_Town,_Claudy_Banks_-_Concert_Band_-_United_States_Air_Force_Heritage_of_America_Band.mp3",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Second Suite in F for Military Band, Op. 28 No. 2 – I. March (Morris dance, Swansea Town, Claudy Banks)” by Gustav Holst (composer); Concert Band of the United States Air Force Heritage of America Band (performer) (composed 1911; recorded 1992 (album “Flourishes”)), United States Air Force Bands (Public Domain Music), via Wikimedia Commons, public domain; modified: excerpt 0.15–47.65 s (Morris-dance section), gentle compression, loudness normalised to about -16 LUFS, 0.2 s fade-in, 3 s fade-out, encoded AAC 128 kbps.",
+    "modifications": [
+      "excerpt 0.15–47.65 s (Morris-dance section)",
+      "gentle compression, loudness normalised to about -16 LUFS",
+      "0.2 s fade-in, 3 s fade-out",
+      "encoded AAC 128 kbps"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/5/53/Second_Suite_in_F_for_Military_Band_-_I._March%2C_Morris_dance%2C_Swansea_Town%2C_Claudy_Banks_-_Concert_Band_-_United_States_Air_Force_Heritage_of_America_Band.mp3",
+    "commons_sha1_original": "0e84bd8c6dfe44e865d6b0ce1d495f2ff32a0751",
+    "license_basis": "composition: original work for military band, composer died 1934 ({{PD-old-auto-expired|deathyear=1934}}); recording: work of the U.S. federal government ({{PD-USGov-Military-Air Force}})",
+    "upstream_source": "https://www.music.af.mil/Multimedia/Music/Public-Domain-Music/",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "loop-1",
+    "group": "media",
+    "label": "背景循環 1（黑衣修士橋）",
+    "files": [
+      {
+        "path": "loop-1.mp4",
+        "bytes": 4326161,
+        "sha256": "b65791f23d31871e87996a4ce570d281f6b8ec5d0b74bc9a32bdfeeb6197612d"
+      }
+    ],
+    "title": "Blackfriars Bridge",
+    "creator": "Robert W. Paul",
+    "date": "1896",
+    "institution": "La Cinémathèque française (Will Day collection)",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Blackfriars_Bridge_(Robert_William_Paul,_1896).webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Blackfriars Bridge” by Robert W. Paul (1896), La Cinémathèque française (Will Day collection), via Wikimedia Commons, public domain; modified: excerpt 12.0–28.0 s, cropped to 16:9 (1412x794+8+150 of 1428x1080), scaled to 1280x720, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, 1 s crossfade of the last second into the first for a seamless loop, darkened slightly, no audio.",
+    "modifications": [
+      "excerpt 12.0–28.0 s",
+      "cropped to 16:9 (1412x794+8+150 of 1428x1080)",
+      "scaled to 1280x720",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "1 s crossfade of the last second into the first for a seamless loop",
+      "darkened slightly",
+      "no audio"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/8/85/Blackfriars_Bridge_%28Robert_William_Paul%2C_1896%29.webm",
+    "commons_sha1_original": "1b5943e578c4edac3c97023563ae12ec7c479bdd",
+    "license_basis": "Commons {{PD-US-auto-expired|1943}}: author died 1943; published 1896",
+    "upstream_source": "https://www.cinematheque.fr/henri/film/154769-le-cinema-des-origines-dans-la-collection-will-day-auteurs-divers-1889-1912/",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "loop-2",
+    "group": "media",
+    "label": "背景循環 2（西敏橋與大笨鐘）",
+    "files": [
+      {
+        "path": "loop-2.mp4",
+        "bytes": 3857200,
+        "sha256": "93290be5106f29184a8c73ecafc6f48af1a1c27a46049920bbf23ba03b2be405"
+      }
+    ],
+    "title": "Le Pont de Westminster (Westminster Bridge, London)",
+    "creator": "Unknown operator (Société Lumière production)",
+    "date": "1896",
+    "institution": "",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Le_Pont_de_Westminster_-_Film_1896.webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Le Pont de Westminster (Westminster Bridge, London)” by Unknown operator (Société Lumière production) (1896), via Wikimedia Commons, public domain; modified: excerpt 24.0–38.5 s, cropped to 16:9 (1342x755+290+38 of 1920x1080 (picture area 1366x1024+278+28)), scaled to 1280x720, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, 1 s crossfade of the last second into the first for a seamless loop, darkened slightly, no audio.",
+    "modifications": [
+      "excerpt 24.0–38.5 s",
+      "cropped to 16:9 (1342x755+290+38 of 1920x1080 (picture area 1366x1024+278+28))",
+      "scaled to 1280x720",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "1 s crossfade of the last second into the first for a seamless loop",
+      "darkened slightly",
+      "no audio"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/4/42/Le_Pont_de_Westminster_-_Film_1896.webm",
+    "commons_sha1_original": "973bd8abb73f30b25709dfe48dee3919509cf9a8",
+    "license_basis": "Commons {{PD-old-70}}: 1896 film, author unknown",
+    "upstream_source": "Commons source field: YouTube upload (https://www.youtube.com/watch?v=0CF4sGVG2XY); not downloaded from YouTube",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "loop-3",
+    "group": "media",
+    "label": "背景循環 3（海德公園）",
+    "files": [
+      {
+        "path": "loop-3.mp4",
+        "bytes": 2868973,
+        "sha256": "9ada3c455d5380feb241bad609eaf5506e006f4a734f6db87bf79136edb781ae"
+      }
+    ],
+    "title": "Hyde Park Bicycling Scene",
+    "creator": "Robert W. Paul",
+    "date": "1896",
+    "institution": "",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Hyde_Park_Bicycling_Scene_1896_Robert_W_Paul_London_Royal_Park.webm",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Hyde Park Bicycling Scene” by Robert W. Paul (1896), via Wikimedia Commons, public domain; modified: excerpt 0.95–12.1 s, cropped to 16:9 (942x530+8+34 of 958x720), scaled to 1280x720, deflickered, lightly denoised, converted to monochrome and toned (ink-to-parchment duotone), vignette, highlights compressed, 1 s crossfade of the last second into the first for a seamless loop, darkened slightly, no audio.",
+    "modifications": [
+      "excerpt 0.95–12.1 s",
+      "cropped to 16:9 (942x530+8+34 of 958x720)",
+      "scaled to 1280x720",
+      "deflickered, lightly denoised",
+      "converted to monochrome and toned (ink-to-parchment duotone)",
+      "vignette",
+      "highlights compressed",
+      "1 s crossfade of the last second into the first for a seamless loop",
+      "darkened slightly",
+      "no audio"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/1/17/Hyde_Park_Bicycling_Scene_1896_Robert_W_Paul_London_Royal_Park.webm",
+    "commons_sha1_original": "6870ca3dc88c238a96cc6b766bfda83a4f4e2949",
+    "license_basis": "Commons {{PD-old-auto-1923|1943}}: author died 1943; published 1896",
+    "upstream_source": "Commons source field: YouTube upload (https://www.youtube.com/watch?v=7FjK2conZBM); not downloaded from YouTube",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "bell",
+    "group": "media",
+    "label": "日落大鐘",
+    "files": [
+      {
+        "path": "bell.mp3",
+        "bytes": 94039,
+        "sha256": "d1b8b55dce5b84e8c60e60236621852917cd2675461041fa8c44af6dda9109b9"
+      }
+    ],
+    "title": "Big Ben Strikes 8 o'clock.mp3",
+    "creator": "TheHymnPlayer1257609753",
+    "date": "",
+    "institution": "",
+    "source": "freesound",
+    "source_page": "https://freesound.org/people/TheHymnPlayer1257609753/sounds/638104",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution_required": false,
+    "attribution": "“Big Ben Strikes 8 o'clock.mp3” by TheHymnPlayer1257609753, via freesound (https://freesound.org/people/TheHymnPlayer1257609753/sounds/638104), CC0 1.0 public domain dedication; modified: excerpt 50.845–56.645 s (eighth stroke only), mixed to mono, high-pass 140 Hz (24 dB/oct) to remove traffic rumble, light spectral noise reduction, 3.2 s exponential fade-out of the tail, peak-normalised, encoded mp3 128 kbps mono.",
+    "modifications": [
+      "excerpt 50.845–56.645 s (eighth stroke only)",
+      "mixed to mono",
+      "high-pass 140 Hz (24 dB/oct) to remove traffic rumble",
+      "light spectral noise reduction",
+      "3.2 s exponential fade-out of the tail",
+      "peak-normalised",
+      "encoded mp3 128 kbps mono"
+    ],
+    "file_url": "https://cdn.freesound.org/previews/638/638104_10116052-hq.mp3",
+    "sha256_source": "fac615a4d6d2429a8beb09fd0fcf63b4f6b9f5f0ceaf70f1c92fb26f3c2b8601",
+    "license_basis": "CC0 1.0 shown on the freesound page (checked 2026-10-19)",
+    "upstream_source": "freesound HQ preview (128 kbps mp3); original WAV needs a login and was not used",
+    "retrieved": "2026-10-17 (preview file), license re-checked 2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "gavel",
+    "group": "media",
+    "label": "法槌",
+    "files": [
+      {
+        "path": "gavel.mp3",
+        "bytes": 13791,
+        "sha256": "9f6bea3f5f188da571362a61c979a6e8195ce95ab11adcf1083095ea60c208d6"
+      }
+    ],
+    "title": "wood hammer, gavel, knock, pound, jury, court.mp3",
+    "creator": "JohnsonBrandEditing",
+    "date": "",
+    "institution": "",
+    "source": "freesound",
+    "source_page": "https://freesound.org/people/JohnsonBrandEditing/sounds/173941",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution_required": false,
+    "attribution": "“wood hammer, gavel, knock, pound, jury, court.mp3” by JohnsonBrandEditing, via freesound (https://freesound.org/people/JohnsonBrandEditing/sounds/173941), CC0 1.0 public domain dedication; modified: excerpt 1.200–2.000 s (second knock only), mixed to mono, high-pass 50 Hz, 0.35 s fade-out, peak limiting (about 5 dB) and normalisation, encoded mp3 128 kbps mono.",
+    "modifications": [
+      "excerpt 1.200–2.000 s (second knock only)",
+      "mixed to mono",
+      "high-pass 50 Hz",
+      "0.35 s fade-out",
+      "peak limiting (about 5 dB) and normalisation",
+      "encoded mp3 128 kbps mono"
+    ],
+    "file_url": "https://cdn.freesound.org/previews/173/173941_3229685-hq.mp3",
+    "sha256_source": "586959d63e8140547ebb88ab9df714f7ae0c1d6f029c361953cfbdc767037046",
+    "license_basis": "CC0 1.0 shown on the freesound page (checked 2026-10-19)",
+    "upstream_source": "freesound HQ preview (128 kbps mp3); original WAV needs a login and was not used",
+    "retrieved": "2026-10-17 (preview file), license re-checked 2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "music-opening",
+    "group": "media",
+    "label": "開場音樂（循環）",
+    "files": [
+      {
+        "path": "music-opening.mp3",
+        "bytes": 3500408,
+        "sha256": "4e3dba7209ebab22dc12f359d57acb4ce28cb7f804fc68adcde5e027a32b7cbf"
+      }
+    ],
+    "title": "First Suite in E-flat for Military Band, Op. 28 No. 1 – III. March",
+    "creator": "Gustav Holst (composer); Concert Band of the United States Air Force Heritage of America Band (performer)",
+    "date": "composed 1909; recorded 1992 (album “Flourishes”)",
+    "institution": "United States Air Force Bands (Public Domain Music)",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:First_Suite_in_E-flat_for_Military_Band_-_III._March_-_Concert_Band_-_United_States_Air_Force_Heritage_of_America_Band.mp3",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“First Suite in E-flat for Military Band, Op. 28 No. 1 – III. March” by Gustav Holst (composer); Concert Band of the United States Air Force Heritage of America Band (performer) (composed 1909; recorded 1992 (album “Flourishes”)), United States Air Force Bands (Public Domain Music), via Wikimedia Commons, public domain; modified: complete movement 0.45–175.40 s (leading silence trimmed; reverb tail after the final chord shortened with a 0.35 s fade), gentle compression, loudness normalised to about -16 LUFS, peak-limited, encoded mp3 160 kbps stereo.",
+    "modifications": [
+      "complete movement 0.45–175.40 s (leading silence trimmed; reverb tail after the final chord shortened with a 0.35 s fade)",
+      "gentle compression, loudness normalised to about -16 LUFS, peak-limited",
+      "encoded mp3 160 kbps stereo"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/f/f7/First_Suite_in_E-flat_for_Military_Band_-_III._March_-_Concert_Band_-_United_States_Air_Force_Heritage_of_America_Band.mp3",
+    "commons_sha1_original": "48641418ce53e78207a053e6da094445aa4f9215",
+    "license_basis": "composition: original work for military band, composer died 1934 ({{PD-old-auto-expired|deathyear=1934}}); recording: work of the U.S. federal government ({{PD-USGov-Military-Air Force}})",
+    "upstream_source": "https://www.music.af.mil/Multimedia/Music/Public-Domain-Music/",
+    "retrieved": "2026-10-19",
+    "illustrative": false
+  },
+  {
+    "slot": "bg-title",
+    "group": "media",
+    "label": "標題頁底圖",
+    "files": [
+      {
+        "path": "bg-title.webp",
+        "bytes": 61528,
+        "sha256": "aed280d44901139aac70561259199352901c3c34941b99223bf628cf9b28acee"
+      }
+    ],
+    "title": "Houses of Parliament from the river, London, England (photochrom)",
+    "creator": "Photochrom Print Collection (Detroit Publishing Co.)",
+    "date": "c. 1890–1900",
+    "institution": "Library of Congress",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Houses_of_Parliament_from_the_river,_London,_England-LCCN2002696921.jpg",
+    "license": "PD",
+    "license_url": "https://creativecommons.org/publicdomain/mark/1.0/",
+    "attribution_required": false,
+    "attribution": "“Houses of Parliament from the river, London, England (photochrom)” by Photochrom Print Collection (Detroit Publishing Co.) (c. 1890–1900), Library of Congress, via Wikimedia Commons, public domain; modified: cropped, converted to grayscale, levels adjusted, resized, toned (ink-to-parchment duotone), tonal range lowered, centre darkened for overlaid text, vignette, encoded WebP.",
+    "modifications": [
+      "from the processed master img/masters/screen/bg-title.png (cropped, converted to grayscale, levels adjusted, resized)",
+      "toned (ink-to-parchment duotone)",
+      "tonal range lowered",
+      "centre darkened for overlaid text",
+      "vignette",
+      "encoded WebP"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/3/38/Houses_of_Parliament_from_the_river%2C_London%2C_England-LCCN2002696921.jpg",
+    "sha256_source": "14833fabbed585bc5be93b1f7996697b56cd9ba1e1516227e65d63ad5b760cbf",
+    "license_basis": "same source record as img/credits-img.json slot bg-title",
+    "retrieved": "2026-10-17",
+    "illustrative": false
+  },
+  {
+    "slot": "bg-rules",
+    "group": "media",
+    "label": "規則頁底圖（深）",
+    "files": [
+      {
+        "path": "bg-rules.webp",
+        "bytes": 163618,
+        "sha256": "f753e9f2999fd0c3232ef42abf4074d28d6b09a022658b7dc5ca2ffc7c612181"
+      }
+    ],
+    "title": "Waterloo Bridge, Gray Day",
+    "creator": "Claude Monet",
+    "date": "1903",
+    "institution": "National Gallery of Art, Washington",
+    "source": "Wikimedia Commons",
+    "source_page": "https://commons.wikimedia.org/wiki/File:Claude_Monet,_Waterloo_Bridge,_Gray_Day,_1903,_NGA_46658.jpg",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "attribution_required": false,
+    "attribution": "“Waterloo Bridge, Gray Day” by Claude Monet (1903), National Gallery of Art, Washington, via Wikimedia Commons, CC0 1.0 public domain dedication; modified: cropped, converted to grayscale, levels adjusted, resized, toned (ink-to-parchment duotone), tonal range lowered, centre darkened for overlaid text, vignette, encoded WebP.",
+    "modifications": [
+      "from the processed master img/masters/screen/bg-rules.png (cropped, converted to grayscale, levels adjusted, resized)",
+      "toned (ink-to-parchment duotone)",
+      "tonal range lowered",
+      "centre darkened for overlaid text",
+      "vignette",
+      "encoded WebP"
+    ],
+    "file_url": "https://upload.wikimedia.org/wikipedia/commons/2/2a/Claude_Monet%2C_Waterloo_Bridge%2C_Gray_Day%2C_1903%2C_NGA_46658.jpg",
+    "sha256_source": "973b51fc62b53dddd2948ab3fc7e04f53958807c82e043e652438dd0fc81a642",
+    "license_basis": "same source record as img/credits-img.json slot bg-rules",
+    "retrieved": "2026-10-17",
+    "illustrative": false
+  }
+]

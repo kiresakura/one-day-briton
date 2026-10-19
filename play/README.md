@@ -210,6 +210,7 @@ npm test            # 卡牌資料檢查＋純函式（階段、迷霧值、房�
 npm run test:sync   # 啟動模擬器，用 js/store.js 測同步與安全規則（含私密資料與牌庫的讀寫權限、開局與發牌不重複、出牌請求的權限、結算與 version 守門、響應窗口與時間到、票的讀寫權限、倒數揭曉與提前揭曉、日出一般事件、迷霧事件與事件紀錄的規則、偷、黑夜的選擇與挑棄牌的規則、黑夜的倒數揭曉與提前揭曉、日出照挑的棄牌、日落鐘與提早收場、終局那一筆與 `final` 的規則、主持端勾天命）
 npm run test:all    # 兩者都跑
 npm run data:check  # 只檢查 play/data/ 的卡牌資料檔
+npm run media:check # 檢查 play/media/ 的影音素材：大小上限、清單（credits.json）；有 ffprobe 時再查編碼與長度
 npm run data:import -- <CSV 資料夾>   # 試算表匯出的 CSV 轉成 play/data/，寫完自動檢查
 ```
 
@@ -243,6 +244,7 @@ npm run data:import -- <CSV 資料夾>   # 試算表匯出的 CSV 轉成 play/da
 | `js/ui/` | 畫面模組：`state.js`（共用狀態）、`dom.js`（建元素、重畫時就地更新、截斷文字的彈出框）、`shared.js`（共用的文字與元件：狀態條、倒數圈、迷霧值、齒輪連鎖、連線狀態、羊皮紙卡面）、`home.js`（首頁、等待核准）、`host.js`（主持端）、`host-model.js`（主持人控制台的純函式：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後結果條怎麼寫、確認框打開後局面變了沒、全場動作與全場暫停中每桌按鈕的停用原因）、`player.js`（玩家端）、`player-model.js`（玩家畫面跟主持人控制台有關的純函式：全場暫停層要不要蓋、「最後一回合」、日落時重畫的時刻、到點重畫的計時器要不要重排、新廣播要不要震）、`screen.js`（投影畫面 `?view=screen&room=房號`：只讀房間，固定大小的舞台縮到視窗；場景照 `display/scene` 換，廣播條、全場暫停、連線狀態疊在所有場景上）、`screen-model.js`（投影畫面的純函式：舞台與版面、場景與頁數、日落鐘的文字、每桌桌牌、排行與頒獎的頁、素材表與下載進度、素材來源頁，以及背景影片要不要重建、日落鐘聲要不要響）、`screen-scenes.js`（投影畫面各場景與疊層的元件：標題頁、規則說明、比賽中總覽、兩場合計排行、頒獎，以及廣播條、全場暫停、開始投影頁、角落的狀態）、`screen-audio.js`（投影端的聲音：按「開始投影」時解鎖，之後播鐘聲、槌聲與開場音樂；沒有素材或下載失敗時用網頁當場合成的佔位）、`qr.js`（QR Code 產生器：標題頁的加入網址用，不向外部要任何檔） |
 | `fonts/` | 自行託管的字型（只含畫面用到的字）與授權全文；改了卡牌資料或畫面文字要重跑，見 [`scripts/fonts/README.md`](../scripts/fonts/README.md) |
 | `assets/` | 圖：`events/e01.webp`…、`bills/b01.webp`…、`roles/r1.png`…（照資料的編號）、`scenes/`（階段標頭）、`ui/`（卡背、羊皮紙紋理、主視覺、封蠟） |
+| `media/` | 投影端的影音素材（開場影片、背景影片、鐘聲、槌聲、開場音樂、標題頁與規則頁底圖）與來源清單 `credits.json`；只有投影畫面會載。檔名與大小上限見 `js/ui/screen-model.js` 的 `MEDIA` 表，換檔後跑 `npm run media:check` |
 | `js/config.js` | 連線設定：模擬器與正式專案兩組，依網址選一組；`?seed=` 只在模擬器生效 |
 | `js/data.js` | 純函式：卡牌資料檔的格式定義與檢查（含天命「判定」的寫法 `parseCheck`） |
 | `data/` | 卡牌資料檔（企劃第一版；格式見 [`docs/DATA-FORMAT.md`](../docs/DATA-FORMAT.md)；範例資料在 `test/fixtures/data-example/`） |

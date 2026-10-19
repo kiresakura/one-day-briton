@@ -360,9 +360,11 @@ npm run fonts:check                                       # 檢查資料與畫�
 
 ### 素材
 
-圖放在 `play/assets/`，檔名照資料的編號：`events/e01.webp`…（128×128）、`bills/b01.webp`…（144×144）、`roles/r1.png`…（128×128 透明，中間留給畫面疊「貴、蒸、工、探、幫、靈」）、`scenes/{dawn,day,dusk,night,finale}.webp`（階段標頭，畫面上會再蓋一層八成以上的階段底色）、`ui/`（卡背、羊皮紙紋理、加入頁主視覺、封蠟）。程式用編號組路徑，一律是相對路徑（正式站在 `/one-day-briton/play/` 底下，`/assets/` 這種根路徑會壞）。
+圖放在 `play/assets/`，檔名照資料的編號：`events/e01.webp`…（128×128）、`bills/b01.webp`…（144×144）、`roles/r1.png`…（128×128 透明，中間留給畫面疊「貴、蒸、工、探、幫、靈」）、`scenes/{dawn,day,dusk,night,finale}-a.webp`（階段標頭，畫面上會再蓋一層八成以上的階段底色）、`ui/`（卡背、羊皮紙紋理、加入頁主視覺、封蠟）。程式用編號組路徑，一律是相對路徑（正式站在 `/one-day-briton/play/` 底下，`/assets/` 這種根路徑會壞）。
 
 之後企劃新增的事件或法案沒有圖時，不用改程式：圖是疊在紋飾底與字形記號（事件 ✶、法案 §）上面的背景圖，檔案不存在就只看到紋飾底，不會出現破圖。要補圖時照同樣的編號與尺寸放進對應的資料夾即可。
+
+投影端的影音素材（開場影片、背景影片、鐘聲、槌聲、開場音樂、標題頁與規則頁底圖）放在 `play/media/`，只有投影畫面會載（按「開始投影」後才下載），跟網頁一起發佈；來源與授權寫在同一個資料夾的 `credits.json`（格式同 `play/assets/credits.json`）。檔名與大小上限照 `js/ui/screen-model.js` 的 `MEDIA` 表，換了檔就跑 `npm run media:check`（大小、清單、bytes 與 sha256；有 `ffprobe` 時再查編碼與長度）。圖片與影音的出處都列在署名頁 `play/credits.html`。
 
 ## 已知限制
 
