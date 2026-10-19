@@ -1,7 +1,7 @@
 // 主持人控制台的按鈕接線（play/js/ui/host.js）：判斷都在 host-model.js 的純函式（另有測試），這裡看處理函式與畫面有沒有照它做。
 // 載入真的 host.js，把 store.js 換成記錄呼叫的替身、dom.js 換成只建節點的替身（不碰真的頁面），按真的按鈕、讀畫出來的字：
 // 會幾乎直接日落的「－1」與「復原」先確認、日落後「復原」停用、全場暫停中走進最後 10 秒的鐘排到重畫、確認框開著時走進去就不送
-// 手動暫停、確認框與結果條的提醒。替身只在這個測試檔的行程裡（node --test 每個檔各自一個行程）。
+// 手動暫停、確認框與結果條的提醒、投影換頁到頭停用（跟投影同一個總頁數）。替身只在這個測試檔的行程裡（node --test 每個檔各自一個行程）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -143,7 +143,8 @@ export const trackPresence = () => async () => {};
 export const adjustClock = call('adjustClock');
 export const pauseClock = call('pauseClock');
 export const resumeClock = call('resumeClock');
-export const setPause = call('setPause');`);
+export const setPause = call('setPause');
+export const setScene = call('setScene');`);
 const FAKE_DOM = source(`export * from ${JSON.stringify(`${DOM}?real`)};
 const { dom } = globalThis.__hostWiring;
 export const $ = (id) => dom.$(id);
@@ -364,4 +365,71 @@ test('恢復全場：暫停中已經被減到 0（已日落）的手動暫停鐘
   await settle();
   assert.deepEqual(sent('setPause'), [[false, { expectSeq: 5 }]]);
   assert.equal(resultText(), '✓ 恢復全場了');
+});
+
+// ---- 投影畫面的換頁：總頁數跟投影一樣（screen-model.js 的 scenePageCount），到頭停用；規則沒有卡牌資料時不知道總頁數，照舊 ----
+const sceneNow = () => textOf(findAll(dom.$('host-console'), (n) => hasClass(n, 'cs-scene-now'))[0]);
+const pager = (step) => byAct('scene-page', { step })[0];
+const sceneRoom = (scene) => ({ ...roomWith(clockAt(30 * MINUTE)), display: { scene: { seq: 4, by: 'hostA', at: fake.now - MINUTE, ...scene } } });
+
+test('頒獎（沒有已結束的桌＝3 頁）：第 1 頁 ◀ 停用、▶ 送頁碼 1；最後一頁 ▶ 停用寫原因、文字「第 3／3 頁」，畫面舊了照樣按也不送', async () => {
+  await start(NOW + 60 * MINUTE);
+  await show(sceneRoom({ id: 'awards', page: 0 }));
+  assert.equal(sceneNow(), '投影中：頒獎・第 1／3 頁');
+  assert.equal(pager(-1).disabled, true);
+  assert.equal(pager(-1).title, '已經是第 1 頁');
+  click(pager(1));
+  await settle();
+  assert.deepEqual(sent('setScene'), [['awards', { page: 1 }]]);
+
+  await start(NOW + 61 * MINUTE);
+  await show(sceneRoom({ id: 'awards', page: 2 }));
+  assert.equal(sceneNow(), '投影中：頒獎・第 3／3 頁');
+  assert.equal(pager(-1).disabled, false);
+  const next = pager(1);
+  assert.equal(next.disabled, true);
+  assert.equal(next.title, '已經是最後一頁');
+  next.disabled = false; // 畫面還沒跟上、鈕還可以按的那一刻
+  click(next);
+  await settle();
+  assert.deepEqual(sent('setScene'), []);
+});
+
+test('頒獎存的頁碼 14（投影停在最後一頁）：文字寫投影顯示的「第 3／3 頁」、▶ 停用，◀ 直接送頁碼 1', async () => {
+  await start(NOW + 62 * MINUTE);
+  await show(sceneRoom({ id: 'awards', page: 14 }));
+  assert.equal(sceneNow(), '投影中：頒獎・第 3／3 頁');
+  assert.equal(pager(1).disabled, true);
+  click(pager(-1));
+  await settle();
+  assert.deepEqual(sent('setScene'), [['awards', { page: 1 }]]);
+});
+
+test('規則：有卡牌資料時總頁數＝1＋教學提示數，最後一頁 ▶ 停用；卡牌資料還沒讀到（null）時 ▶ 照舊可按、文字「第 5 頁」', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { indexGameData, loadGameData } = await import('../../play/js/gamedata.js');
+  const { data, errors } = await loadGameData(async (kind) => JSON.parse(await readFile(new URL(`../../play/data/${kind}.json`, import.meta.url), 'utf8')));
+  assert.deepEqual(errors, []);
+  const total = 1 + data.tutorial.length;
+  try {
+    ctx.cardData = { data, index: indexGameData(data) };
+    await start(NOW + 63 * MINUTE);
+    await show(sceneRoom({ id: 'rules', page: total - 1 }));
+    assert.equal(sceneNow(), `投影中：規則說明・第 ${total}／${total} 頁`);
+    assert.equal(pager(1).disabled, true);
+    assert.equal(pager(1).title, '已經是最後一頁');
+    click(pager(-1));
+    await settle();
+    assert.deepEqual(sent('setScene'), [['rules', { page: total - 2 }]]);
+  } finally {
+    ctx.cardData = null;
+  }
+
+  await start(NOW + 64 * MINUTE);
+  await show(sceneRoom({ id: 'rules', page: 4 }));
+  assert.equal(sceneNow(), '投影中：規則說明・第 5 頁');
+  assert.equal(pager(1).disabled, false);
+  click(pager(1));
+  await settle();
+  assert.deepEqual(sent('setScene'), [['rules', { page: 5 }]]);
 });

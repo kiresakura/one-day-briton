@@ -95,6 +95,12 @@ export function pageIndex(page, total) {
   return Math.min(total - 1, Math.max(0, Number.isInteger(page) ? page : 0));
 }
 
+// 控制台的上一頁、下一頁：從投影實際顯示的那頁（pageIndex）走 step 頁，結果也夾在 0～total−1。存的頁碼已經超過最後一頁時，
+// 上一頁直接到倒數第 2 頁，投影馬上換。step 不是整數就不動。
+export function stepPage(page, step, total) {
+  return pageIndex(pageIndex(page, total) + (Number.isInteger(step) ? step : 0), total);
+}
+
 // 「第 3／11 頁」：index 從 0 起算。
 export function pageText(index, total) {
   return `第 ${index + 1}／${total} 頁`;

@@ -43,6 +43,7 @@ import {
   stageLayout,
   stallWatch,
   standingsView,
+  stepPage,
   tableCard,
   wallClock,
 } from '../../play/js/ui/screen-model.js';
@@ -169,6 +170,30 @@ test('a missing or unknown scene is the title page; pages are clamped and writte
   assert.equal(pageIndex(-1, 11), 0);
   assert.equal(pageIndex(undefined, 11), 0);
   assert.equal(pageText(2, 11), '第 3／11 頁');
+});
+
+test('the console pager steps from the page the projector shows and stops at the first and the last page', () => {
+  assert.equal(stepPage(0, 1, 3), 1);
+  assert.equal(stepPage(1, -1, 3), 0);
+  assert.equal(stepPage(2, 1, 3), 2, 'the last page stays the last page');
+  assert.equal(stepPage(0, -1, 3), 0, 'the first page stays the first page');
+  // 存的頁碼超過最後一頁（投影停在最後一頁）：上一頁直接到倒數第 2 頁，下一頁還是最後一頁。
+  assert.equal(stepPage(14, -1, 3), 1);
+  assert.equal(stepPage(14, 1, 3), 2);
+  assert.equal(stepPage(20, -1, 11), 9);
+  assert.equal(stepPage(-3, 1, 3), 1, 'a negative page is the first page');
+  // 頁碼不是整數時投影顯示第 1 頁，從那裡走；step 不是整數就不動。
+  assert.equal(stepPage(undefined, 1, 11), 1);
+  assert.equal(stepPage(2.5, 1, 11), 1);
+  assert.equal(stepPage('3', 1, 11), 1);
+  assert.equal(stepPage(3, 0.5, 11), 3);
+  assert.equal(stepPage(3, Number('next'), 11), 3);
+  assert.equal(stepPage(3, Number('-1'), 11), 2, 'the step read from the button data');
+  // 沒有頁（total 0）或只有一頁都是第 0 頁。
+  assert.equal(stepPage(0, 1, 0), 0);
+  assert.equal(stepPage(5, -1, 0), 0);
+  assert.equal(stepPage(0, 1, 1), 0);
+  assert.equal(stepPage(0, -1, 1), 0);
 });
 
 test('the rules pages are the flow chart and then one tip each, in the order of the tutorial file', () => {

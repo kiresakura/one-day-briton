@@ -105,6 +105,7 @@ import {
   undoPlan,
   undoWhy,
 } from './host-model.js';
+import { pageIndex, pageText, scenePageCount, stepPage } from './screen-model.js';
 import {
   END_REASON_TEXT,
   PHASE_NAMES,
@@ -1401,7 +1402,7 @@ function consoleMode() {
   return folded ? 'fold' : 'bar';
 }
 
-// 毫秒 → 「09:44」，一小時以上「1:14:59」：同投影的鐘（screen-model.js 的 clockText，這裡不載入投影的模組），主持人說的跟台下看到的
+// 毫秒 → 「09:44」，一小時以上「1:14:59」：同投影的鐘（screen-model.js 的 clockText），主持人說的跟台下看到的
 // 一樣。剩餘無條件進位（還沒到不會先顯示 00:00），已進行（up）捨去。
 export function clockText(ms, { up = false } = {}) {
   const value = Number(ms) || 0;
@@ -1724,16 +1725,26 @@ function clockPanel(view) {
   return panel('clock', '日落鐘・全場', h('div', { class: `cs-clocks${matches.length > 1 ? ' is-two' : ''}` }, matches.map((match) => clockBox(view, match, matches.length > 1))));
 }
 
+// 規則、頒獎的總頁數，跟投影用同一個純函式算（screen-model.js 的 scenePageCount）。規則要卡牌資料：還沒讀到或讀不到時不知道（null），
+// 換頁照舊只夾 0–SCENE_PAGE_MAX。
+function sceneTotal(room, id) {
+  if (id === 'rules' && !ctx.cardData) return null;
+  return scenePageCount(id, room, ctx.cardData);
+}
+
 // 投影畫面：小預覽（把投影畫面縮小放在 iframe 裡；旁邊用文字寫目前的場景與頁碼，不靠 iframe）、五顆場景鈕、規則與頒獎的 ◀ ▶。
+// 知道總頁數時頁碼寫投影實際顯示的那頁（同投影的「第 x／N 頁」），◀ ▶ 到頭停用；不知道時照存的頁碼。
 function scenePanel(view) {
   const { room, off } = view;
   const scene = room.display?.scene ?? null;
   const current = SCENE_LABELS[scene?.id] ? scene.id : null;
-  const page = Number.isInteger(scene?.page) ? scene.page : 0;
-  const lock = off ? OFFLINE_TEXT : busy.has('scene') ? '處理中…' : null;
-  const now = current ? `投影中：${SCENE_LABELS[current]}${PAGED_SCENES.has(current) ? `・第 ${page + 1} 頁` : ''}` : '還沒有切過場景';
-  const who = scene?.by ? `${byText(scene.by, ctx.session.uid)}${typeof scene.at === 'number' ? ` ${wallTime(scene.at, offsetNow())}` : ''} 切的` : '投影那台先顯示「開始投影」頁';
   const paged = PAGED_SCENES.has(current);
+  const total = paged ? sceneTotal(room, current) : null;
+  const page = total === null ? (Number.isInteger(scene?.page) ? scene.page : 0) : pageIndex(scene.page, total);
+  const last = total === null ? SCENE_PAGE_MAX : total - 1;
+  const lock = off ? OFFLINE_TEXT : busy.has('scene') ? '處理中…' : null;
+  const now = current ? `投影中：${SCENE_LABELS[current]}${paged ? `・${total === null ? `第 ${page + 1} 頁` : pageText(page, total)}` : ''}` : '還沒有切過場景';
+  const who = scene?.by ? `${byText(scene.by, ctx.session.uid)}${typeof scene.at === 'number' ? ` ${wallTime(scene.at, offsetNow())}` : ''} 切的` : '投影那台先顯示「開始投影」頁';
   const pageWhy = lock ?? (paged ? null : '規則說明、頒獎才有換頁');
   return panel('scene', '投影畫面', [
     h(
@@ -1762,7 +1773,7 @@ function scenePanel(view) {
         'div',
         { class: 'cs-pager', data: { key: 'pager' }, attrs: { role: 'group', 'aria-label': '換頁' } },
         csButton('scene-page', '◀', { why: pageWhy ?? (page <= 0 ? '已經是第 1 頁' : null), data: { step: -1 }, className: 'cs-step' }),
-        csButton('scene-page', '▶', { why: pageWhy ?? (page >= SCENE_PAGE_MAX ? '已經是最後一頁' : null), data: { step: 1 }, className: 'cs-step' }),
+        csButton('scene-page', '▶', { why: pageWhy ?? (page >= last ? '已經是最後一頁' : null), data: { step: 1 }, className: 'cs-step' }),
       ),
     ),
   ]);
@@ -2651,10 +2662,17 @@ const actions = {
     runScene(scene);
   },
   'scene-page': ({ step }) => {
-    const scene = ctx.latestRoom?.display?.scene;
+    const room = ctx.latestRoom;
+    const scene = room?.display?.scene;
     if (!PAGED_SCENES.has(scene?.id)) return;
-    const page = Math.max(0, Math.min(SCENE_PAGE_MAX, (Number.isInteger(scene.page) ? scene.page : 0) + Number(step)));
-    runScene(scene.id, page);
+    const total = sceneTotal(room, scene.id);
+    if (total === null) {
+      runScene(scene.id, Math.max(0, Math.min(SCENE_PAGE_MAX, (Number.isInteger(scene.page) ? scene.page : 0) + Number(step))));
+      return;
+    }
+    // 從投影實際顯示的那頁走（存的頁碼超過最後一頁時，上一頁直接到倒數第 2 頁）；到頭了、跟存的頁碼一樣就不送。
+    const page = stepPage(scene.page, Number(step), total);
+    if (page !== scene.page) runScene(scene.id, page);
   },
   sfx: ({ sfx }) =>
     command('sfx', async () => {
