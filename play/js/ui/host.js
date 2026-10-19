@@ -95,6 +95,7 @@ import {
   manualPausedMatches,
   nearSunsetLine,
   nearSunsetMatches,
+  nextWakeAt,
   pauseReport,
   pausedWhy,
   planSignature,
@@ -1507,6 +1508,15 @@ export function clockGuards(room, match, now) {
   };
 }
 
+// 手動暫停／繼續確認框的停用原因（null＝可以送）：照最新的房間與時間。框畫出來時與按下確認時都照它（框開著時鐘可能走進最後 10 秒
+// 變成快日落、別台剛改過、日落了），所以按下去的那一刻有原因就不送。
+export function toggleWhy(room, request, now) {
+  const clock = room?.clock?.[request.match];
+  if (!isClock(clock)) return '這一場還沒有全場日落鐘';
+  if (clock.seq !== request.seq) return '別台剛改過這個鐘，請取消再看一次';
+  return clockGuards(room, request.match, now).toggle;
+}
+
 // 控制列要顯示哪幾場的日落鐘：[1]、[2]，或第 1 場還有桌在打（已開局、還沒算分）而且有桌開了第 2 場時兩個並排 [1, 2]。
 export function clockMatches(room) {
   let first = false;
@@ -2091,9 +2101,8 @@ function consoleDialog(room) {
       });
     }
     case 'clock-toggle': {
-      const clock = room.clock?.[request.match];
       const guards = clockGuards(room, request.match, now);
-      const why = off ?? (!isClock(clock) ? '這一場還沒有全場日落鐘' : clock.seq !== request.seq ? '別台剛改過這個鐘，請取消再看一次' : guards.toggle);
+      const why = off ?? toggleWhy(room, request, now);
       // 全場暫停中手動暫停沒被停住的鐘：它不在這次暫停的紀錄裡，恢復全場時不會跟著繼續。
       const lines = guards?.hold === 'free' ? [{ text: '全場恢復時不會自動繼續，要記得手動繼續', problem: true }] : [];
       return request.pause
@@ -2382,11 +2391,14 @@ export function renderHost(room) {
     const limits = handLimits(t);
     cards.push({ t, limits, step: stepOf(t, limits) });
   }
-  // 全場日落鐘到點時重畫（控制列的鐘換成「已日落」、按鈕停用）。
+  // 全場日落鐘到點時重畫（控制列的鐘換成「已日落」、按鈕停用）；正在走的鐘走進最後 10 秒時也重畫一次（全場暫停中的面板與手動暫停鈕、
+  // 「全場暫停？」確認框的快日落那一行，見 host-model.js 的 nextWakeAt）。
   for (const match of [1, MATCH_COUNT]) {
     const clock = room.clock?.[match];
     if (isClock(clock) && clockSunsetAt(clock) !== null) rerenderAt(clockSunsetAt(clock));
   }
+  const wake = nextWakeAt(room, serverTime(ctx.session));
+  if (wake !== null) rerenderAt(wake);
   patchChildren($('host-top'), topBar(room, cards, mode));
   const section = $('host-console');
   section.hidden = !mode;
@@ -2689,6 +2701,11 @@ const actions = {
   'confirm-console': () => {
     const request = confirming;
     if (!request) return;
+    // 手動暫停／繼續：照最新的房間與時間再查一次（框開著時鐘可能走進了最後 10 秒），有原因就重畫（框裡寫原因、確認鈕停用）、不送。
+    if (request.kind === 'clock-toggle' && (!connected || toggleWhy(ctx.latestRoom, request, serverTime(ctx.session)))) {
+      rerender();
+      return;
+    }
     closeConfirm();
     if (request.kind === 'start-all' || request.kind === 'start-all-2') runStartAll(request);
     else if (request.kind === 'advance-all') runAdvanceAll(request);

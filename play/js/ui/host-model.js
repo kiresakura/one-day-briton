@@ -1,6 +1,6 @@
 // 主持人控制台的判斷（只有純函式，不碰畫面）：日落鐘會不會被減到 0、復原能不能按、全場暫停中每個鐘是哪一種、全場暫停／恢復之後
 // 結果條怎麼寫、確認框打開後局面變了沒、全場動作與全場暫停中每桌按鈕的停用原因。畫面在 host.js，測試在 test/unit/host-model.test.js。
-import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, endReasonAt, isClock } from '../game.js';
+import { clockAdjustWrite, clockPassed, clockPaused, clockRemaining, clockSunsetAt, endReasonAt, isClock } from '../game.js';
 import { MATCH_COUNT, activeKey, clockOf } from '../rules.js';
 import { CLOCK_MARGIN_MS, PAUSE_NEAR_SUNSET_MS } from '../store.js';
 
@@ -63,6 +63,20 @@ export function clockPauseState(room, match, now) {
   if (pause?.on !== true || !isClock(clock) || clockPassed(clock, now)) return null;
   if (clockPaused(clock)) return heldByPause(clock, pause, match) ? 'held' : 'manual';
   return clockRemaining(clock, now) <= PAUSE_NEAR_SUNSET_MS ? 'near' : 'free';
+}
+
+// 下一次要整個重畫的時刻（伺服器時間）：正在走的鐘走進最後 PAUSE_NEAR_SUNSET_MS 的那一刻。全場暫停中沒停住（free）的鐘那時變成快日落
+// （near）：面板的說明、手動暫停鈕與它的停用原因要跟上；「全場暫停？」確認框要補上快日落那一行。每秒的 tick 只換剩餘的字，不會重算這些。
+// 取還沒到的最早一個；沒有是 null（暫停中的鐘不會走進去；日落那一刻 host.js 另外照 clockSunsetAt 排）。
+export function nextWakeAt(room, now) {
+  let next = null;
+  for (const match of CLOCK_KEYS) {
+    const clock = room?.clock?.[match];
+    if (!isClock(clock) || clockPaused(clock)) continue;
+    const at = clockSunsetAt(clock) - PAUSE_NEAR_SUNSET_MS;
+    if (at > now && (next === null || at < next)) next = at;
+  }
+  return next;
 }
 
 // 上面四種在日落鐘面板的說明；held、manual、near 也是暫停／繼續鈕停用的原因（free 可以手動暫停）。

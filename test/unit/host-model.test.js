@@ -14,6 +14,7 @@ import {
   manualPausedMatches,
   nearSunsetLine,
   nearSunsetMatches,
+  nextWakeAt,
   pauseReport,
   pausedWhy,
   planSignature,
@@ -138,6 +139,24 @@ test('全場暫停中的鐘照房間資料分、每一台都一樣：changed: fa
   const resumed = room({ 1: manual }, { ...nearPause, on: false });
   assert.match(pauseReport(false, { changed: true, clocks: [], nearSunset: [] }, room({ 1: manual }, nearPause), resumed, NOW).text, /第 1 場日落鐘還在暫停（手動暫停的）/);
   assert.equal(clockPauseState(resumed, '1', NOW), null);
+});
+
+test('下一次重畫：正在走的鐘走進最後 10 秒的那一刻（取最早、還沒到的）；暫停中、已經走進去、沒有鐘是 null', () => {
+  const room = (clocks, pause = null) => ({ clock: clocks, display: pause ? { pause } : {} });
+  assert.equal(nextWakeAt(room({ 1: clock(15_000) }), NOW), NOW + 5_000);
+  assert.equal(nextWakeAt(room({ 1: clock(10_001) }), NOW), NOW + 1);
+  assert.equal(nextWakeAt(room({ 1: clock(10_000) }), NOW), null); // 這一刻已經是快日落
+  assert.equal(nextWakeAt(room({ 1: clock(9_000) }), NOW), null);
+  assert.equal(nextWakeAt(room({ 1: clock(15_000, { paused: true }) }), NOW), null);
+  assert.equal(nextWakeAt(room({ 1: clock(75 * MINUTE), 2: clock(20_000) }), NOW), NOW + 10_000);
+  assert.equal(nextWakeAt(room({ 1: clock(20_000), 2: clock(75 * MINUTE) }), NOW), NOW + 10_000);
+  assert.equal(nextWakeAt(room({}), NOW), null);
+  assert.equal(nextWakeAt(null, NOW), null);
+  // 全場暫停中沒停住的鐘：排到的那一刻（rerenderAt 再晚 50 毫秒）面板就從「沒被停住」變成「快日落」。
+  const free = room({ 1: clock(15_000) }, { on: true, seq: 3, at: NOW - 2_000 });
+  const wake = nextWakeAt(free, NOW);
+  assert.equal(clockPauseState(free, '1', wake - 1), 'free');
+  assert.equal(clockPauseState(free, '1', wake + 50), 'near');
 });
 
 test('快日落的場次（全場暫停確認框先講）與手動暫停的場次（恢復確認框先講）', () => {

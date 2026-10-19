@@ -33,6 +33,7 @@ const {
   screenRows,
   screenUrl,
   startResult,
+  toggleWhy,
   wallTime,
 } = host;
 
@@ -187,6 +188,25 @@ test('日落鐘的按鈕：日落後都不能按、累計到上限的那一邊�
   assert.match(clockGuards(at(zero), 1, now).plus, /已經日落/);
   assert.match(clockGuards(at(zero), 1, now).toggle, /已經日落/);
   assert.equal(clockGuards(at(null), 1, now), null);
+});
+
+test('手動暫停確認框的停用原因照最新的房間與時間：沒停住的鐘剩 15 秒時可以送，6 秒後（剩 9 秒）變快日落就不送；別台改過、日落了、沒有鐘也不送', () => {
+  const now = 1_000_000;
+  const pause = { on: true, seq: 3, at: now - 2_000 }; // 被拒後不帶鐘重送：pause 沒有 clocks，鐘照走
+  const free = { ...clockStartWrite(75, now - 10 * MINUTE), seq: 4, by: 'a' };
+  free.remain = now - free.anchor + 15_000; // 剩 15 秒
+  const room = { clock: { 1: free }, display: { pause } };
+  const request = { kind: 'clock-toggle', match: 1, pause: true, seq: 4 };
+  assert.equal(toggleWhy(room, request, now), null);
+  assert.equal(toggleWhy(room, request, now + 4_999), null);
+  assert.equal(toggleWhy(room, request, now + 5_000), '快日落・照常日落、不停');
+  assert.equal(toggleWhy(room, request, now + 6_000), '快日落・照常日落、不停');
+  assert.equal(toggleWhy(room, { ...request, seq: 3 }, now), '別台剛改過這個鐘，請取消再看一次');
+  assert.equal(toggleWhy(room, request, now + 16_000), '已經日落了，不能再暫停或加減');
+  assert.equal(toggleWhy({ clock: {}, display: { pause } }, request, now), '這一場還沒有全場日落鐘');
+  assert.equal(toggleWhy(null, request, now), '這一場還沒有全場日落鐘');
+  // 沒有全場暫停：剩幾秒都可以暫停（快日落只在全場暫停中才停用）。
+  assert.equal(toggleWhy({ clock: { 1: free }, display: {} }, request, now + 6_000), null);
 });
 
 test('要顯示哪幾場的鐘：都在第 1 場 [1]、有桌開了第 2 場而第 1 場還有桌在打 [1, 2]、第 1 場都打完 [2]', () => {
