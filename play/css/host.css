@@ -1759,6 +1759,31 @@ body:has(> #screen-host:not([hidden])) > .topbar .toast.is-folded .toast-text {
   line-height: 15px;
 }
 
+/* 兩場並排的小鐘（每個只有約 100 px 寬）：側欄放到大字下面、一行，先放場次，放得下才接著放「已進行」（放不下就整段折到看不見的
+   第二行，不畫出自己的框、不蓋到隔壁的大字；走了多少看進度條）；預計日落時刻只在單鐘時顯示。高度比原本三行的側欄矮，面板高度不變。 */
+.cs-clocks.is-two .cs-clock {
+  overflow: hidden;
+}
+
+.cs-clock.is-small .cs-clock-main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.cs-clock.is-small .cs-clock-side {
+  flex-flow: row wrap;
+  align-items: center;
+  column-gap: 6px;
+  max-width: 100%;
+  height: 17px; /* 一行＝場次的標籤高（15 px＋上下框線） */
+  overflow: hidden;
+}
+
+.cs-clock.is-small .cs-sunset {
+  display: none;
+}
+
 .cs-clock.is-paused .cs-match,
 .cs-clock.is-passed .cs-match {
   border-color: var(--accent);
